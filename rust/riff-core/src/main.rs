@@ -1,9 +1,12 @@
 mod config;
 mod db;
+mod image_proxy;
 mod library;
+mod lyrics;
 mod models;
 mod soundcloud;
 mod stream;
+mod youtube;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -35,6 +38,9 @@ struct AppState {
     token: Arc<String>,
     http: reqwest::Client,
     soundcloud: Arc<soundcloud::SoundCloudClient>,
+    youtube: Arc<youtube::YouTubeClient>,
+    image_proxy: Arc<image_proxy::ImageProxyService>,
+    lyrics: Arc<lyrics::LyricsService>,
     app_state: Arc<RwLock<Value>>,
     port: Arc<AtomicU16>,
 }
@@ -59,12 +65,24 @@ async fn main() -> anyhow::Result<()> {
         )
         .build()?;
     let soundcloud = soundcloud::SoundCloudClient::new(http.clone());
+    let youtube = Arc::new(youtube::YouTubeClient::new(http.clone()));
+    let image_proxy = Arc::new(image_proxy::ImageProxyService::new(
+        http.clone(),
+        config.data_dir.join("cache"),
+    ));
+    let lyrics = Arc::new(lyrics::LyricsService::new(
+        http.clone(),
+        config.data_dir.clone(),
+    ));
 
     let state = AppState {
         db,
         token: Arc::new(config.token.clone()),
         http,
         soundcloud,
+        youtube,
+        image_proxy,
+        lyrics,
         app_state: Arc::new(RwLock::new(Value::Null)),
         port: Arc::new(AtomicU16::new(0)),
         config: config.clone(),
@@ -82,6 +100,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/search", get(search))
         .route("/api/stream-info", get(stream_info))
         .route("/api/audio-proxy", get(audio_proxy))
+        .route("/api/image-proxy", get(image_proxy_handler))
+        .route("/api/lyrics", get(lyrics_handler))
+        .route("/api/lyrics-words", get(lyrics_words_handler))
         .route("/api/state", get(get_state).post(set_state))
         .route("/api/tools-status", get(tools_status))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth));
@@ -201,7 +222,25 @@ async fn search(
         }
     }
 
-    // 2. Query local SQLite B-Tree database
+    // 2. Query YouTube via native InnerTube API if requested
+    if platform == "ytmusic" || platform == "youtube" {
+        match state.youtube.search(&q, limit).await {
+            Ok(tracks) if !tracks.is_empty() => {
+                let has_more = tracks.len() >= limit;
+                return Ok(Json(json!({
+                    "success": true,
+                    "tracks": tracks,
+                    "hasMore": has_more,
+                })));
+            }
+            Ok(_) => {}
+            Err(err) => {
+                warn!("YouTube native search error: {}", err);
+            }
+        }
+    }
+
+    // 3. Query local SQLite B-Tree database
     let tracks = run_db(&state.db, {
         let q = q.clone();
         move |conn| db::search_tracks(conn, &q, limit + 1, offset)
@@ -235,7 +274,7 @@ async fn search(
         })));
     }
 
-    // 3. Fallback: query SoundCloud if no local matches
+    // 4. Fallback: query SoundCloud if no YouTube/local matches
     if let Ok(tracks) = state.soundcloud.search(&q, limit).await {
         if !tracks.is_empty() {
             let has_more = tracks.len() >= limit;
@@ -479,7 +518,7 @@ async fn stream_info(
         }
     }
 
-    // 2. Resolve YouTube / other platforms via yt-dlp
+    // 2. Resolve YouTube / other platforms via native InnerTube or yt-dlp
     let target_url = if !track_url.is_empty() {
         track_url
     } else if id.len() == 11
@@ -497,6 +536,42 @@ async fn stream_info(
         return Err(ApiError::bad_request("missing url or id"));
     };
 
+    let quality = query.quality.as_deref().unwrap_or("medium");
+
+    // 2a. Attempt native InnerTube player resolution for YouTube
+    let is_yt = platform == "youtube"
+        || platform == "ytmusic"
+        || target_url.contains("youtube.com")
+        || target_url.contains("youtu.be");
+
+    if is_yt {
+        let cand_id = if !id.is_empty() { &id } else { &target_url };
+        if let Ok(direct_url) = state.youtube.resolve_stream(cand_id, quality).await {
+            let proxy_url = format!(
+                "http://127.0.0.1:{port}/api/audio-proxy?url={}",
+                url_encode(&direct_url)
+            );
+
+            return Ok(Json(json!({
+                "success": true,
+                "isLocal": false,
+                "streamUrl": proxy_url,
+                "rawStreamUrl": direct_url,
+                "proxyUrl": proxy_url,
+                "sourceMeta": {
+                    "id": id,
+                    "title": query.title.unwrap_or_default(),
+                    "artist": query.artist.unwrap_or_default(),
+                    "duration": query.duration.unwrap_or(0.0),
+                    "thumbnail": query.thumbnail.unwrap_or_default(),
+                    "platform": "youtube",
+                    "url": target_url,
+                },
+            })));
+        }
+    }
+
+    // 2b. Fallback: resolve via yt-dlp process
     let timeout_secs = query.timeout.unwrap_or(20).clamp(5, 30);
     let raw_stream = stream::resolve_with_ytdlp(
         state.config.ytdlp.as_deref(),
@@ -527,6 +602,26 @@ async fn stream_info(
             "url": target_url,
         },
     })))
+}
+
+async fn image_proxy_handler(
+    State(state): State<AppState>,
+    Query(query): Query<image_proxy::ImageProxyQuery>,
+) -> Response {
+    state.image_proxy.handle_proxy(query).await
+}
+
+async fn lyrics_handler(
+    State(state): State<AppState>,
+    Query(query): Query<lyrics::LyricsQuery>,
+) -> Json<Value> {
+    state.lyrics.fetch_lyrics(query).await
+}
+
+async fn lyrics_words_handler(
+    State(_state): State<AppState>,
+) -> Json<Value> {
+    Json(json!({ "success": false, "lines": [] }))
 }
 
 async fn audio_proxy(

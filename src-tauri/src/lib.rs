@@ -198,9 +198,9 @@ fn start_backend_server() {
             if let Some(stderr) = stderr {
                 std::thread::spawn(move || {
                     let reader = std::io::BufReader::new(stderr);
-                    for line in reader.lines().flatten() {
+                    for _line in reader.lines().flatten() {
                         #[cfg(debug_assertions)]
-                        eprintln!("[server-stderr] {}", line);
+                        eprintln!("[server-stderr] {}", _line);
                     }
                 });
             }
