@@ -3340,6 +3340,7 @@ dependencies = [
  "directories",
  "lofty",
  "mime_guess",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",

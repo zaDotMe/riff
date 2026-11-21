@@ -55,18 +55,21 @@ npm start
 
 ---
 
-## 5. Status Implementasi Tauri 2 (Fase 2)
+## 5. Status Implementasi Tauri 2 & Fase 2 (Native Rust Core)
 
-Runtime Tauri 2 (`src-tauri`) telah di-scaffold dan terintegrasi ke dalam workspace Cargo root:
-1. **`src-tauri/` crate:** Berbasis Tauri 2 (`tauri = "2"`), WebView2 di Windows, dengan custom frameless window dan capabilities permissions.
+Runtime Tauri 2 (`src-tauri`) dan Native Rust Scraper Core (`rust/riff-core`) telah terintegrasi penuh:
+1. **`src-tauri/` crate:** Berbasis Tauri 2 (`tauri = "2"`), WebView2 di Windows, dengan custom frameless window, Windows Job Object (auto-cleanup proses backend saat quit), dan hybrid sidecar runner (`RIFF_BACKEND=rust` atau fallback Node).
 2. **Icons asset pack:** Digenerate lengkap untuk Windows (`.ico`), macOS (`.icns`), dan PNG multipack.
 3. **`src/renderer/tauri-bridge.js`:** Strangler bridge otomatis mendeteksi environment Tauri dan memetakan `window.electronAPI` ke Tauri commands sehingga UI web (65k LOC) tidak memerlukan perubahan masif.
-4. **Commands:**
-   - Window controls: `minimize_window`, `maximize_window`, `close_window`.
-   - Backend discovery: `get_server_port`, `get_server_token`, `get_data_dir`.
-   - Shell: `open_external`, `get_app_version`.
-5. **Cara menjalankan via Tauri 2:**
+4. **Native SoundCloud Scraper & Stream Resolver (`rust/riff-core/src/soundcloud.rs`):**
+   - Dynamic scraping live `client_id` dari asset bundle web SoundCloud.
+   - Endpoint `GET /api/search?platform=soundcloud` langsung diproses native via Rust + Tokio + Reqwest JSON parsing.
+   - Resolving transcodings (progressive MP3 & HLS playlist) tanpa dependensi Node.js.
+5. **Zero-Copy Streaming Audio Proxy (`GET /api/audio-proxy`):**
+   - Mendukung HTTP `206 Partial Content` (Range Requests) via streaming chunks bytes langsung ke WebView2/HTML5 `<audio>`.
+6. **Cara menjalankan via Tauri 2 dengan Native Rust Backend:**
    ```powershell
+   $env:RIFF_BACKEND = "rust"
    npm run tauri:dev
    ```
    Atau jalankan binary langsung:

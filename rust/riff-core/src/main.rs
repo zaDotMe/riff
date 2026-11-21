@@ -2,6 +2,7 @@ mod config;
 mod db;
 mod library;
 mod models;
+mod soundcloud;
 mod stream;
 
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ use serde_json::{json, Value};
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -33,6 +34,7 @@ struct AppState {
     config: Arc<config::Config>,
     token: Arc<String>,
     http: reqwest::Client,
+    soundcloud: Arc<soundcloud::SoundCloudClient>,
     app_state: Arc<RwLock<Value>>,
     port: Arc<AtomicU16>,
 }
@@ -50,15 +52,19 @@ async fn main() -> anyhow::Result<()> {
     let config = Arc::new(config::Config::from_args()?);
     let db = db::open(&config.db_path)?;
 
+    let http = reqwest::Client::builder()
+        .user_agent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        )
+        .build()?;
+    let soundcloud = soundcloud::SoundCloudClient::new(http.clone());
+
     let state = AppState {
         db,
         token: Arc::new(config.token.clone()),
-        http: reqwest::Client::builder()
-            .user_agent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            )
-            .build()?,
+        http,
+        soundcloud,
         app_state: Arc::new(RwLock::new(Value::Null)),
         port: Arc::new(AtomicU16::new(0)),
         config: config.clone(),
@@ -168,6 +174,7 @@ async fn search(
     let q = query.q.unwrap_or_default().trim().to_string();
     let limit = query.limit.unwrap_or(12).clamp(1, 50);
     let offset = query.offset.unwrap_or(0);
+    let platform = query.platform.as_deref().unwrap_or("ytmusic");
 
     if q.is_empty() {
         return Ok(Json(json!({
@@ -177,35 +184,73 @@ async fn search(
         })));
     }
 
+    // 1. If platform is explicitly SoundCloud, use native high-performance Rust scraper
+    if platform == "soundcloud" {
+        match state.soundcloud.search(&q, limit).await {
+            Ok(tracks) => {
+                let has_more = tracks.len() >= limit;
+                return Ok(Json(json!({
+                    "success": true,
+                    "tracks": tracks,
+                    "hasMore": has_more,
+                })));
+            }
+            Err(err) => {
+                warn!("SoundCloud native search error: {}", err);
+            }
+        }
+    }
+
+    // 2. Query local SQLite B-Tree database
     let tracks = run_db(&state.db, {
         let q = q.clone();
         move |conn| db::search_tracks(conn, &q, limit + 1, offset)
     })
     .await?;
 
-    let has_more = tracks.len() > limit;
-    let sliced: Vec<Value> = tracks
-        .into_iter()
-        .take(limit)
-        .map(|t| {
-            json!({
-                "id": t.id,
-                "title": t.title,
-                "artist": t.artist,
-                "album": t.album.unwrap_or_default(),
-                "duration": t.duration,
-                "thumbnail": t.thumbnail,
-                "platform": "local",
-                "isLocal": true,
-                "isCached": true,
+    if !tracks.is_empty() || platform == "local" {
+        let has_more = tracks.len() > limit;
+        let sliced: Vec<Value> = tracks
+            .into_iter()
+            .take(limit)
+            .map(|t| {
+                json!({
+                    "id": t.id,
+                    "title": t.title,
+                    "artist": t.artist,
+                    "album": t.album.unwrap_or_default(),
+                    "duration": t.duration,
+                    "thumbnail": t.thumbnail,
+                    "platform": "local",
+                    "isLocal": true,
+                    "isCached": true,
+                })
             })
-        })
-        .collect();
+            .collect();
+
+        return Ok(Json(json!({
+            "success": true,
+            "tracks": sliced,
+            "hasMore": has_more,
+        })));
+    }
+
+    // 3. Fallback: query SoundCloud if no local matches
+    if let Ok(tracks) = state.soundcloud.search(&q, limit).await {
+        if !tracks.is_empty() {
+            let has_more = tracks.len() >= limit;
+            return Ok(Json(json!({
+                "success": true,
+                "tracks": tracks,
+                "hasMore": has_more,
+            })));
+        }
+    }
 
     Ok(Json(json!({
         "success": true,
-        "tracks": sliced,
-        "hasMore": has_more,
+        "tracks": [],
+        "hasMore": false,
     })))
 }
 
@@ -363,7 +408,9 @@ async fn stream_info(
     Query(query): Query<StreamQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let port = state.port.load(Ordering::SeqCst);
-    let id = query.id.clone().unwrap_or_default();
+    let id = query.id.clone().unwrap_or_default().trim().to_string();
+    let platform = query.platform.clone().unwrap_or_default().trim().to_string();
+    let track_url = query.url.clone().unwrap_or_default().trim().to_string();
 
     if id.starts_with("local_") {
         let track = run_db(&state.db, {
@@ -389,26 +436,71 @@ async fn stream_info(
         })));
     }
 
-    let track_url = query
-        .url
-        .clone()
-        .or_else(|| {
-            if id.len() == 11
-                && id
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-            {
-                Some(format!("https://www.youtube.com/watch?v={id}"))
-            } else {
-                None
+    // 1. Resolve SoundCloud stream natively in Rust
+    let is_soundcloud = platform == "soundcloud"
+        || track_url.contains("soundcloud.com")
+        || (!id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) && id.len() >= 6);
+
+    if is_soundcloud {
+        let identifier = if !track_url.is_empty() {
+            &track_url
+        } else {
+            &id
+        };
+        let query_fallback = query.title.as_deref();
+
+        match state.soundcloud.resolve_stream(identifier, query_fallback).await {
+            Ok(direct_url) => {
+                let proxy_url = format!(
+                    "http://127.0.0.1:{port}/api/audio-proxy?url={}",
+                    url_encode(&direct_url)
+                );
+
+                return Ok(Json(json!({
+                    "success": true,
+                    "isLocal": false,
+                    "streamUrl": proxy_url,
+                    "rawStreamUrl": direct_url,
+                    "proxyUrl": proxy_url,
+                    "sourceMeta": {
+                        "id": id,
+                        "title": query.title.unwrap_or_default(),
+                        "artist": query.artist.unwrap_or_default(),
+                        "duration": query.duration.unwrap_or(0.0),
+                        "thumbnail": query.thumbnail.unwrap_or_default(),
+                        "platform": "soundcloud",
+                        "url": track_url,
+                    },
+                })));
             }
-        })
-        .ok_or_else(|| ApiError::bad_request("missing url or id"))?;
+            Err(err) => {
+                warn!("SoundCloud native stream resolution failed: {}. Falling back to yt-dlp.", err);
+            }
+        }
+    }
+
+    // 2. Resolve YouTube / other platforms via yt-dlp
+    let target_url = if !track_url.is_empty() {
+        track_url
+    } else if id.len() == 11
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        format!("https://www.youtube.com/watch?v={id}")
+    } else if is_soundcloud {
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "failed to resolve soundcloud stream",
+        ));
+    } else {
+        return Err(ApiError::bad_request("missing url or id"));
+    };
 
     let timeout_secs = query.timeout.unwrap_or(20).clamp(5, 30);
     let raw_stream = stream::resolve_with_ytdlp(
         state.config.ytdlp.as_deref(),
-        &track_url,
+        &target_url,
         timeout_secs,
     )
     .await
@@ -432,7 +524,7 @@ async fn stream_info(
             "duration": query.duration.unwrap_or(0.0),
             "thumbnail": query.thumbnail.unwrap_or_default(),
             "platform": query.platform.unwrap_or_else(|| "ytmusic".to_string()),
-            "url": track_url,
+            "url": target_url,
         },
     })))
 }

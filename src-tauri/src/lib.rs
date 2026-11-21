@@ -77,26 +77,79 @@ fn find_server_script() -> Option<PathBuf> {
     None
 }
 
-fn start_backend_server() {
+fn create_node_cmd() -> std::process::Command {
     let script_path = match find_server_script() {
         Some(p) => p,
         None => {
             eprintln!("[tauri] Warning: Could not locate src/server/server.js. Assuming default port {}", DEFAULT_PORT);
             SERVER_PORT.store(DEFAULT_PORT, Ordering::SeqCst);
-            return;
+            PathBuf::from("src/server/server.js")
         }
     };
 
-    println!("[tauri] Spawning background server from: {}", script_path.display());
+    println!("[tauri] Spawning Node background server from: {}", script_path.display());
 
     let mut cmd = std::process::Command::new("node");
     cmd.arg(&script_path);
     cmd.env("RIFF_TOKEN", DEFAULT_TOKEN);
 
-    // Set working dir to project root if possible
     if let Some(parent) = script_path.parent().and_then(|p| p.parent()) {
         cmd.current_dir(parent);
     }
+    cmd
+}
+
+fn find_rust_core_bin() -> Option<PathBuf> {
+    let bin_name = if cfg!(windows) { "riff-core.exe" } else { "riff-core" };
+    let candidates = [
+        PathBuf::from("target").join("release").join(bin_name),
+        PathBuf::from("target").join("debug").join(bin_name),
+        PathBuf::from("bin").join(bin_name),
+    ];
+
+    for c in &candidates {
+        if c.exists() {
+            if let Ok(abs) = std::fs::canonicalize(c) {
+                return Some(abs);
+            }
+            return Some(c.clone());
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let candidate = parent.join(bin_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+fn start_backend_server() {
+    let prefer_rust = std::env::var("RIFF_BACKEND")
+        .map(|v| v.to_lowercase() == "rust")
+        .unwrap_or(false);
+
+    let mut cmd = if prefer_rust {
+        if let Some(rust_bin) = find_rust_core_bin() {
+            println!("[tauri] Spawning native Rust core backend: {}", rust_bin.display());
+            let mut c = std::process::Command::new(&rust_bin);
+            c.arg("--port").arg(DEFAULT_PORT.to_string());
+            c.arg("--token").arg(DEFAULT_TOKEN);
+            if let Some(proj_dir) = find_server_script().and_then(|p| p.parent().and_then(|p| p.parent().map(|p| p.to_path_buf()))) {
+                c.current_dir(proj_dir);
+            }
+            c
+        } else {
+            eprintln!("[tauri] Warning: RIFF_BACKEND=rust was set, but riff-core binary was not found. Falling back to Node server.");
+            create_node_cmd()
+        }
+    } else {
+        create_node_cmd()
+    };
 
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
