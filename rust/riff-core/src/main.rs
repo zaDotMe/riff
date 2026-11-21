@@ -109,6 +109,9 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/hot", get(hot_picks_handler))
+        .route("/api/trending", get(trending_handler))
+        .route("/api/vibe", post(vibe_handler))
         .merge(protected)
         .with_state(state.clone())
         .layer(CorsLayer::permissive())
@@ -223,7 +226,7 @@ async fn search(
     }
 
     // 2. Query YouTube via native InnerTube API if requested
-    if platform == "ytmusic" || platform == "youtube" {
+    if platform == "ytmusic" || platform == "youtube" || platform == "rifflibrary" {
         match state.youtube.search(&q, limit).await {
             Ok(tracks) if !tracks.is_empty() => {
                 let has_more = tracks.len() >= limit;
@@ -622,6 +625,102 @@ async fn lyrics_words_handler(
     State(_state): State<AppState>,
 ) -> Json<Value> {
     Json(json!({ "success": false, "lines": [] }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LimitQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct VibePayload {
+    #[allow(dead_code)]
+    history: Option<Vec<Value>>,
+    #[allow(dead_code)]
+    favorites: Option<Vec<Value>>,
+    limit: Option<usize>,
+    seeds: Option<Vec<String>>,
+}
+
+async fn hot_picks_handler(
+    State(state): State<AppState>,
+    Query(query): Query<LimitQuery>,
+) -> Json<Value> {
+    let limit = query.limit.unwrap_or(12).clamp(1, 25);
+    let tracks = state.youtube.search("Top Hits 2026", limit).await.unwrap_or_default();
+    let title = "Hot picks 2026".to_string();
+    Json(json!({
+        "success": true,
+        "title": title,
+        "tracks": tracks
+    }))
+}
+
+async fn trending_handler(
+    State(state): State<AppState>,
+    Query(query): Query<LimitQuery>,
+) -> Json<Value> {
+    let limit = query.limit.unwrap_or(16).clamp(1, 30);
+    let tracks = state.youtube.search("Trending music", limit).await.unwrap_or_default();
+    Json(json!({
+        "success": true,
+        "tracks": tracks
+    }))
+}
+
+async fn vibe_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<VibePayload>,
+) -> Json<Value> {
+    let limit = payload.limit.unwrap_or(10).clamp(4, 16);
+    let mut search_query = String::new();
+
+    if let Some(seeds) = payload.seeds {
+        if let Some(first) = seeds.first() {
+            if !first.trim().is_empty() {
+                search_query = format!("{} songs", first.trim());
+            }
+        }
+    }
+
+    if search_query.is_empty() {
+        if let Some(favs) = payload.favorites {
+            if let Some(fav) = favs.first() {
+                let artist = fav.get("artist").and_then(|v| v.as_str()).unwrap_or_default();
+                if !artist.is_empty() {
+                    search_query = format!("{artist} mix");
+                }
+            }
+        }
+    }
+
+    if search_query.is_empty() {
+        if let Some(hist) = payload.history {
+            if let Some(item) = hist.first() {
+                let artist = item.get("artist").and_then(|v| v.as_str()).unwrap_or_default();
+                if !artist.is_empty() {
+                    search_query = format!("{artist} mix");
+                }
+            }
+        }
+    }
+
+    if search_query.is_empty() {
+        search_query = "Trending hits 2026".to_string();
+    }
+
+    let tracks = state.youtube.search(&search_query, limit).await.unwrap_or_default();
+
+    Json(json!({
+        "success": true,
+        "profile": {
+            "topArtists": [],
+            "dominantScript": "Latin",
+            "typicalDuration": 210,
+            "trackCount": tracks.len()
+        },
+        "tracks": tracks
+    }))
 }
 
 async fn audio_proxy(

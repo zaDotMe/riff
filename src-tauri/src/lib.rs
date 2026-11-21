@@ -101,6 +101,15 @@ fn create_node_cmd() -> std::process::Command {
 
 fn find_rust_core_bin() -> Option<PathBuf> {
     let bin_name = if cfg!(windows) { "riff-core.exe" } else { "riff-core" };
+
+    #[cfg(debug_assertions)]
+    let candidates = [
+        PathBuf::from("target").join("debug").join(bin_name),
+        PathBuf::from("target").join("release").join(bin_name),
+        PathBuf::from("bin").join(bin_name),
+    ];
+
+    #[cfg(not(debug_assertions))]
     let candidates = [
         PathBuf::from("target").join("release").join(bin_name),
         PathBuf::from("target").join("debug").join(bin_name),
@@ -178,6 +187,14 @@ fn start_backend_server() {
                             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
                                 if let Some(p) = val.get("port").and_then(|v| v.as_u64()) {
                                     SERVER_PORT.store(p as u16, Ordering::SeqCst);
+                                    println!("[tauri] Backend server ready on port {}", p);
+                                }
+                            }
+                        } else if let Some(idx) = line.find("http://127.0.0.1:") {
+                            let rest = &line[idx + "http://127.0.0.1:".len()..];
+                            if let Some(port_str) = rest.split(|c: char| !c.is_numeric()).next() {
+                                if let Ok(p) = port_str.parse::<u16>() {
+                                    SERVER_PORT.store(p, Ordering::SeqCst);
                                     println!("[tauri] Backend server ready on port {}", p);
                                 }
                             }

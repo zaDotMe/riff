@@ -12174,6 +12174,7 @@ function startServer(port = PORT) {
           const p = server.address().port;
           ACTIVE_PORT = p;
           try { logger.log('warn', `server.js build fix9: port ${PORT} busy, fallback to ${p}`); } catch (_) {}
+          console.log(JSON.stringify({ event: 'ready', port: p, token: SERVER_TOKEN, pid: process.pid }));
           console.log(`devsize internal server running on fallback port http://127.0.0.1:${p}`);
           require('./tools').updateYtDlpIfManaged().catch(() => {});
           resolve(p);

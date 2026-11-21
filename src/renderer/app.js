@@ -18,9 +18,15 @@ var homeNextToSearch = localStorage.getItem('riff_home_next_to_search') !== '0';
 document.body.classList.toggle('home-next-to-search', homeNextToSearch);
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const runDeferredStartup = () => {
+  const runDeferredStartup = async () => {
     if (runDeferredStartup._ran) return;
     runDeferredStartup._ran = true;
+    if (window.electronAPI && typeof window.electronAPI.getServerPort === 'function') {
+      try {
+        const port = await window.electronAPI.getServerPort();
+        if (port && typeof state !== 'undefined') state.serverPort = port;
+      } catch (_) {}
+    }
     if (typeof init10BandEqUI === 'function') init10BandEqUI();
     if (typeof syncSettingsSlidersToState === 'function') syncSettingsSlidersToState();
     if (typeof updateHqRouting === 'function') updateHqRouting();
