@@ -131,25 +131,58 @@ pub async fn proxy_audio(
         return Err(anyhow!("unsupported stream URL scheme"));
     }
 
-    let mut request = client.get(raw_url);
-    if let Some(host) = parsed.host_str() {
-        if host.ends_with("googlevideo.com") {
-            let mut ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
-            for (k, v) in parsed.query_pairs() {
-                if k == "c" {
-                    if v == "ANDROID_MUSIC" {
-                        ua = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip";
-                    } else if v == "IOS" {
-                        ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+    let is_googlevideo = parsed.host_str().map(|h| h.ends_with("googlevideo.com")).unwrap_or(false);
+
+    let effective_range = if is_googlevideo {
+        // GoogleVideo strictly enforces a maximum chunk limit of 1MB (1048576 bytes) for iOS/mobile clients.
+        // If range is missing or exceeds 1MB, cap it to 1MB.
+        const CHUNK_SIZE: u64 = 1_048_576;
+        match range {
+            None => Some(format!("bytes=0-{}", CHUNK_SIZE - 1)),
+            Some(r) => {
+                let trimmed = r.trim();
+                if let Some(spec) = trimmed.strip_prefix("bytes=") {
+                    if let Some((start_str, end_str)) = spec.split_once('-') {
+                        let start = start_str.parse::<u64>().unwrap_or(0);
+                        if end_str.is_empty() {
+                            Some(format!("bytes={start}-{}", start + CHUNK_SIZE - 1))
+                        } else {
+                            let end = end_str.parse::<u64>().unwrap_or(start + CHUNK_SIZE - 1);
+                            if end >= start + CHUNK_SIZE {
+                                Some(format!("bytes={start}-{}", start + CHUNK_SIZE - 1))
+                            } else {
+                                Some(trimmed.to_string())
+                            }
+                        }
+                    } else {
+                        Some(format!("bytes=0-{}", CHUNK_SIZE - 1))
                     }
+                } else {
+                    Some(format!("bytes=0-{}", CHUNK_SIZE - 1))
                 }
             }
-            request = request.header(header::USER_AGENT, ua);
         }
+    } else {
+        range.map(|r| r.to_string())
+    };
+
+    let mut request = client.get(raw_url);
+    if is_googlevideo {
+        let mut ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+        for (k, v) in parsed.query_pairs() {
+            if k == "c" {
+                if v == "ANDROID_MUSIC" {
+                    ua = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip";
+                } else if v == "IOS" {
+                    ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+                }
+            }
+        }
+        request = request.header(header::USER_AGENT, ua);
     }
 
-    if let Some(range) = range {
-        request = request.header(header::RANGE, range);
+    if let Some(ref r) = effective_range {
+        request = request.header(header::RANGE, r);
     }
 
     let upstream = request.send().await.context("request upstream audio")?;

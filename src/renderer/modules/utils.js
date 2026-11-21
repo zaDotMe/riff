@@ -51,18 +51,17 @@ var flushSync = window.flushSync || function() {};
   try {
     if (typeof window === 'undefined' || window.__riffFetchPatched) return;
     const api = window.electronAPI;
-    const token = api && api.serverToken;
-    if (!token) return;
+    const token = (api && api.serverToken) || 'riff-tauri-core';
     const origFetch = window.fetch ? window.fetch.bind(window) : null;
     if (!origFetch) return;
     window.__riffFetchPatched = true;
     window.fetch = function (input, init) {
       try {
         const raw = typeof input === 'string' ? input : (input && input.url) || '';
-        if (raw.indexOf('/api/') !== -1) {
+        if (raw.indexOf('/api/') !== -1 && token) {
           const opts = Object.assign({}, init || {});
           const headers = new Headers(opts.headers || (input && input.headers) || undefined);
-          headers.set('X-Riff-Token', token);
+          if (!headers.has('X-Riff-Token')) headers.set('X-Riff-Token', token);
           opts.headers = headers;
           return origFetch(input, opts);
         }

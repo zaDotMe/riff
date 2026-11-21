@@ -29,10 +29,10 @@ function resolveRustBinary() {
 
 function shouldPreferRust() {
   const backend = (process.env.RIFF_BACKEND || '').toLowerCase();
-  if (backend === 'rust') return true;
   if (backend === 'node') return false;
-  if (process.env.RIFF_USE_RUST === '1' || process.env.RIFF_USE_RUST === 'true') return true;
-  return false;
+  if (backend === 'rust') return true;
+  if (process.env.RIFF_USE_RUST === '0' || process.env.RIFF_USE_RUST === 'false') return false;
+  return Boolean(resolveRustBinary());
 }
 
 function startRustServer(binPath, requestedPort) {

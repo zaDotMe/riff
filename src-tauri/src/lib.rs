@@ -138,12 +138,14 @@ fn find_rust_core_bin() -> Option<PathBuf> {
 }
 
 fn start_backend_server() {
-    let prefer_rust = std::env::var("RIFF_BACKEND")
-        .map(|v| v.to_lowercase() == "rust")
+    let explicit_node = std::env::var("RIFF_BACKEND")
+        .map(|v| v.to_lowercase() == "node")
         .unwrap_or(false);
+    let rust_bin_opt = find_rust_core_bin();
+    let prefer_rust = !explicit_node && rust_bin_opt.is_some();
 
     let mut cmd = if prefer_rust {
-        if let Some(rust_bin) = find_rust_core_bin() {
+        if let Some(rust_bin) = rust_bin_opt {
             println!("[tauri] Spawning native Rust core backend: {}", rust_bin.display());
             let mut c = std::process::Command::new(&rust_bin);
             c.arg("--port").arg(DEFAULT_PORT.to_string());
@@ -153,7 +155,7 @@ fn start_backend_server() {
             }
             c
         } else {
-            eprintln!("[tauri] Warning: RIFF_BACKEND=rust was set, but riff-core binary was not found. Falling back to Node server.");
+            eprintln!("[tauri] Warning: riff-core binary was not found. Falling back to Node server.");
             create_node_cmd()
         }
     } else {

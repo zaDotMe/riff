@@ -6142,7 +6142,7 @@ async function handleGoogleVideoChunkedProxy(req, res, targetUrl, initialUrl) {
   let parsed;
   try { parsed = new URL(targetUrl); } catch (_) { res.writeHead(400); return res.end('Invalid url'); }
   const ua = googleVideoUserAgent(parsed);
-  const CHUNK = 1536 * 1024;
+  const CHUNK = 1024 * 1024; // 1 MB: GoogleVideo restricts ranges > 1MB for mobile/iOS clients
   const mime = (parsed.searchParams.get('mime') || 'audio/mp4').replace(/%2F/i, '/');
   let total = parseInt(parsed.searchParams.get('clen') || '0', 10) || ytContentLengthByUrl.get(targetUrl) || 0;
 
@@ -6291,17 +6291,7 @@ async function handleAudioProxy(req, res, targetUrl, redirectsLeft = 5, origUrl 
     }
 
     if (hostLower.endsWith('googlevideo.com')) {
-      if (!forward['range']) {
-        forward['range'] = 'bytes=0-';
-      }
-      const cParam = (parsed.searchParams.get('c') || '').toUpperCase();
-      forward['user-agent'] = googleVideoUserAgent(parsed);
-      if ((cParam === 'WEB' || cParam === 'WEB_REMIX' || cParam === 'TVHTML5') && fs.existsSync(YT_COOKIES_FILE)) {
-        const authHdrs = getYtAuthHeaders();
-        if (authHdrs && authHdrs.Cookie) forward['cookie'] = authHdrs.Cookie;
-      }
-    } else {
-      forward['user-agent'] = req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+      return handleGoogleVideoChunkedProxy(req, res, targetUrl, initialUrl);
     }
 
     const isGv = hostLower.endsWith('googlevideo.com');
@@ -7712,9 +7702,6 @@ const TOKEN_PROTECTED_ROUTES = new Set([
   '/api/translate',
   '/api/i18n-batch',
   '/api/vibe',
-  '/api/search',
-  '/api/artist',
-  '/api/lyrics',
   '/api/download',
   '/api/spotify-import',
   '/api/spotify-auth-start',
@@ -7723,7 +7710,6 @@ const TOKEN_PROTECTED_ROUTES = new Set([
   '/api/spotify-logout',
   '/api/prefetch',
   '/api/check-cache',
-  '/api/stream-info',
   '/api/track-analysis',
   '/api/tools-status',
   '/api/tools-install',
