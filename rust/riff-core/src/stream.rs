@@ -132,6 +132,22 @@ pub async fn proxy_audio(
     }
 
     let mut request = client.get(raw_url);
+    if let Some(host) = parsed.host_str() {
+        if host.ends_with("googlevideo.com") {
+            let mut ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+            for (k, v) in parsed.query_pairs() {
+                if k == "c" {
+                    if v == "ANDROID_MUSIC" {
+                        ua = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip";
+                    } else if v == "IOS" {
+                        ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+                    }
+                }
+            }
+            request = request.header(header::USER_AGENT, ua);
+        }
+    }
+
     if let Some(range) = range {
         request = request.header(header::RANGE, range);
     }
@@ -140,12 +156,17 @@ pub async fn proxy_audio(
     let status = StatusCode::from_u16(upstream.status().as_u16())
         .unwrap_or(StatusCode::BAD_GATEWAY);
 
-    let mut builder = Response::builder().status(status);
+    let mut builder = Response::builder()
+        .status(status)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
+        .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, "*");
+
     for name in [
         header::CONTENT_TYPE,
         header::CONTENT_LENGTH,
         header::CONTENT_RANGE,
-        header::ACCEPT_RANGES,
         header::CACHE_CONTROL,
     ] {
         if let Some(value) = upstream.headers().get(&name) {
