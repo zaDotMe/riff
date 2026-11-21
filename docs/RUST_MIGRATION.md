@@ -55,9 +55,21 @@ npm start
 
 ---
 
-## 5. Roadmap Menuju Tauri 2 (Fase 2)
+## 5. Status Implementasi Tauri 2 (Fase 2)
 
-1. Pasang `@tauri-apps/cli` v2.
-2. Scaffold `src-tauri` yang langsung meng-embed `riff-core` sebagai internal module atau sidecar.
-3. Sambungkan IPC window management (minimize, maximize, close, custom titlebar) ke Tauri commands.
-4. Hubungkan SMTC / Media Key via crate `souvlaki` / `tray-icon`.
+Runtime Tauri 2 (`src-tauri`) telah di-scaffold dan terintegrasi ke dalam workspace Cargo root:
+1. **`src-tauri/` crate:** Berbasis Tauri 2 (`tauri = "2"`), WebView2 di Windows, dengan custom frameless window dan capabilities permissions.
+2. **Icons asset pack:** Digenerate lengkap untuk Windows (`.ico`), macOS (`.icns`), dan PNG multipack.
+3. **`src/renderer/tauri-bridge.js`:** Strangler bridge otomatis mendeteksi environment Tauri dan memetakan `window.electronAPI` ke Tauri commands sehingga UI web (65k LOC) tidak memerlukan perubahan masif.
+4. **Commands:**
+   - Window controls: `minimize_window`, `maximize_window`, `close_window`.
+   - Backend discovery: `get_server_port`, `get_server_token`, `get_data_dir`.
+   - Shell: `open_external`, `get_app_version`.
+5. **Cara menjalankan via Tauri 2:**
+   ```powershell
+   npm run tauri:dev
+   ```
+   Atau jalankan binary langsung:
+   ```powershell
+   .\target\debug\riff-tauri.exe
+   ```

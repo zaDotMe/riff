@@ -1,0 +1,25 @@
+[package]
+name = "riff-tauri"
+version = "0.7.6"
+description = "Riff - Audio Player (Tauri 2 Runtime)"
+edition = "2021"
+authors = ["rootscripts"]
+license = "MIT"
+
+[lib]
+name = "riff_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+open = "5.3"
