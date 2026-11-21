@@ -8707,12 +8707,13 @@ function bindCoverHoldZoom(wrapEl) {
       if (/[іїєґ]/i.test(str)) uaCount++;
     }
     const uiLang = (localStorage.getItem('riff_ui_lang') || '').toLowerCase();
+    if (uiLang === 'id' || (navigator.languages || []).some(l => /^id/i.test(l))) return 'id';
     if (uiLang === 'uk' || (sample.length > 0 && uaCount / sample.length >= 0.15)) return 'ua';
     if (uiLang === 'ru' || (sample.length > 0 && cyrCount / sample.length >= 0.18) || (navigator.languages || []).some(l => /^ru/i.test(l))) return 'ru';
     if (uiLang === 'kz') return 'kz';
     const hasCyrPlaylist = (state.playlists || []).some(p => p && p.name && /[а-яёіїєґ]/i.test(p.name));
     if (hasCyrPlaylist) return 'ru';
-    return 'us';
+    return 'id';
   }
 
 
@@ -11031,26 +11032,30 @@ function bindCoverHoldZoom(wrapEl) {
 
      
     var CHART_COUNTRIES = [
-      { code: 'ua', name: 'Ukraine', ru: 'Украина', uk: 'Україна' },
-      { code: 'ru', name: 'Russia', ru: 'Россия', uk: 'Росія' },
-      { code: 'us', name: 'United States', ru: 'США', uk: 'США' },
-      { code: 'gb', name: 'United Kingdom', ru: 'Великобритания', uk: 'Велика Британія' },
-      { code: 'de', name: 'Germany', ru: 'Германия', uk: 'Німеччина' },
-      { code: 'fr', name: 'France', ru: 'Франция', uk: 'Франція' },
-      { code: 'pl', name: 'Poland', ru: 'Польша', uk: 'Польща' },
-      { code: 'kz', name: 'Kazakhstan', ru: 'Казахстан', uk: 'Казахстан' },
-      { code: 'jp', name: 'Japan', ru: 'Япония', uk: 'Японія' },
-      { code: 'kr', name: 'South Korea', ru: 'Южная Корея', uk: 'Південна Корея' },
-      { code: 'br', name: 'Brazil', ru: 'Бразилия', uk: 'Бразилія' },
-      { code: 'es', name: 'Spain', ru: 'Испания', uk: 'Іспанія' },
-      { code: 'it', name: 'Italy', ru: 'Италия', uk: 'Італія' },
-      { code: 'tr', name: 'Turkey', ru: 'Турция', uk: 'Туреччина' },
-      { code: 'global', name: 'Global', ru: 'Мир', uk: 'Світ' }
+      { code: 'id', name: 'Indonesia', ru: 'Индонезия', uk: 'Індонезія', id: 'Indonesia' },
+      { code: 'global', name: 'Global', ru: 'Мир', uk: 'Світ', id: 'Global' },
+      { code: 'us', name: 'United States', ru: 'США', uk: 'США', id: 'Amerika Serikat' },
+      { code: 'gb', name: 'United Kingdom', ru: 'Великобритания', uk: 'Велика Британія', id: 'Inggris' },
+      { code: 'jp', name: 'Japan', ru: 'Япония', uk: 'Японія', id: 'Jepang' },
+      { code: 'kr', name: 'South Korea', ru: 'Южная Корея', uk: 'Південна Корея', id: 'Korea Selatan' },
+      { code: 'ua', name: 'Ukraine', ru: 'Украина', uk: 'Україна', id: 'Ukraina' },
+      { code: 'ru', name: 'Russia', ru: 'Россия', uk: 'Росія', id: 'Rusia' },
+      { code: 'de', name: 'Germany', ru: 'Германия', uk: 'Німеччина', id: 'Jerman' },
+      { code: 'fr', name: 'France', ru: 'Франция', uk: 'Франція', id: 'Prancis' },
+      { code: 'pl', name: 'Poland', ru: 'Польша', uk: 'Польща', id: 'Polandia' },
+      { code: 'kz', name: 'Kazakhstan', ru: 'Казахстан', uk: 'Казахстан', id: 'Kazakhstan' },
+      { code: 'br', name: 'Brazil', ru: 'Бразилия', uk: 'Бразилія', id: 'Brasil' },
+      { code: 'es', name: 'Spain', ru: 'Испания', uk: 'Іспанія', id: 'Spanyol' },
+      { code: 'it', name: 'Italy', ru: 'Италия', uk: 'Італія', id: 'Italia' },
+      { code: 'tr', name: 'Turkey', ru: 'Турция', uk: 'Туреччина', id: 'Turki' }
     ];
     var getCountryLabel = (code) => {
       const lang = (localStorage.getItem('riff_ui_lang') || 'en').toLowerCase();
       const c = CHART_COUNTRIES.find(x => x.code === code) || CHART_COUNTRIES[0];
-      return (lang === 'ru' && c.ru) ? c.ru : ((lang === 'uk' && c.uk) ? c.uk : c.name);
+      if ((lang === 'id' || lang === 'in') && c.id) return c.id;
+      if (lang === 'ru' && c.ru) return c.ru;
+      if (lang === 'uk' && c.uk) return c.uk;
+      return c.name;
     };
 
     var currentTopChartTracks = [];
@@ -11127,7 +11132,7 @@ function bindCoverHoldZoom(wrapEl) {
           renderTracks(tracksEl, cached, 'search');
         }
       } else if (secId === 'sp-chart-sec') {
-        const country = localStorage.getItem('riff_chart_country') || 'ua';
+        const country = localStorage.getItem('riff_chart_country') || 'id';
         if (titleEl) titleEl.textContent = `${t('Top chart') || 'Top chart'} — ${getCountryLabel(country)}`;
         if (subEl) subEl.textContent = `${currentTopChartTracks.length} tracks`;
         if (gridEl) gridEl.classList.add('hidden');
@@ -11192,7 +11197,7 @@ function bindCoverHoldZoom(wrapEl) {
       const row = document.getElementById('sp-chart');
       if (!row) return;
       const port = state.serverPort || 38472;
-      const country = localStorage.getItem('riff_chart_country') || 'ua';
+      const country = localStorage.getItem('riff_chart_country') || 'id';
       const lbl = document.getElementById('sp-chart-country-label');
       if (lbl) lbl.textContent = getCountryLabel(country);
       const cacheKey = 'home_chart_v3_' + country;
@@ -11240,7 +11245,7 @@ function bindCoverHoldZoom(wrapEl) {
         chartSec = document.createElement('section');
         chartSec.className = 'sp-section';
         chartSec.id = 'sp-chart-sec';
-        const curCode = localStorage.getItem('riff_chart_country') || 'ua';
+        const curCode = localStorage.getItem('riff_chart_country') || 'id';
         chartSec.innerHTML = `
           <div class="sp-sec-head sp-sec-clickable">
             <h2>
@@ -11268,7 +11273,7 @@ function bindCoverHoldZoom(wrapEl) {
         const btn = chartSec.querySelector('#btn-sp-chart-country');
         const menu = chartSec.querySelector('#sp-chart-country-menu');
         const rebuild = () => {
-          const activeCode = localStorage.getItem('riff_chart_country') || 'ua';
+          const activeCode = localStorage.getItem('riff_chart_country') || 'id';
           menu.innerHTML = '';
           CHART_COUNTRIES.forEach(c => {
             const opt = document.createElement('button');

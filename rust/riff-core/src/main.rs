@@ -111,6 +111,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/health", get(health))
         .route("/api/hot", get(hot_picks_handler))
         .route("/api/trending", get(trending_handler))
+        .route("/api/top-chart", get(top_chart_handler))
         .route("/api/vibe", post(vibe_handler))
         .merge(protected)
         .with_state(state.clone())
@@ -633,6 +634,17 @@ struct LimitQuery {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct TrendingQuery {
+    region: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TopChartQuery {
+    country: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct VibePayload {
     #[allow(dead_code)]
     history: Option<Vec<Value>>,
@@ -647,7 +659,7 @@ async fn hot_picks_handler(
     Query(query): Query<LimitQuery>,
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(12).clamp(1, 25);
-    let tracks = state.youtube.search("Top Hits 2026", limit).await.unwrap_or_default();
+    let tracks = state.youtube.search("Top Hits Indonesia 2026", limit).await.unwrap_or_default();
     let title = "Hot picks 2026".to_string();
     Json(json!({
         "success": true,
@@ -658,12 +670,47 @@ async fn hot_picks_handler(
 
 async fn trending_handler(
     State(state): State<AppState>,
-    Query(query): Query<LimitQuery>,
+    Query(query): Query<TrendingQuery>,
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(16).clamp(1, 30);
-    let tracks = state.youtube.search("Trending music", limit).await.unwrap_or_default();
+    let region = query.region.as_deref().unwrap_or("id").to_lowercase();
+    let query_str = if region == "id" {
+        "Lagu Populer Indonesia 2026 Hits"
+    } else if region == "ru" || region == "ua" {
+        "Тренды музыки"
+    } else {
+        "Trending music worldwide"
+    };
+
+    let tracks = state.youtube.search(query_str, limit).await.unwrap_or_default();
     Json(json!({
         "success": true,
+        "region": region,
+        "tracks": tracks
+    }))
+}
+
+async fn top_chart_handler(
+    State(state): State<AppState>,
+    Query(query): Query<TopChartQuery>,
+) -> Json<Value> {
+    let country = query.country.as_deref().unwrap_or("id").to_lowercase();
+    let query_str = match country.as_str() {
+        "id" => "Top 50 Indonesia Lagu Terpopuler",
+        "ua" => "Top Hits Ukraine",
+        "ru" => "Топ чарт Россия",
+        "us" => "Top Hits USA Billboard",
+        "gb" => "Official UK Top 40",
+        "jp" => "Billboard Japan Hot 100",
+        "kr" => "Melon Top 100 K-Pop",
+        "global" => "Top 50 Global Hits",
+        _ => "Top Hits Indonesia 2026",
+    };
+
+    let tracks = state.youtube.search(query_str, 25).await.unwrap_or_default();
+    Json(json!({
+        "success": true,
+        "country": country,
         "tracks": tracks
     }))
 }

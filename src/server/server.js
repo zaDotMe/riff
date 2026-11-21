@@ -4014,6 +4014,7 @@ async function fetchYtmCountryChart(country) {
 }
 
 const LASTFM_COUNTRY_NAMES = {
+  id: 'Indonesia',
   ua: 'Ukraine',
   ru: 'Russian Federation',
   us: 'United States',
@@ -4232,10 +4233,12 @@ async function handleTrending(req, res) {
   }
 
   const CIS_SCENE_ARTISTS = ['Платина', 'Toxi$', 'Kai Angel', '9mice', 'FRIENDLY THUG 52 NGG', 'ALBLAK 52', 'kizaru', 'OG Buda', 'MAYOT', 'тёмный принц', 'd2s1', 'madk1d', 'Урал Гайсин', 'BUSHIDO ZHO', 'Heronwater', 'LOVV66', 'SODA LUV', ' SALUKI', 'Скриптонит', 'Три дня дождя', 'Пошлая Молли', 'Автостопом по фазе сна', 'shadowraze', 'zxcursed', 'uglystephan', 'Scally Milano', 'OBLADAET', 'Markul'];
+  const INDONESIA_SCENE_ARTISTS = ['Hindia', 'Bernadya', 'Mahalini', 'Tiara Andini', 'Tulus', 'Sal Priadi', 'Nadin Amizah', 'Juicy Luicy', 'Pamungkas', 'Denny Caknan', '.Feast', 'Sheila On 7', 'Fourtwnty', 'Rizky Febian'];
   const GLOBAL_SCENE_ARTISTS = ['Playboi Carti', 'Ken Carson', 'Destroy Lonely', 'Yeat', 'Travis Scott', 'Don Toliver', 'Future', 'Metro Boomin', 'Central Cee', 'Kendrick Lamar', 'The Weeknd', 'Billie Eilish'];
 
   const isCis = (region === 'ru' || region === 'ua' || region === 'kz');
-  const sceneList = isCis ? CIS_SCENE_ARTISTS : GLOBAL_SCENE_ARTISTS;
+  const isId = (region === 'id');
+  const sceneList = isId ? INDONESIA_SCENE_ARTISTS : (isCis ? CIS_SCENE_ARTISTS : GLOBAL_SCENE_ARTISTS);
 
   const userArtists = artistsParam
     ? artistsParam.split(/[,;|]/).map(a => a.trim()).filter(Boolean)
