@@ -7699,7 +7699,7 @@ function fetchNetEaseWords(title, artist, targetDuration) {
   });
 }
 
-const SERVER_TOKEN = crypto.randomBytes(24).toString('hex');
+const SERVER_TOKEN = process.env.RIFF_TOKEN || crypto.randomBytes(24).toString('hex');
 
 const TOKEN_PROTECTED_ROUTES = new Set([
   '/api/yt-cookies-from-browser',
@@ -11043,7 +11043,12 @@ async function requestHandler(req, res) {
     let originAllowed = false;
     try {
       const originUrl = new URL(requestOrigin);
-      originAllowed = originUrl.protocol === 'file:' || originUrl.hostname === '127.0.0.1' || originUrl.hostname === 'localhost' || originUrl.hostname === '::1';
+      originAllowed = originUrl.protocol === 'file:' ||
+                      originUrl.protocol === 'tauri:' ||
+                      originUrl.hostname === '127.0.0.1' ||
+                      originUrl.hostname === 'localhost' ||
+                      originUrl.hostname === 'tauri.localhost' ||
+                      originUrl.hostname === '::1';
     } catch (e) {
       originAllowed = false;
     }
@@ -12159,6 +12164,7 @@ function startServer(port = PORT) {
       const p = server.address().port;
       ACTIVE_PORT = p;
       try { logger.log('info', `server.js build fix9 listening on ${p} (ACTIVE_PORT)`); } catch (_) {}
+      console.log(JSON.stringify({ event: 'ready', port: p, token: SERVER_TOKEN, pid: process.pid }));
       console.log(`devsize internal server running on http://127.0.0.1:${p}`);
       require('./tools').updateYtDlpIfManaged().catch(() => {});
       resolve(p);

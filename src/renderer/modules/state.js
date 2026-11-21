@@ -134,6 +134,7 @@ try { window.electronAPI.storageSaveSync(diskMap); } catch (_) {}
   var cachedActiveGapEl = null, cachedTvkScrubber = null, cachedLyricsValidLines = null, cachedLyricsRef = null;
 
   var state = {
+    serverPort: 38472,
     vibeTracks: [],
     _autoplayAnchorSeeds: [],
     _autoplayPool: [],

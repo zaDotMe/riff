@@ -19,9 +19,9 @@
     getServerPort: async () => {
       try {
         const port = await invoke('get_server_port');
-        return port || 50406;
+        return port || 38472;
       } catch (_) {
-        return 50406;
+        return 38472;
       }
     },
     getAppVersion: async () => {
@@ -29,6 +29,13 @@
     },
     openExternal: (url) => invoke('open_external', { url: String(url) }),
     getDataDir: () => invoke('get_data_dir'),
+    readCacheFile: async () => null,
+    writeCacheFile: () => {},
+    getGpuCompositing: async () => true,
+    setAppProxy: async () => true,
+    googleAuthStatus: async () => ({ loggedIn: false }),
+    youtubePlaybackStatus: async () => ({ loggedIn: false }),
+    onYoutubePlaybackAuth: () => {},
     onWindowVisibility: () => {},
     discordRpcUpdate: () => {},
     discordRpcClear: () => {},
