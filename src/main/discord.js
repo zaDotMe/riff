@@ -2,7 +2,7 @@
 const RPC = require('discord-rpc');
 
 const CLIENT_ID = '1520100510877749358';
-const RECONNECT_DELAY_MS = 15000;
+const RECONNECT_DELAY_MS = 60000;
 
 let rpcClient = null;
 let isConnected = false;
@@ -32,7 +32,9 @@ function initRPC() {
   });
 
   rpcClient.login({ clientId: CLIENT_ID }).catch(err => {
-    console.warn('[Discord RPC] Login failed:', err.message || err);
+    if (process.env.RIFF_DEBUG === '1') {
+      console.warn('[Discord RPC] Login failed:', err.message || err);
+    }
     isConnected = false;
     rpcClient = null;
     scheduleReconnect();

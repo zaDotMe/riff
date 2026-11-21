@@ -91,7 +91,8 @@ if (process.platform === 'linux') {
 
 if (process.platform === 'win32') {
   enabledFeatures.push('HardwareMediaKeyHandling', 'MediaSessionService');
-  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,MediaRouter,OptimizationGuideModelDownloading,Translate');
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,MediaRouter,OptimizationGuideModelDownloading,Translate,D3D11VideoDecoder');
+  app.commandLine.appendSwitch('disable-accelerated-video-decode');
 }
 
 if (enabledFeatures.length > 0) {
