@@ -1,0 +1,27 @@
+[package]
+name = "riff-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Rust core sidecar for Riff: local library, SQLite index, and stream resolution"
+repository = "https://github.com/zaDotMe/riff"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+directories = "6"
+lofty = "0.25"
+mime_guess = "2"
+reqwest = { version = "0.13", features = ["stream"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"

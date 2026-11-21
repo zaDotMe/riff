@@ -152,7 +152,7 @@ if (process.argv.includes('lyrics') || process.argv.includes('--lyrics')) {
 }
 
 function runGUI() {
-  const { startServer, PORT, getServerToken } = require('../server/server');
+  const { startServer, PORT, getServerToken, getBackendType } = require('./server-manager');
   const discordRPC = require('./discord');
 
   let mainWindow = null;

@@ -13,3 +13,5 @@ yt-cookies.txt
 .yt-logged-out
 *.log
 .DS_Store
+target/
+
