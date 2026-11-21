@@ -10,6 +10,23 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" />
   <link rel="stylesheet" href="styles.css">
   <script src="tauri-bridge.js"></script>
+  <script>
+    window.addEventListener('error', function(e) {
+      console.error('[Web Error]', e.message, 'at', e.filename, ':', e.lineno);
+      if (window.__TAURI__?.core?.invoke) {
+        window.__TAURI__.core.invoke('log_error', {
+          level: 'SCRIPT_ERROR',
+          message: e.message || 'unknown',
+          stack: e.error ? e.error.stack : null,
+          filename: e.filename || null,
+          line: e.lineno || null
+        });
+      }
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      console.error('[Unhandled Rejection]', e.reason);
+    });
+  </script>
   <script>if (/Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '')) document.documentElement.classList.add('platform-darwin');</script>
   <style id="tg-account-critical-css">
   #settings-nav-account.settings-account-nav-btn {
@@ -87,8 +104,8 @@
     height: 22px !important;
     display: block !important;
     background-color: rgba(0, 0, 0, 0.24) !important;
-    -webkit-mask: url('../../assets/riff.svg') no-repeat center / contain !important;
-    mask: url('../../assets/riff.svg') no-repeat center / contain !important;
+    -webkit-mask: url('assets/riff.svg') no-repeat center / contain !important;
+    mask: url('assets/riff.svg') no-repeat center / contain !important;
     pointer-events: none !important;
   }
   .tg-pat-icon.p1  { top: 10%; left: 21%; transform: rotate(-14deg) scale(0.95); opacity: 0.72; }
@@ -258,8 +275,8 @@
     height: 100% !important;
     display: block !important;
     background-color: #ffffff !important;
-    -webkit-mask: url('../../assets/riff.svg') no-repeat center / contain !important;
-    mask: url('../../assets/riff.svg') no-repeat center / contain !important;
+    -webkit-mask: url('assets/riff.svg') no-repeat center / contain !important;
+    mask: url('assets/riff.svg') no-repeat center / contain !important;
   }
   .acc-satellite-btn {
     position: absolute !important;
@@ -495,7 +512,7 @@ body:not(.home-next-to-search) .bs-home-circle { display: none !important; }
 
         <button class="nav-item active" data-view="discover" id="nav-discover" title="Home">
           <div class="nav-indicator">
-            <img id="nav-home-app-icon" class="nav-home-app-icon" src="../../assets/02-editor.svg" alt="Home" draggable="false" />
+            <img id="nav-home-app-icon" class="nav-home-app-icon" src="assets/02-editor.svg" alt="Home" draggable="false" />
           </div>
           <div class="sb-home-banner-content">
             <span class="sb-home-banner-title" data-i18n-fixed>Riff</span>
@@ -774,7 +791,7 @@ body:not(.home-next-to-search) .bs-home-circle { display: none !important; }
           <div class="sp-home" id="sp-home"><div class="spotify-promo hidden" id="spotify-promo" hidden>
   <div class="riff-orbit-stage" aria-hidden="true">
     <div class="riff-orbit-path"></div>
-    <img class="riff-orbit-center" src="../../assets/riff.svg" width="56" height="56" alt="Riff" draggable="false">
+    <img class="riff-orbit-center" src="assets/riff.svg" width="56" height="56" alt="Riff" draggable="false">
     <div class="riff-orbit-ring">
       <div class="riff-orbit-item" style="transform: rotate(0deg) translateY(-70px) rotate(0deg);">
         <img class="riff-orbit-logo" src="https://cdn.simpleicons.org/spotify/1ED760" width="32" height="32" loading="lazy" alt="Spotify" onerror="this.style.display='none'" style="transform: rotate(0deg) translateY(-70px) rotate(0deg);">
@@ -3125,7 +3142,7 @@ body:not(.home-next-to-search) .bs-home-circle { display: none !important; }
                   <div class="setting-item" id="setting-home-layout">
                     <div class="setting-item-top" style="align-items: center;">
                       <div style="display: flex; align-items: center; gap: 8px;">
-                        <img id="setting-home-app-icon" src="../../assets/02-editor.svg" width="18" height="18" style="border-radius: 4px; object-fit: contain; display: inline-block;" alt="">
+                        <img id="setting-home-app-icon" src="assets/02-editor.svg" width="18" height="18" style="border-radius: 4px; object-fit: contain; display: inline-block;" alt="">
                         <span class="setting-name">Riff Home</span>
                       </div>
                       <button type="button" class="effect-switch-btn" id="btn-toggle-riff-home"><span class="thumb"></span></button>
@@ -3207,7 +3224,7 @@ body:not(.home-next-to-search) .bs-home-circle { display: none !important; }
               <div class="setting-item-top" style="align-items: center; justify-content: space-between;">
                 <div style="display: flex; align-items: center; gap: 12px;">
                   <div style="width: 32px; height: 32px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center;">
-                    <img src="../../assets/icon.png" alt="Riff" style="width: 32px; height: 32px; object-fit: cover;">
+                    <img src="assets/icon.png" alt="Riff" style="width: 32px; height: 32px; object-fit: cover;">
                   </div>
                   <div style="display: flex; flex-direction: column;">
                     <span class="setting-name">Riff</span>
@@ -4955,7 +4972,7 @@ body:not(.home-next-to-search) .bs-home-circle { display: none !important; }
     </div>
   </div>
 
-  <script src="../../assets/hls.min.js"></script>
+  <script src="hls.min.js"></script>
   <script src="audio.js"></script>
   <script src="shapes.js"></script>
   <script src="lyrics-rtl.js"></script>

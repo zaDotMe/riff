@@ -8,6 +8,9 @@ function dismissBootSkeleton() {
   if (!s || s.classList.contains('hide')) return;
   s.classList.add('hide');
   setTimeout(() => s.remove(), 180);
+  if (window.electronAPI && typeof window.electronAPI.logError === 'function') {
+    window.electronAPI.logError('INFO', 'Boot skeleton dismissed - UI rendered', null);
+  }
 }
 setTimeout(dismissBootSkeleton, 600);
 

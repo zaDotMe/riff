@@ -5046,19 +5046,22 @@ function bindCoverHoldZoom(wrapEl) {
         }
       } catch (_) {}
 
-      const localSources = ['../../assets/lottie.min.js', 'assets/lottie.min.js'];
+      const localSources = ['assets/lottie.min.js'];
       for (const src of localSources) {
         try {
-          const ok = await new Promise((resOk) => {
-            const s = document.createElement('script');
-            s.src = src;
-            s.onload = () => resOk(true);
-            s.onerror = () => { s.remove(); resOk(false); };
-            document.head.appendChild(s);
-          });
-          if (ok && (window.lottie || window.bodymovin)) {
-            resolve(window.lottie || window.bodymovin);
-            return;
+          const res = await fetch(src);
+          const ct = res.headers.get('content-type') || '';
+          if (res.ok && !ct.includes('html')) {
+            const code = await res.text();
+            if (code && !code.trim().startsWith('<') && code.length > 500) {
+              const s = document.createElement('script');
+              s.textContent = code;
+              document.head.appendChild(s);
+              if (window.lottie || window.bodymovin) {
+                resolve(window.lottie || window.bodymovin);
+                return;
+              }
+            }
           }
         } catch (_) {}
       }
@@ -5117,8 +5120,8 @@ function bindCoverHoldZoom(wrapEl) {
 
     duckFetchPromise = (async () => {
       const candidatePaths = [
-        new URL('../../assets/duck.json', window.location.href).href,
-        '../../assets/duck.json',
+        new URL('assets/duck.json', window.location.href).href,
+        'assets/duck.json',
         '../assets/duck.json',
         './assets/duck.json',
         'assets/duck.json',
@@ -6284,9 +6287,9 @@ function bindCoverHoldZoom(wrapEl) {
   ];
 
   function resolveAppIconSrc(val) {
-    if (!val) return '../../assets/02-editor.svg';
+    if (!val) return 'assets/02-editor.svg';
     if (val.startsWith('file:') || val.startsWith('http') || val.startsWith('data:')) return val;
-    return '../../assets/' + val.replace(/^.*assets\//, '');
+    return 'assets/' + val.replace(/^.*assets\//, '');
   }
   function updateHomeBannerColorsFromIcon(imgSrc) {
     const navBtn = document.getElementById('nav-discover');

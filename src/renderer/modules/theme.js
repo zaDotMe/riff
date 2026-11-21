@@ -1018,7 +1018,7 @@ window.currentWaveFocusedIndex = currentWaveFocusedIndex;
           runTransform();
         } catch (_) {}
       };
-      _likedBaseImg.src = '../../assets/liked.png';
+      _likedBaseImg.src = 'assets/liked.png';
     }
   }
 
@@ -2473,7 +2473,7 @@ window.currentWaveFocusedIndex = currentWaveFocusedIndex;
           likedBasePixels = new Uint8ClampedArray(ctx.getImageData(0, 0, 200, 200).data);
           applyPixels();
         };
-        likedBaseImg.src = '../../assets/liked.png';
+        likedBaseImg.src = 'assets/liked.png';
       }
     };
     refreshLikedCoverTint();

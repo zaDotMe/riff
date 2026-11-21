@@ -3658,10 +3658,10 @@ window.HomeCache = HomeCache;
     const badges = typeof getAccountBadges === 'function' ? getAccountBadges() : { isOwner: false, isDonator: false };
     let html = '';
     if (badges.isOwner) {
-      html += `<img class="account-badge-img" src="../../assets/ownerbadge.png" alt="Owner" title="Owner" draggable="false" onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/assets/ownerbadge.png';}else{this.style.display='none';}" />`;
+      html += `<img class="account-badge-img" src="assets/ownerbadge.png" alt="Owner" title="Owner" draggable="false" onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/assets/ownerbadge.png';}else{this.style.display='none';}" />`;
     }
     if (badges.isDonator) {
-      html += `<img class="account-badge-img" src="../../assets/donatorbadge.png" alt="Donator" title="Donator" draggable="false" onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/assets/donatorbadge.png';}else{this.style.display='none';}" />`;
+      html += `<img class="account-badge-img" src="assets/donatorbadge.png" alt="Donator" title="Donator" draggable="false" onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/assets/donatorbadge.png';}else{this.style.display='none';}" />`;
     }
     const heroBadges = document.getElementById('account-hero-badges');
     const navBadges = document.getElementById('settings-nav-account-badges');

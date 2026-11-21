@@ -257,6 +257,20 @@ fn get_app_version() -> String {
 }
 
 #[tauri::command]
+fn log_error(
+    level: String,
+    message: String,
+    stack: Option<String>,
+    filename: Option<String>,
+    line: Option<u32>,
+) {
+    eprintln!(
+        "[webview-{}] {} (at {:?}:{:?}) (stack: {:?})",
+        level, message, filename, line, stack
+    );
+}
+
+#[tauri::command]
 fn open_external(url: String) {
     let _ = open::that(&url);
 }
@@ -269,6 +283,34 @@ fn get_data_dir() -> String {
         .join("Riff")
         .to_string_lossy()
         .to_string()
+}
+
+#[tauri::command]
+fn get_storage_all() -> serde_json::Value {
+    let candidates = [
+        PathBuf::from("src/storage.json"),
+        PathBuf::from("../src/storage.json"),
+    ];
+
+    for c in &candidates {
+        if c.exists() {
+            if let Ok(content) = std::fs::read_to_string(c) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    return json;
+                }
+            }
+        }
+    }
+
+    serde_json::json!({})
+}
+
+#[tauri::command]
+fn save_storage_batch(data: serde_json::Value) {
+    let path = PathBuf::from("src/storage.json");
+    if let Ok(str_val) = serde_json::to_string_pretty(&data) {
+        let _ = std::fs::write(path, str_val);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -286,6 +328,9 @@ pub fn run() {
             get_app_version,
             open_external,
             get_data_dir,
+            get_storage_all,
+            save_storage_batch,
+            log_error,
         ])
         .setup(|_app| {
             start_backend_server();
