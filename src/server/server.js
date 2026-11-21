@@ -1118,6 +1118,19 @@ async function fetchDirectYoutubeStreamServer(videoId, quality = 'medium') {
   const visitorData = await getYtVisitorData();
   const clients = [
     {
+      clientName: 'ANDROID_MUSIC',
+      clientVersion: '7.27.52',
+      androidSdkVersion: 34,
+      userAgent: 'com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US; Quest 3) gzip',
+      host: 'music.youtube.com'
+    },
+    {
+      clientName: 'ANDROID_VR',
+      clientVersion: '1.61.48',
+      androidSdkVersion: 32,
+      userAgent: 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip'
+    },
+    {
       clientName: 'IOS',
       clientVersion: '20.10.4',
       deviceMake: 'Apple',
@@ -1125,13 +1138,6 @@ async function fetchDirectYoutubeStreamServer(videoId, quality = 'medium') {
       userAgent: 'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
       osName: 'iOS',
       osVersion: '18.3.2.22D60'
-    },
-    {
-      clientName: 'ANDROID_MUSIC',
-      clientVersion: '7.27.52',
-      androidSdkVersion: 34,
-      userAgent: 'com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US; Quest 3) gzip',
-      host: 'music.youtube.com'
     }
   ];
 
@@ -3432,161 +3438,170 @@ async function fetchRiffLibraryPool(qStr) {
 }
 
 async function handleSearch(req, res, query, platform = 'ytmusic', limit = 12, offset = 0) {
-  limit = Math.max(1, parseInt(limit, 10) || 12);
-  offset = Math.max(0, parseInt(offset, 10) || 0);
-  const qStr = String(query || '').trim();
-  if (!qStr) {
+  try {
+    limit = Math.max(1, parseInt(limit, 10) || 12);
+    offset = Math.max(0, parseInt(offset, 10) || 0);
+    const qStr = String(query || '').trim();
+    if (!qStr) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, tracks: [], hasMore: false }));
+    }
+
+    const poolCacheKey = `pool:${platform}:${qStr.toLowerCase()}`;
+    let pool = searchCache.get(poolCacheKey);
+
+    if (offset === 0 && (!pool || !Array.isArray(pool))) {
+      if (platform === 'rifflibrary') {
+        pool = await fetchRiffLibraryPool(qStr);
+        const riffCacheKey = `pool:rifflibrary:${qStr.toLowerCase()}`;
+        searchCache.set(riffCacheKey, pool);
+        setTimeout(() => { searchCache.delete(riffCacheKey); }, 300000);
+        const sliced = (Array.isArray(pool) ? pool : []).filter(Boolean).slice(0, limit);
+        await Promise.all(sliced.map(async t => {
+          if (t && t.isCached === undefined && t.id) {
+            t.isCached = !!(await findCachedFile(t.id));
+          }
+        }));
+        if (sliced[0] && sliced[0].url) {
+          prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'youtube').catch(() => {});
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          tracks: sliced,
+          hasMore: limit < (pool?.length || 0)
+        }));
+      }
+
+      if (platform === 'soundcloud') {
+        pool = (await fetchSoundCloudSearch(qStr, 40).catch(() => [])) || [];
+        pool = cleanSearchResults(pool, qStr);
+        searchCache.set(poolCacheKey, pool);
+        setTimeout(() => { searchCache.delete(poolCacheKey); }, 300000);
+        const sliced = (Array.isArray(pool) ? pool : []).filter(Boolean).slice(0, limit);
+        await Promise.all(sliced.map(async t => {
+          if (t && t.isCached === undefined && t.id) {
+            t.isCached = !!(await findCachedFile(t.id));
+          }
+        }));
+        if (sliced[0] && sliced[0].url) {
+          prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'soundcloud').catch(() => {});
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          tracks: sliced,
+          hasMore: limit < (pool?.length || 0)
+        }));
+      }
+
+      if (platform === 'youtube') {
+        pool = (await directYoutubeSearch(qStr, false, 40).catch(() => [])) || [];
+        pool = cleanSearchResults(pool, qStr);
+        if (pool.length === 0) {
+          pool = await fetchMetadataSearchFallback(qStr, 30);
+        }
+        searchCache.set(poolCacheKey, pool);
+        setTimeout(() => { searchCache.delete(poolCacheKey); }, 300000);
+        const sliced = (Array.isArray(pool) ? pool : []).filter(Boolean).slice(0, limit);
+        await Promise.all(sliced.map(async t => {
+          if (t && t.isCached === undefined && t.id) {
+            t.isCached = !!(await findCachedFile(t.id));
+          }
+        }));
+        if (sliced[0] && sliced[0].url) {
+          prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'youtube').catch(() => {});
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          tracks: sliced,
+          hasMore: limit < (pool?.length || 0)
+        }));
+      }
+
+      if (platform === 'ytmusic') {
+        const ytmTracks = (await ytmusicSearch(qStr).catch(() => [])) || [];
+        if (ytmTracks.length > 0) {
+          pool = [...ytmTracks];
+        } else {
+          pool = (await directYoutubeSearch(qStr, false, 40).catch(() => [])) || [];
+        }
+        pool = cleanSearchResults(pool, qStr);
+        if (pool.length === 0) {
+          pool = await fetchMetadataSearchFallback(qStr, 30);
+        }
+        searchCache.set(poolCacheKey, pool);
+        setTimeout(() => { searchCache.delete(poolCacheKey); }, 300000);
+        const sliced = (Array.isArray(pool) ? pool : []).filter(Boolean).slice(0, limit);
+        await Promise.all(sliced.map(async t => {
+          if (t && t.isCached === undefined && t.id) {
+            t.isCached = !!(await findCachedFile(t.id));
+          }
+        }));
+        if (sliced[0] && sliced[0].url) {
+          prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'youtube').catch(() => {});
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          tracks: sliced,
+          hasMore: limit < (pool?.length || 0)
+        }));
+      }
+    }
+
+    if (!pool || !Array.isArray(pool)) {
+      if (platform === 'rifflibrary') {
+        pool = await fetchRiffLibraryPool(qStr);
+      } else if (platform === 'soundcloud') {
+        pool = (await fetchSoundCloudSearch(qStr, 40).catch(() => [])) || [];
+      } else if (platform === 'youtube') {
+        pool = (await directYoutubeSearch(qStr, false, 40).catch(() => [])) || [];
+      } else {
+        const ytmTracks = (await ytmusicSearch(qStr).catch(() => [])) || [];
+        if (ytmTracks.length > 0) {
+          pool = [...ytmTracks];
+        } else {
+          pool = (await directYoutubeSearch(qStr, false, 40).catch(() => [])) || [];
+        }
+      }
+      if (platform !== 'rifflibrary') {
+        pool = cleanSearchResults(pool, qStr);
+        if ((platform === 'ytmusic' || platform === 'youtube') && (!pool || pool.length === 0)) {
+          pool = await fetchMetadataSearchFallback(qStr, 30);
+        }
+      }
+      searchCache.set(poolCacheKey, pool);
+      setTimeout(() => { searchCache.delete(poolCacheKey); }, 300000);
+    }
+
+    const validPool = (Array.isArray(pool) ? pool : []).filter(Boolean);
+    const sliced = validPool.slice(offset, offset + limit);
+    await Promise.all(sliced.map(async t => {
+      if (t && t.isCached === undefined && t.id) {
+        t.isCached = !!(await findCachedFile(t.id));
+      }
+    }));
+
+    if (offset === 0 && sliced[0] && sliced[0].url) {
+      prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'youtube').catch(() => {});
+    }
+
+    const result = {
+      success: true,
+      tracks: sliced,
+      hasMore: (offset + limit) < validPool.length
+    };
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ success: true, tracks: [], hasMore: false }));
-  }
-
-  const poolCacheKey = `pool:${platform}:${qStr.toLowerCase()}`;
-  let pool = searchCache.get(poolCacheKey);
-
-  if (offset === 0 && (!pool || !Array.isArray(pool))) {
-    if (platform === 'rifflibrary') {
-      pool = await fetchRiffLibraryPool(qStr);
-      const riffCacheKey = `pool:rifflibrary:${qStr.toLowerCase()}`;
-      searchCache.set(riffCacheKey, pool);
-      setTimeout(() => { searchCache.delete(riffCacheKey); }, 300000);
-      const sliced = pool.slice(0, limit);
-      await Promise.all(sliced.map(async t => {
-        if (t.isCached === undefined && t.id) {
-          t.isCached = !!(await findCachedFile(t.id));
-        }
-      }));
-      if (sliced[0] && sliced[0].url) {
-        prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'youtube').catch(() => {});
-      }
+    return res.end(JSON.stringify(result));
+  } catch (err) {
+    try { logger.log('warn', `handleSearch error: ${err && err.message}`); } catch (_) {}
+    if (!res.headersSent) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({
-        success: true,
-        tracks: sliced,
-        hasMore: limit < pool.length
-      }));
-    }
-
-    if (platform === 'soundcloud') {
-      pool = (await fetchSoundCloudSearch(qStr, 40).catch(() => [])) || [];
-      pool = cleanSearchResults(pool, qStr);
-      searchCache.set(poolCacheKey, pool);
-      setTimeout(() => { searchCache.delete(poolCacheKey); }, 300000);
-      const sliced = pool.slice(0, limit);
-      await Promise.all(sliced.map(async t => {
-        if (t.isCached === undefined && t.id) {
-          t.isCached = !!(await findCachedFile(t.id));
-        }
-      }));
-      if (sliced[0] && sliced[0].url) {
-        prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'soundcloud').catch(() => {});
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({
-        success: true,
-        tracks: sliced,
-        hasMore: limit < pool.length
-      }));
-    }
-
-    if (platform === 'youtube') {
-      pool = (await directYoutubeSearch(qStr, false, 40).catch(() => [])) || [];
-      pool = cleanSearchResults(pool, qStr);
-      if (pool.length === 0) {
-        pool = await fetchMetadataSearchFallback(qStr, 30);
-      }
-      searchCache.set(poolCacheKey, pool);
-      setTimeout(() => { searchCache.delete(poolCacheKey); }, 300000);
-      const sliced = pool.slice(0, limit);
-      await Promise.all(sliced.map(async t => {
-        if (t.isCached === undefined && t.id) {
-          t.isCached = !!(await findCachedFile(t.id));
-        }
-      }));
-      if (sliced[0] && sliced[0].url) {
-        prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'youtube').catch(() => {});
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({
-        success: true,
-        tracks: sliced,
-        hasMore: limit < pool.length
-      }));
-    }
-
-    if (platform === 'ytmusic') {
-      const ytmTracks = (await ytmusicSearch(qStr).catch(() => [])) || [];
-      if (ytmTracks.length > 0) {
-        pool = [...ytmTracks];
-      } else {
-        pool = (await directYoutubeSearch(qStr, false, 40).catch(() => [])) || [];
-      }
-      pool = cleanSearchResults(pool, qStr);
-      if (pool.length === 0) {
-        pool = await fetchMetadataSearchFallback(qStr, 30);
-      }
-      searchCache.set(poolCacheKey, pool);
-      setTimeout(() => { searchCache.delete(poolCacheKey); }, 300000);
-      const sliced = pool.slice(0, limit);
-      await Promise.all(sliced.map(async t => {
-        if (t.isCached === undefined && t.id) {
-          t.isCached = !!(await findCachedFile(t.id));
-        }
-      }));
-      if (sliced[0] && sliced[0].url) {
-        prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'youtube').catch(() => {});
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({
-        success: true,
-        tracks: sliced,
-        hasMore: limit < pool.length
-      }));
+      return res.end(JSON.stringify({ success: false, tracks: [], hasMore: false, error: (err && err.message) || 'Search error' }));
     }
   }
-
-  if (!pool || !Array.isArray(pool)) {
-    if (platform === 'rifflibrary') {
-      pool = await fetchRiffLibraryPool(qStr);
-    } else if (platform === 'soundcloud') {
-      pool = (await fetchSoundCloudSearch(qStr, 40).catch(() => [])) || [];
-    } else if (platform === 'youtube') {
-      pool = (await directYoutubeSearch(qStr, false, 40).catch(() => [])) || [];
-    } else {
-      const ytmTracks = (await ytmusicSearch(qStr).catch(() => [])) || [];
-      if (ytmTracks.length > 0) {
-        pool = [...ytmTracks];
-      } else {
-        pool = (await directYoutubeSearch(qStr, false, 40).catch(() => [])) || [];
-      }
-    }
-    if (platform !== 'rifflibrary') {
-      pool = cleanSearchResults(pool, qStr);
-      if ((platform === 'ytmusic' || platform === 'youtube') && pool.length === 0) {
-        pool = await fetchMetadataSearchFallback(qStr, 30);
-      }
-    }
-    searchCache.set(poolCacheKey, pool);
-    setTimeout(() => { searchCache.delete(poolCacheKey); }, 300000);
-  }
-
-  const sliced = pool.slice(offset, offset + limit);
-  await Promise.all(sliced.map(async t => {
-    if (t.isCached === undefined && t.id) {
-      t.isCached = !!(await findCachedFile(t.id));
-    }
-  }));
-
-  if (offset === 0 && sliced[0] && sliced[0].url) {
-    prefetchTrack(sliced[0].url, sliced[0].id, sliced[0].platform || 'youtube').catch(() => {});
-  }
-
-  const result = {
-    success: true,
-    tracks: sliced,
-    hasMore: (offset + limit) < pool.length
-  };
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify(result));
 }
 
 async function handleVibeRecommendations(req, res, payload) {

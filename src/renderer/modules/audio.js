@@ -77,11 +77,14 @@ async function recoverCurrentStreamOnce(resumePos, myToken) {
         const qQuality = encodeURIComponent(localStorage.getItem('riff_audio_quality') || 'medium');
         const qSearch = encodeURIComponent(cur.searchQuery || ((cur.artist ? cur.artist + ' - ' : '') + (cur.title || '')));
         const isRiffStream = localStorage.getItem('riff_library_streaming') === '1' ? '&riffStream=1' : '';
-        const forceYtDlpParam = (cur._retryCount >= 2) ? '&forceYtDlp=1' : '';
-        const retryTimeoutMs = (cur._retryCount >= 2) ? 25000 : 12000;
-        const retryUrl = `http://127.0.0.1:${state.serverPort}/api/stream-info?url=${encodeURIComponent(cur.url || '')}&id=${encodeURIComponent(cur.id || '')}&platform=${encodeURIComponent(cur.platform || state.platform)}&title=${encodeURIComponent(cur.title || '')}&artist=${encodeURIComponent(cur.artist || '')}&duration=${encodeURIComponent(cur.duration || 0)}&quality=${qQuality}&q=${qSearch}${forceYtDlpParam}${isRiffStream}&bust=${Date.now()}`;
+        const blockedParam = cur.id ? `&blocked=${encodeURIComponent(cur.id)}${cur.resolvedYtId ? ',' + encodeURIComponent(cur.resolvedYtId) : ''}` : '';
+        const forceYtDlpParam = '&forceYtDlp=1';
+        const retryTimeoutMs = 25000;
+        const retryUrl = `http://127.0.0.1:${state.serverPort}/api/stream-info?url=${encodeURIComponent(cur.url || '')}&id=${encodeURIComponent(cur.id || '')}&platform=${encodeURIComponent(cur.platform || state.platform)}&title=${encodeURIComponent(cur.title || '')}&artist=${encodeURIComponent(cur.artist || '')}&duration=${encodeURIComponent(cur.duration || 0)}&quality=${qQuality}&q=${qSearch}${forceYtDlpParam}${blockedParam}${isRiffStream}&bust=${Date.now()}`;
         const r = await fetch(retryUrl, { signal: AbortSignal.timeout(retryTimeoutMs) });
-        d = await r.json();
+        if (r && r.ok) {
+          try { d = await r.json(); } catch (_) { d = null; }
+        }
         if (myToken !== state.loadToken) return;
         if (d && d.success && d.streamUrl) {
           cur._preloadedStreamUrl = d.streamUrl;
@@ -1127,7 +1130,10 @@ window.rememberWaveShown = window.rememberWaveShown || function(fresh) {};
           throw fetchErr;
         }
       }
-      const data = await res.json();
+      let data = null;
+      if (res && res.ok) {
+        try { data = await res.json(); } catch (_) { data = null; }
+      }
 
       if (currentToken !== state.loadToken) return;
       if (data && data.sourceMeta) {

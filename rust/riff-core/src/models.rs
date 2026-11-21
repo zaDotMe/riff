@@ -99,3 +99,13 @@ pub struct FileQuery {
 pub struct ProxyQuery {
     pub url: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchQuery {
+    pub q: Option<String>,
+    #[allow(dead_code)]
+    pub platform: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}

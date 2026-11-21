@@ -1050,7 +1050,10 @@ window.ensureAboutSupportStyles = ensureAboutSupportStyles;
 
     try {
       const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/albums/search?q=${encodeURIComponent(query)}`);
-      const data = await res.json();
+      let data = null;
+      if (res && res.ok) {
+        try { data = await res.json(); } catch (_) { data = null; }
+      }
       if (state.searchToken !== token) return;
       if (!data || !data.success || !Array.isArray(data.albums) || data.albums.length === 0) {
         container.innerHTML = '';
@@ -1120,7 +1123,10 @@ window.ensureAboutSupportStyles = ensureAboutSupportStyles;
 
     try {
       const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/playlists/search?q=${encodeURIComponent(query)}`);
-      const data = await res.json();
+      let data = null;
+      if (res && res.ok) {
+        try { data = await res.json(); } catch (_) { data = null; }
+      }
       if (state.searchToken !== token) return;
       if (!data || !data.success || !Array.isArray(data.playlists) || data.playlists.length === 0) {
         container.innerHTML = '';
@@ -1528,12 +1534,15 @@ window.ensureAboutSupportStyles = ensureAboutSupportStyles;
       const searchPlat = localStorage.getItem('riff_library_enabled') !== '0' ? 'rifflibrary' : state.platform;
       const searchUrl = `http://127.0.0.1:${state.serverPort}/api/search?q=${encodeURIComponent(query)}&platform=${searchPlat}&limit=12&offset=0`;
       const res = await fetch(searchUrl);
-      const data = await res.json();
+      let data = null;
+      if (res && res.ok) {
+        try { data = await res.json(); } catch (_) { data = null; }
+      }
       if (state.searchToken !== searchToken) return;
 
-      if (!data.success || !data.tracks) {
+      if (!data || !data.success || !Array.isArray(data.tracks)) {
         if (state.platform === 'ytmusic') showToast('YouTube Music is unavailable');
-        throw new Error(data.error || 'Failed to load search results');
+        throw new Error((data && data.error) || 'Failed to load search results');
       }
 
       data.tracks = rankSearchTracks(query, data.tracks);
@@ -1574,7 +1583,10 @@ window.ensureAboutSupportStyles = ensureAboutSupportStyles;
               const searchPlat = localStorage.getItem('riff_library_enabled') !== '0' ? 'rifflibrary' : state.platform;
               const reqToken = state.searchToken;
               const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/search?q=${encodeURIComponent(state.searchQuery)}&platform=${searchPlat}&limit=12&offset=${state.searchOffset}`);
-              const moreData = await res.json();
+              let moreData = null;
+              if (res && res.ok) {
+                try { moreData = await res.json(); } catch (_) { moreData = null; }
+              }
               if (state.searchToken !== reqToken) return;
               if (moreData && moreData.success && Array.isArray(moreData.tracks) && moreData.tracks.length > 0) {
                 const moreTracks = moreData.tracks;

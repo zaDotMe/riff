@@ -24,7 +24,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::models::{
     FileQuery, LibraryAddRequest, LibraryItem, LibraryRemoveRequest, LibraryUpdateRequest,
-    ProxyQuery, ScanRequest, StreamQuery, Track,
+    ProxyQuery, ScanRequest, SearchQuery, StreamQuery, Track,
 };
 
 #[derive(Clone)]
@@ -73,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/local-track", get(local_track))
         .route("/api/scan", post(scan_library))
         .route("/api/tracks", get(list_tracks))
+        .route("/api/search", get(search))
         .route("/api/stream-info", get(stream_info))
         .route("/api/audio-proxy", get(audio_proxy))
         .route("/api/state", get(get_state).post(set_state))
@@ -158,6 +159,54 @@ async fn list_library(
 async fn list_tracks(State(state): State<AppState>) -> Result<Json<Vec<Track>>, ApiError> {
     let tracks = run_db(&state.db, |conn| db::list_tracks(conn)).await?;
     Ok(Json(tracks))
+}
+
+async fn search(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let q = query.q.unwrap_or_default().trim().to_string();
+    let limit = query.limit.unwrap_or(12).clamp(1, 50);
+    let offset = query.offset.unwrap_or(0);
+
+    if q.is_empty() {
+        return Ok(Json(json!({
+            "success": true,
+            "tracks": [],
+            "hasMore": false,
+        })));
+    }
+
+    let tracks = run_db(&state.db, {
+        let q = q.clone();
+        move |conn| db::search_tracks(conn, &q, limit + 1, offset)
+    })
+    .await?;
+
+    let has_more = tracks.len() > limit;
+    let sliced: Vec<Value> = tracks
+        .into_iter()
+        .take(limit)
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "title": t.title,
+                "artist": t.artist,
+                "album": t.album.unwrap_or_default(),
+                "duration": t.duration,
+                "thumbnail": t.thumbnail,
+                "platform": "local",
+                "isLocal": true,
+                "isCached": true,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "success": true,
+        "tracks": sliced,
+        "hasMore": has_more,
+    })))
 }
 
 async fn library_add(

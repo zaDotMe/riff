@@ -111,6 +111,25 @@ pub fn count(conn: &Connection) -> Result<i64> {
     Ok(count)
 }
 
+pub fn search_tracks(conn: &Connection, query: &str, limit: usize, offset: usize) -> Result<Vec<Track>> {
+    let pattern = format!("%{query}%");
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT id, path, file, title, artist, album, duration_ms, thumbnail, added_at, updated_at
+        FROM tracks
+        WHERE title LIKE ?1 OR artist LIKE ?1 OR album LIKE ?1 OR file LIKE ?1
+        ORDER BY added_at DESC
+        LIMIT ?2 OFFSET ?3
+        "#,
+    )?;
+    let rows = stmt.query_map(params![pattern, limit as i64, offset as i64], row_to_track)?;
+    let mut tracks = Vec::new();
+    for row in rows {
+        tracks.push(row?);
+    }
+    Ok(tracks)
+}
+
 fn row_to_track(row: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
     let duration_ms: i64 = row.get("duration_ms")?;
     let added_at: i64 = row.get("added_at")?;
