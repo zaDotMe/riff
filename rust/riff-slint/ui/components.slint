@@ -13,11 +13,12 @@ export component IconBtn inherits Rectangle {
 
     width: 36px;
     height: 36px;
-    border-radius: self.width / 2;
+    border-radius: (ta.has-hover && !disabled) ? self.width * 0.4 : self.width / 2;
     background: active ? active-bg : (ta.has-hover && !disabled ? Theme.surface-hover : base-bg);
-    opacity: disabled ? 0.28 : 1.0;
-    animate background { duration: 140ms; easing: ease-out; }
-    animate opacity { duration: 140ms; easing: ease-out; }
+    opacity: disabled ? 0.28 : (ta.pressed ? 0.82 : 1.0);
+    animate background { duration: 160ms; easing: ease-out; }
+    animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+    animate opacity { duration: 120ms; easing: ease-out; }
 
     Image {
         source: icon;
@@ -51,7 +52,9 @@ export component PillBtn inherits Rectangle {
     background: primary
         ? (ta.has-hover ? #b2acef : Theme.primary)
         : (ta.has-hover ? #2e2e34 : #232326);
+    opacity: ta.pressed ? 0.88 : 1.0;
     animate background { duration: 150ms; easing: ease-out; }
+    animate opacity { duration: 100ms; easing: ease-out; }
 
     HorizontalLayout {
         padding-left: h-pad;
@@ -125,10 +128,8 @@ export component HomeCard inherits Rectangle {
     callback clicked();
 
     width: 180px;
-    height: 226px;
-    border-radius: 14px;
-    background: ta.has-hover ? #18181c : transparent;
-    animate background { duration: 160ms; easing: ease-out; }
+    height: 232px;
+    background: transparent;
 
     VerticalLayout {
         padding: 0px;
@@ -136,48 +137,56 @@ export component HomeCard inherits Rectangle {
 
         Rectangle {
             width: 180px;
-            height: 180px;
-            border-radius: 14px;
-            background: #17171a;
-            clip: true;
-
-            if track.has_cover: Image {
-                source: track.cover;
-                width: 100%;
-                height: 100%;
-                image-fit: cover;
-            }
-
-            if !track.has_cover: Image {
-                source: @image-url("icons/play_circle.svg");
-                width: 36px;
-                height: 36px;
-                colorize: Theme.text-muted;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-            }
+            height: 182px;
+            background: transparent;
 
             Rectangle {
-                width: 42px;
-                height: 42px;
-                border-radius: 21px;
-                background: Theme.primary;
-                x: parent.width - self.width - 10px;
-                y: ta.has-hover ? parent.height - self.height - 10px : parent.height - self.height - 2px;
-                opacity: ta.has-hover ? 1.0 : 0.0;
-                drop-shadow-blur: 14px;
-                drop-shadow-offset-y: 4px;
-                drop-shadow-color: #00000070;
-                animate opacity { duration: 160ms; easing: ease-out; }
-                animate y { duration: 180ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                width: 180px;
+                height: 180px;
+                y: ta.has-hover ? 0px : 2px;
+                border-radius: 14px;
+                background: #17171a;
+                clip: true;
+                animate y { duration: 180ms; easing: ease; }
 
-                Image {
-                    source: @image-url("icons/play_fill.svg");
-                    width: 18px;
-                    height: 18px;
-                    colorize: Theme.on-primary;
-                    x: 13px;
-                    y: 12px;
+                if track.has_cover: Image {
+                    source: track.cover;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: cover;
+                }
+
+                if !track.has_cover: Image {
+                    source: @image-url("icons/play_circle.svg");
+                    width: 36px;
+                    height: 36px;
+                    colorize: Theme.text-muted;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+
+                Rectangle {
+                    width: 42px;
+                    height: 42px;
+                    border-radius: 21px;
+                    background: Theme.primary;
+                    x: parent.width - self.width - 10px;
+                    y: ta.has-hover ? parent.height - self.height - 10px : parent.height - self.height - 2px;
+                    opacity: ta.has-hover ? 1.0 : 0.0;
+                    drop-shadow-blur: 14px;
+                    drop-shadow-offset-y: 4px;
+                    drop-shadow-color: #00000070;
+                    animate opacity { duration: 160ms; easing: ease-out; }
+                    animate y { duration: 180ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+                    Image {
+                        source: @image-url("icons/play_fill.svg");
+                        width: 18px;
+                        height: 18px;
+                        colorize: Theme.on-primary;
+                        x: 13px;
+                        y: 12px;
+                    }
                 }
             }
         }
@@ -218,9 +227,9 @@ export component TrackRow inherits Rectangle {
     in property <bool> show-album: true;
     callback play-clicked();
 
-    height: 56px;
+    height: 64px;
     border-radius: 8px;
-    background: is-current ? Theme.surface-active : (ta.has-hover ? #18181c : transparent);
+    background: is-current ? Theme.surface-active : (ta.has-hover ? #ffffff0d : transparent);
     animate background { duration: 140ms; easing: ease-out; }
 
     ta := TouchArea {
@@ -244,12 +253,12 @@ export component TrackRow inherits Rectangle {
             vertical-alignment: center;
         }
 
-        // Cover 40x40
+        // Cover 46x46
         VerticalLayout {
             alignment: center;
             Rectangle {
-                width: 40px;
-                height: 40px;
+                width: 46px;
+                height: 46px;
                 border-radius: 6px;
                 background: #1a1a1e;
                 clip: true;
@@ -266,8 +275,8 @@ export component TrackRow inherits Rectangle {
                     width: 18px;
                     height: 18px;
                     colorize: Theme.text-muted;
-                    x: 11px;
-                    y: 11px;
+                    x: 14px;
+                    y: 14px;
                 }
             }
         }

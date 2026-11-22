@@ -173,8 +173,8 @@ export component MainWindow inherits Window {
                         width: 44px;
                         height: 44px;
                         border-radius: 22px;
-                        background: hta.has-hover ? #26262b : #1c1c20;
-                        animate background { duration: 140ms; easing: ease-out; }
+                        background: (active_tab == 0 || hta.has-hover) ? #26262b : #1c1c20;
+                        animate background { duration: 150ms; easing: ease-out; }
 
                         Image {
                             source: @image-url("icons/home.svg");
@@ -183,6 +183,7 @@ export component MainWindow inherits Window {
                             colorize: active_tab == 0 ? Theme.text-primary : Theme.text-secondary;
                             x: 12px;
                             y: 12px;
+                            animate colorize { duration: 150ms; easing: ease-out; }
                         }
 
                         hta := TouchArea {
@@ -196,7 +197,8 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                         height: 44px;
                         border-radius: 22px;
-                        background: #1c1c20;
+                        background: search_input.has-focus ? #2a2a30 : #1c1c20;
+                        animate background { duration: 150ms; easing: ease-out; }
 
                         HorizontalLayout {
                             padding-left: 16px;
@@ -745,29 +747,6 @@ export component MainWindow inherits Window {
                 // Gap after Sidebar
                 Rectangle { width: 8px; }
 
-                // PRESETS DRAWER (smooth slide/fade, persis web_presets.png)
-                Rectangle {
-                    width: presets_open ? 228px : 0px;
-                    opacity: presets_open ? 1.0 : 0.0;
-                    visible: self.width > 1px;
-                    clip: true;
-                    animate width { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-                    animate opacity { duration: 180ms; easing: ease-out; }
-
-                    PresetsDrawer {
-                        x: 0px;
-                        height: 100%;
-                        ambient-active: root.current_has_blur;
-                        eq-preset-name <=> root.eq_preset_name;
-                        eq-bass <=> root.eq_bass;
-                        eq-mid <=> root.eq_mid;
-                        eq-treble <=> root.eq_treble;
-                        apply-preset(p) => { root.apply_eq_preset(p); }
-                        set-eq(b, m, t) => { root.set_equalizer(b, m, t); }
-                        close => { presets_open = false; }
-                    }
-                }
-
                 // MAIN CONTENT (#0d0d0d, radius 12px)
                 Rectangle {
                     horizontal-stretch: 1;
@@ -1145,6 +1124,26 @@ export component MainWindow inherits Window {
                 }
             }
         }
+    }
+
+    // 3b. FLOATING PRESETS DRAWER OVERLAY (persis web_presets.png: floats over MainContent without squeezing it)
+    PresetsDrawer {
+        x: presets_open ? 346px : 334px;
+        y: 64px;
+        height: parent.height - 64px - 84px;
+        opacity: presets_open ? 1.0 : 0.0;
+        visible: self.opacity > 0.01;
+        open: root.presets_open;
+        ambient-active: root.current_has_blur;
+        eq-preset-name <=> root.eq_preset_name;
+        eq-bass <=> root.eq_bass;
+        eq-mid <=> root.eq_mid;
+        eq-treble <=> root.eq_treble;
+        apply-preset(p) => { root.apply_eq_preset(p); }
+        set-eq(b, m, t) => { root.set_equalizer(b, m, t); }
+        close => { presets_open = false; }
+        animate x { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate opacity { duration: 180ms; easing: ease-out; }
     }
 
     // 4. SETTINGS MODAL OVERLAY (smooth fade/slide, persis web_settings.png)

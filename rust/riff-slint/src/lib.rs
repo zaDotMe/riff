@@ -845,6 +845,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     main_window.on_apply_eq_preset(move |preset_name| {
         let (bass, mid, treble) = match preset_name.as_str() {
+            "p_default" | "flat" => (0.0f32, 0.0f32, 0.0f32),
+            "p_speedup" | "p_speedup_pitch" => (0.0f32, 0.0f32, 0.0f32),
+            "p_slowed" => (2.5f32, -1.0f32, -3.0f32),
+            "p_nightcore" => (1.0f32, 1.0f32, 3.0f32),
+            "p_distortion" => (5.0f32, 2.0f32, 4.0f32),
             "bass_boost" => (6.0f32, 0.0f32, -1.0f32),
             "vocal" => (-2.0f32, 4.0f32, 2.0f32),
             "rock" => (4.0f32, -1.0f32, 3.0f32),

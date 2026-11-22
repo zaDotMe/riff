@@ -13,7 +13,7 @@ component TableHeader inherits Rectangle {
         spacing: 12px;
 
         Text { width: 24px; text: "#"; color: Theme.text-muted; font-size: 12px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-        Rectangle { width: 40px; }
+        Rectangle { width: 46px; }
         Text { horizontal-stretch: 2; text: "Title"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
         if show-album: Text { horizontal-stretch: 1; text: "Album"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
         if show-extra-cols: Text { width: 64px; text: "Plays"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
@@ -90,9 +90,9 @@ export component HomeView inherits ScrollView {
                     horizontal-stretch: 1;
                     height: 64px;
                     border-radius: 12px;
-                    background: t1.has-hover ? #222228 : #17171a;
+                    background: t1.has-hover ? #2a2a30 : #1c1c20b3;
                     clip: true;
-                    animate background { duration: 150ms; easing: ease-out; }
+                    animate background { duration: 180ms; easing: ease; }
 
                     HorizontalLayout {
                         spacing: 12px;
@@ -118,9 +118,9 @@ export component HomeView inherits ScrollView {
                     horizontal-stretch: 1;
                     height: 64px;
                     border-radius: 12px;
-                    background: t2.has-hover ? #222228 : #17171a;
+                    background: t2.has-hover ? #2a2a30 : #1c1c20b3;
                     clip: true;
-                    animate background { duration: 150ms; easing: ease-out; }
+                    animate background { duration: 180ms; easing: ease; }
 
                     HorizontalLayout {
                         spacing: 12px;
@@ -154,9 +154,9 @@ export component HomeView inherits ScrollView {
                     horizontal-stretch: 1;
                     height: 64px;
                     border-radius: 12px;
-                    background: t3.has-hover ? #222228 : #17171a;
+                    background: t3.has-hover ? #2a2a30 : #1c1c20b3;
                     clip: true;
-                    animate background { duration: 150ms; easing: ease-out; }
+                    animate background { duration: 180ms; easing: ease; }
 
                     HorizontalLayout {
                         spacing: 12px;
@@ -280,7 +280,7 @@ export component HomeView inherits ScrollView {
             }
 
             if trending-tracks.length > 0: ScrollView {
-                height: 232px;
+                height: 238px;
                 HorizontalLayout {
                     spacing: 16px;
                     alignment: start;
@@ -389,117 +389,124 @@ export component LocalFilesView inherits ScrollView {
         spacing: 0px;
         alignment: start;
 
-        // Hero header (persis web_local.png, responsive di lebar sempit)
+        // Seamless hero + action bar container (persis web_local.png, zero horizontal seam)
         Rectangle {
-            height: hero-cover + hero-pad * 2;
-            background: @linear-gradient(180deg, #26262c 0%, #161619 65%, #0d0d0d 100%);
+            background: @linear-gradient(180deg, #26262c 0%, #18181c 52%, #0d0d0d00 100%);
 
-            HorizontalLayout {
-                padding: hero-pad;
-                spacing: is-narrow ? 16px : 24px;
-                alignment: start;
+            VerticalLayout {
+                spacing: 0px;
 
-                Rectangle {
-                    width: hero-cover;
-                    height: hero-cover;
-                    border-radius: 8px;
-                    background: #000000;
+                // Hero header
+                HorizontalLayout {
+                    padding: hero-pad;
+                    spacing: is-narrow ? 16px : 24px;
+                    alignment: start;
 
-                    Image {
-                        source: @image-url("icons/cloud_off.svg");
-                        width: hero-cover * 0.36;
-                        height: hero-cover * 0.36;
-                        colorize: #ffffff;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
+                    Rectangle {
+                        width: hero-cover;
+                        height: hero-cover;
+                        border-radius: 8px;
+                        background: #000000;
+                        drop-shadow-blur: 24px;
+                        drop-shadow-offset-y: 8px;
+                        drop-shadow-color: #00000066;
+
+                        Image {
+                            source: @image-url("icons/cloud_off.svg");
+                            width: hero-cover * 0.36;
+                            height: hero-cover * 0.36;
+                            colorize: #ffffff;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: end;
+                        spacing: 6px;
+                        padding-bottom: is-narrow ? 2px : 8px;
+
+                        Text {
+                            text: "My files";
+                            color: Theme.text-primary;
+                            font-size: root.width < 520px ? 34px : (root.width < 680px ? 52px : 72px);
+                            font-weight: 800;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: tracks.length + " tracks in library";
+                            color: Theme.text-secondary;
+                            font-size: is-narrow ? 13px : 14px;
+                            overflow: elide;
+                        }
                     }
                 }
 
-                VerticalLayout {
-                    horizontal-stretch: 1;
-                    alignment: end;
-                    spacing: 6px;
-                    padding-bottom: is-narrow ? 2px : 8px;
+                // Action bar (persis web_local.png)
+                HorizontalLayout {
+                    padding-left: is-narrow ? 12px : 24px;
+                    padding-right: is-narrow ? 12px : 24px;
+                    padding-top: 8px;
+                    padding-bottom: 14px;
+                    spacing: is-narrow ? 4px : 10px;
 
-                    Text {
-                        text: "My files";
-                        color: Theme.text-primary;
-                        font-size: root.width < 520px ? 34px : (root.width < 680px ? 52px : 72px);
-                        font-weight: 800;
-                        overflow: elide;
+                    IconBtn {
+                        width: is-narrow ? 28px : 36px;
+                        height: is-narrow ? 28px : 36px;
+                        icon: @image-url("icons/play_fill.svg");
+                        icon-size: is-narrow ? 18px : 20px;
+                        disabled: tracks.length == 0;
+                        clicked => {
+                            if (tracks.length > 0) { root.play-track(tracks[0]); }
+                        }
                     }
 
-                    Text {
-                        text: tracks.length + " tracks in library";
-                        color: Theme.text-secondary;
-                        font-size: is-narrow ? 13px : 14px;
-                        overflow: elide;
+                    IconBtn {
+                        width: is-narrow ? 28px : 36px;
+                        height: is-narrow ? 28px : 36px;
+                        icon: @image-url("icons/shuffle.svg");
+                        icon-size: is-narrow ? 16px : 18px;
+                        disabled: tracks.length == 0;
+                    }
+
+                    PillBtn {
+                        label: "Add files";
+                        icon: @image-url("icons/ms_add.svg");
+                        has-icon: true;
+                        btn-height: 32px;
+                        h-pad: is-narrow ? 9px : 12px;
+                        radius: 8px;
+                        clicked => { root.add-files(); }
+                    }
+
+                    PillBtn {
+                        label: "Add folder";
+                        icon: @image-url("icons/folder_stroke.svg");
+                        has-icon: true;
+                        btn-height: 32px;
+                        h-pad: is-narrow ? 9px : 12px;
+                        radius: 8px;
+                        clicked => { root.scan-folder(); }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    IconBtn {
+                        width: is-narrow ? 28px : 36px;
+                        height: is-narrow ? 28px : 36px;
+                        icon: @image-url("icons/search_stroke.svg");
+                        icon-size: is-narrow ? 16px : 18px;
+                    }
+
+                    IconBtn {
+                        width: is-narrow ? 28px : 36px;
+                        height: is-narrow ? 28px : 36px;
+                        icon: @image-url("icons/ms_sort.svg");
+                        icon-size: is-narrow ? 16px : 18px;
                     }
                 }
-            }
-        }
-
-        // Action bar (persis web_local.png)
-        HorizontalLayout {
-            padding-left: is-narrow ? 12px : 24px;
-            padding-right: is-narrow ? 12px : 24px;
-            padding-top: 8px;
-            padding-bottom: 14px;
-            spacing: is-narrow ? 4px : 10px;
-
-            IconBtn {
-                width: is-narrow ? 28px : 36px;
-                height: is-narrow ? 28px : 36px;
-                icon: @image-url("icons/play_fill.svg");
-                icon-size: is-narrow ? 18px : 20px;
-                disabled: tracks.length == 0;
-                clicked => {
-                    if (tracks.length > 0) { root.play-track(tracks[0]); }
-                }
-            }
-
-            IconBtn {
-                width: is-narrow ? 28px : 36px;
-                height: is-narrow ? 28px : 36px;
-                icon: @image-url("icons/shuffle.svg");
-                icon-size: is-narrow ? 16px : 18px;
-                disabled: tracks.length == 0;
-            }
-
-            PillBtn {
-                label: "Add files";
-                icon: @image-url("icons/ms_add.svg");
-                has-icon: true;
-                btn-height: 32px;
-                h-pad: is-narrow ? 9px : 12px;
-                radius: 8px;
-                clicked => { root.add-files(); }
-            }
-
-            PillBtn {
-                label: "Add folder";
-                icon: @image-url("icons/folder_stroke.svg");
-                has-icon: true;
-                btn-height: 32px;
-                h-pad: is-narrow ? 9px : 12px;
-                radius: 8px;
-                clicked => { root.scan-folder(); }
-            }
-
-            Rectangle { horizontal-stretch: 1; }
-
-            IconBtn {
-                width: is-narrow ? 28px : 36px;
-                height: is-narrow ? 28px : 36px;
-                icon: @image-url("icons/search_stroke.svg");
-                icon-size: is-narrow ? 16px : 18px;
-            }
-
-            IconBtn {
-                width: is-narrow ? 28px : 36px;
-                height: is-narrow ? 28px : 36px;
-                icon: @image-url("icons/ms_sort.svg");
-                icon-size: is-narrow ? 16px : 18px;
             }
         }
 
@@ -573,92 +580,106 @@ export component FavoritesView inherits ScrollView {
         spacing: 0px;
         alignment: start;
 
-        // Hero header (persis web_fav.png: neutral gray gradient, responsive di lebar sempit)
+        // Seamless hero + action bar container (persis web_fav.png, zero horizontal seam)
         Rectangle {
-            height: hero-cover + hero-pad * 2;
-            background: @linear-gradient(180deg, #525256 0%, #2a2a2d 55%, #0d0d0d 100%);
+            background: @linear-gradient(180deg, #525256 0%, #2a2a2d 52%, #0d0d0d00 100%);
 
-            HorizontalLayout {
-                padding: hero-pad;
-                spacing: is-narrow ? 16px : 24px;
-                alignment: start;
+            VerticalLayout {
+                spacing: 0px;
 
-                Rectangle {
-                    width: hero-cover;
-                    height: hero-cover;
-                    border-radius: 8px;
-                    clip: true;
+                // Hero header
+                HorizontalLayout {
+                    padding: hero-pad;
+                    spacing: is-narrow ? 16px : 24px;
+                    alignment: start;
 
-                    Image {
-                        source: @image-url("assets/liked.png");
-                        width: 100%;
-                        height: 100%;
-                        image-fit: cover;
+                    Rectangle {
+                        width: hero-cover;
+                        height: hero-cover;
+                        border-radius: 8px;
+                        background: #1a1a1e;
+                        drop-shadow-blur: 24px;
+                        drop-shadow-offset-y: 8px;
+                        drop-shadow-color: #00000066;
+
+                        Rectangle {
+                            width: 100%;
+                            height: 100%;
+                            border-radius: 8px;
+                            clip: true;
+
+                            Image {
+                                source: @image-url("assets/liked.png");
+                                width: 100%;
+                                height: 100%;
+                                image-fit: cover;
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: end;
+                        spacing: 6px;
+                        padding-bottom: is-narrow ? 2px : 8px;
+
+                        Text {
+                            text: "Liked Songs";
+                            color: Theme.text-primary;
+                            font-size: root.width < 520px ? 32px : (root.width < 680px ? 50px : 72px);
+                            font-weight: 800;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: "User • " + tracks.length + " songs";
+                            color: Theme.text-secondary;
+                            font-size: is-narrow ? 13px : 14px;
+                            overflow: elide;
+                        }
                     }
                 }
 
-                VerticalLayout {
-                    horizontal-stretch: 1;
-                    alignment: end;
-                    spacing: 6px;
-                    padding-bottom: is-narrow ? 2px : 8px;
+                // Action bar (persis web_fav.png)
+                HorizontalLayout {
+                    padding-left: is-narrow ? 14px : 24px;
+                    padding-right: is-narrow ? 14px : 24px;
+                    padding-top: 8px;
+                    padding-bottom: 14px;
+                    spacing: 10px;
 
-                    Text {
-                        text: "Liked Songs";
-                        color: Theme.text-primary;
-                        font-size: root.width < 520px ? 32px : (root.width < 680px ? 50px : 72px);
-                        font-weight: 800;
-                        overflow: elide;
+                    IconBtn {
+                        icon: @image-url("icons/play_fill.svg");
+                        icon-size: 20px;
+                        disabled: tracks.length == 0;
+                        clicked => {
+                            if (tracks.length > 0) { root.play-track(tracks[0]); }
+                        }
                     }
 
-                    Text {
-                        text: "User • " + tracks.length + " songs";
-                        color: Theme.text-secondary;
-                        font-size: is-narrow ? 13px : 14px;
-                        overflow: elide;
+                    IconBtn {
+                        icon: @image-url("icons/shuffle.svg");
+                        icon-size: 18px;
+                        disabled: tracks.length == 0;
+                    }
+
+                    IconBtn {
+                        icon: @image-url("icons/dots.svg");
+                        icon-size: 18px;
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    IconBtn {
+                        icon: @image-url("icons/search_stroke.svg");
+                        icon-size: 18px;
+                    }
+
+                    IconBtn {
+                        icon: @image-url("icons/ms_sort.svg");
+                        icon-size: 18px;
                     }
                 }
-            }
-        }
-
-        // Action bar (persis web_fav.png)
-        HorizontalLayout {
-            padding-left: is-narrow ? 14px : 24px;
-            padding-right: is-narrow ? 14px : 24px;
-            padding-top: 8px;
-            padding-bottom: 14px;
-            spacing: 10px;
-
-            IconBtn {
-                icon: @image-url("icons/play_fill.svg");
-                icon-size: 20px;
-                disabled: tracks.length == 0;
-                clicked => {
-                    if (tracks.length > 0) { root.play-track(tracks[0]); }
-                }
-            }
-
-            IconBtn {
-                icon: @image-url("icons/shuffle.svg");
-                icon-size: 18px;
-                disabled: tracks.length == 0;
-            }
-
-            IconBtn {
-                icon: @image-url("icons/dots.svg");
-                icon-size: 18px;
-            }
-
-            Rectangle { horizontal-stretch: 1; }
-
-            IconBtn {
-                icon: @image-url("icons/search_stroke.svg");
-                icon-size: 18px;
-            }
-
-            IconBtn {
-                icon: @image-url("icons/ms_sort.svg");
-                icon-size: 18px;
             }
         }
 
@@ -669,8 +690,8 @@ export component FavoritesView inherits ScrollView {
             spacing: 4px;
 
             TableHeader {
-                show-album: root.width >= 460px;
-                show-extra-cols: root.width >= 640px;
+                show-album: root.width >= 360px;
+                show-extra-cols: root.width >= 540px;
             }
 
             if tracks.length == 0: Rectangle {
@@ -713,74 +734,80 @@ export component HistoryView inherits ScrollView {
         alignment: start;
 
         Rectangle {
-            height: hero-cover + hero-pad * 2;
-            background: @linear-gradient(180deg, #282366 0%, #16152b 60%, #0d0d0d 100%);
+            background: @linear-gradient(180deg, #282366 0%, #16152b 52%, #0d0d0d00 100%);
 
-            HorizontalLayout {
-                padding: hero-pad;
-                spacing: is-narrow ? 16px : 22px;
-                alignment: start;
+            VerticalLayout {
+                spacing: 0px;
 
-                Rectangle {
-                    width: hero-cover;
-                    height: hero-cover;
-                    border-radius: 8px;
-                    background: #1a1930;
+                HorizontalLayout {
+                    padding: hero-pad;
+                    spacing: is-narrow ? 16px : 22px;
+                    alignment: start;
 
-                    Image {
-                        source: @image-url("icons/ms_history.svg");
-                        width: hero-cover * 0.38;
-                        height: hero-cover * 0.38;
-                        colorize: Theme.primary;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
+                    Rectangle {
+                        width: hero-cover;
+                        height: hero-cover;
+                        border-radius: 8px;
+                        background: #1a1930;
+                        drop-shadow-blur: 24px;
+                        drop-shadow-offset-y: 8px;
+                        drop-shadow-color: #00000066;
+
+                        Image {
+                            source: @image-url("icons/ms_history.svg");
+                            width: hero-cover * 0.38;
+                            height: hero-cover * 0.38;
+                            colorize: Theme.primary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: end;
+                        spacing: 6px;
+                        padding-bottom: is-narrow ? 2px : 6px;
+
+                        Text {
+                            text: "History";
+                            color: Theme.text-primary;
+                            font-size: root.width < 520px ? 34px : 56px;
+                            font-weight: 800;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: tracks.length + " recently played";
+                            color: Theme.text-secondary;
+                            font-size: is-narrow ? 13px : 14px;
+                            overflow: elide;
+                        }
                     }
                 }
 
-                VerticalLayout {
-                    horizontal-stretch: 1;
-                    alignment: end;
-                    spacing: 6px;
-                    padding-bottom: is-narrow ? 2px : 6px;
+                HorizontalLayout {
+                    padding-left: is-narrow ? 14px : 24px;
+                    padding-right: is-narrow ? 14px : 24px;
+                    padding-top: 8px;
+                    padding-bottom: 14px;
+                    spacing: 12px;
+                    alignment: start;
 
-                    Text {
-                        text: "History";
-                        color: Theme.text-primary;
-                        font-size: root.width < 520px ? 34px : 56px;
-                        font-weight: 800;
-                        overflow: elide;
+                    IconBtn {
+                        icon: @image-url("icons/play_fill.svg");
+                        icon-size: 20px;
+                        disabled: tracks.length == 0;
+                        clicked => {
+                            if (tracks.length > 0) { root.play-track(tracks[0]); }
+                        }
                     }
 
-                    Text {
-                        text: tracks.length + " recently played";
-                        color: Theme.text-secondary;
-                        font-size: is-narrow ? 13px : 14px;
-                        overflow: elide;
+                    PillBtn {
+                        label: "Clear history";
+                        clicked => { root.clear-history(); }
                     }
                 }
-            }
-        }
-
-        HorizontalLayout {
-            padding-left: is-narrow ? 14px : 24px;
-            padding-right: is-narrow ? 14px : 24px;
-            padding-top: 8px;
-            padding-bottom: 14px;
-            spacing: 12px;
-            alignment: start;
-
-            IconBtn {
-                icon: @image-url("icons/play_fill.svg");
-                icon-size: 20px;
-                disabled: tracks.length == 0;
-                clicked => {
-                    if (tracks.length > 0) { root.play-track(tracks[0]); }
-                }
-            }
-
-            PillBtn {
-                label: "Clear history";
-                clicked => { root.clear-history(); }
             }
         }
 

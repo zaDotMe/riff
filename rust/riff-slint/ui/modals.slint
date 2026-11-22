@@ -83,9 +83,10 @@ export component Titlebar inherits Rectangle {
             width: 34px;
             height: 28px;
             y: 6px;
-            border-radius: 14px;
+            border-radius: btn-lyrics.has-hover ? 11px : 14px;
             background: btn-lyrics.has-hover ? #2a2a30 : transparent;
             animate background { duration: 140ms; easing: ease-out; }
+            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
             Image {
                 source: @image-url("icons/win_lyrics.svg");
@@ -108,9 +109,10 @@ export component Titlebar inherits Rectangle {
             width: 34px;
             height: 28px;
             y: 6px;
-            border-radius: 14px;
+            border-radius: btn-mini.has-hover ? 11px : 14px;
             background: btn-mini.has-hover ? #2a2a30 : transparent;
             animate background { duration: 140ms; easing: ease-out; }
+            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
             Image {
                 source: @image-url("icons/win_mini_player.svg");
@@ -132,9 +134,10 @@ export component Titlebar inherits Rectangle {
             width: 36px;
             height: 28px;
             y: 6px;
-            border-radius: 14px;
+            border-radius: btn-min.has-hover ? 11px : 14px;
             background: btn-min.has-hover ? #2a2a30 : transparent;
             animate background { duration: 140ms; easing: ease-out; }
+            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
             Image {
                 source: @image-url("icons/win_minimize.svg");
@@ -156,9 +159,10 @@ export component Titlebar inherits Rectangle {
             width: 36px;
             height: 28px;
             y: 6px;
-            border-radius: 14px;
+            border-radius: btn-max.has-hover ? 11px : 14px;
             background: btn-max.has-hover ? #2a2a30 : transparent;
             animate background { duration: 140ms; easing: ease-out; }
+            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
             Image {
                 source: @image-url("icons/win_maximize.svg");
@@ -180,9 +184,10 @@ export component Titlebar inherits Rectangle {
             width: 36px;
             height: 28px;
             y: 6px;
-            border-radius: 14px;
+            border-radius: btn-close.has-hover ? 11px : 14px;
             background: btn-close.has-hover ? #b3261e : transparent;
             animate background { duration: 140ms; easing: ease-out; }
+            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
             Image {
                 source: @image-url("icons/ms_close.svg");
@@ -208,78 +213,154 @@ export component PresetsDrawer inherits Rectangle {
     in-out property <float> eq-mid: 0.0;
     in-out property <float> eq-treble: 0.0;
     in property <bool> ambient-active: false;
+    in property <bool> open: false;
     callback apply-preset(string);
     callback set-eq(float, float, float);
     callback close();
 
+    // Continuous animation phases matching @keyframes presetsMainFloat (4.2s) & presetsNoteTg (3.6s)
+    property <float> t-sec: open ? (animation-tick() / 1s) : 0.0;
+    property <float> float-y: Math.sin(t-sec * 1.496rad) * 5.0;
+    property <float> p1: Math.mod(t-sec / 3.6, 1.0);
+    property <float> p2: Math.mod(t-sec / 3.6 + 0.25, 1.0);
+    property <float> p3: Math.mod(t-sec / 3.6 + 0.50, 1.0);
+    property <float> p4: Math.mod(t-sec / 3.6 + 0.75, 1.0);
+
     width: 220px;
-    background: ambient-active ? #141417d9 : #141417;
-    backdrop-blur: ambient-active ? 24px : 0px;
-    border-radius: 12px;
-    animate background { duration: 400ms; easing: ease; }
+    background: #18191cd9;
+    backdrop-blur: 24px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: #ffffff14;
+    drop-shadow-blur: 28px;
+    drop-shadow-offset-y: 8px;
+    drop-shadow-color: #00000080;
+    clip: true;
+
+    // Swallow clicks so they don't pass through to MainContent behind the overlay
+    TouchArea {}
+
+    // Animated background decor (.presets-bg-decor)
+    Rectangle {
+        width: 120px;
+        height: 120px;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 28px;
+
+        // Floating music notes (n1..n4)
+        Image {
+            source: @image-url("icons/music_note.svg");
+            width: 18px;
+            height: 18px;
+            colorize: Theme.text-primary;
+            x: 34px - 14px * p1;
+            y: 36px + 8px - 66px * p1;
+            opacity: p1 < 0.25 ? (p1 / 0.25) * 0.14 : (p1 < 0.75 ? 0.14 - ((p1 - 0.25) / 0.5) * 0.05 : (1.0 - p1) / 0.25 * 0.09);
+        }
+        Image {
+            source: @image-url("icons/music_note.svg");
+            width: 18px;
+            height: 18px;
+            colorize: Theme.text-primary;
+            x: 62px + 16px * p2;
+            y: 32px + 8px - 66px * p2;
+            opacity: p2 < 0.25 ? (p2 / 0.25) * 0.14 : (p2 < 0.75 ? 0.14 - ((p2 - 0.25) / 0.5) * 0.05 : (1.0 - p2) / 0.25 * 0.09);
+        }
+        Image {
+            source: @image-url("icons/music_note.svg");
+            width: 18px;
+            height: 18px;
+            colorize: Theme.text-primary;
+            x: 46px - 8px * p3;
+            y: 28px + 8px - 66px * p3;
+            opacity: p3 < 0.25 ? (p3 / 0.25) * 0.14 : (p3 < 0.75 ? 0.14 - ((p3 - 0.25) / 0.5) * 0.05 : (1.0 - p3) / 0.25 * 0.09);
+        }
+        Image {
+            source: @image-url("icons/music_note.svg");
+            width: 18px;
+            height: 18px;
+            colorize: Theme.text-primary;
+            x: 56px + 12px * p4;
+            y: 38px + 8px - 66px * p4;
+            opacity: p4 < 0.25 ? (p4 / 0.25) * 0.14 : (p4 < 0.75 ? 0.14 - ((p4 - 0.25) / 0.5) * 0.05 : (1.0 - p4) / 0.25 * 0.09);
+        }
+
+        // Main floating equalizer icon
+        Image {
+            source: @image-url("icons/ms_discover_tune.svg");
+            width: 88px;
+            height: 88px;
+            colorize: Theme.text-primary;
+            opacity: 0.08;
+            x: 16px;
+            y: 16px + float-y * 1px;
+        }
+    }
 
     VerticalLayout {
         padding: 14px;
         spacing: 12px;
+        alignment: start;
 
         // Header (persis web_presets.png)
         HorizontalLayout {
-            height: 36px;
+            height: 40px;
             spacing: 4px;
             Text {
                 text: "Presets";
                 color: Theme.text-primary;
-                font-size: 22px;
+                font-size: 18px;
                 font-weight: 700;
                 vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; }
             IconBtn {
-                width: 32px;
-                height: 32px;
+                width: 36px;
+                height: 36px;
                 icon: @image-url("icons/ms_add.svg");
                 icon-size: 18px;
                 clicked => {
                     eq-preset-name = "Default";
-                    root.apply-preset("flat");
+                    root.apply-preset("p_default");
                 }
             }
             IconBtn {
-                width: 32px;
-                height: 32px;
+                width: 36px;
+                height: 36px;
                 icon: @image-url("icons/ms_close.svg");
                 icon-size: 18px;
                 clicked => { root.close(); }
             }
         }
 
-        // Preset chips (persis web_presets.png)
+        // Preset chips (persis web_presets.png & defaultPresets in state.js)
         VerticalLayout {
-            spacing: 8px;
+            spacing: 6px;
             alignment: start;
 
             for p in [
-                { id: "flat", label: "Default" },
-                { id: "bass_boost", label: "Bass Boost" },
-                { id: "vocal", label: "Vocal" },
-                { id: "rock", label: "Rock" },
-                { id: "treble_boost", label: "Treble Boost" },
+                { id: "p_default", label: "Default" },
+                { id: "p_speedup", label: "Speed up (orig pitch)" },
+                { id: "p_speedup_pitch", label: "Speed up" },
+                { id: "p_slowed", label: "Slowed + reverb" },
+                { id: "p_nightcore", label: "Nightcore" },
+                { id: "p_distortion", label: "Distortion" },
             ]: HorizontalLayout {
                 alignment: start;
                 Rectangle {
-                    height: 30px;
-                    border-radius: 8px;
-                    background: eq-preset-name == p.label ? Theme.primary : (pta.has-hover ? #24242a : #1c1c20);
-                    animate background { duration: 140ms; easing: ease-out; }
+                    height: 32px;
+                    border-radius: 10px;
+                    background: eq-preset-name == p.label ? Theme.primary : (pta.has-hover ? #36343b : #2b2930);
+                    animate background { duration: 160ms; easing: ease-out; }
 
                     HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
+                        padding-left: 14px;
+                        padding-right: 14px;
                         Text {
                             text: p.label;
-                            color: eq-preset-name == p.label ? Theme.on-primary : Theme.text-primary;
-                            font-size: 13px;
-                            font-weight: eq-preset-name == p.label ? 700 : 500;
+                            color: eq-preset-name == p.label ? Theme.on-primary : #ffffff;
+                            font-size: 12.5px;
+                            font-weight: eq-preset-name == p.label ? 600 : 500;
                             vertical-alignment: center;
                         }
                     }
@@ -292,81 +373,6 @@ export component PresetsDrawer inherits Rectangle {
                         }
                     }
                 }
-            }
-        }
-
-        Rectangle { height: 1px; background: Theme.divider; }
-
-        // 3-Band EQ Sliders
-        VerticalLayout {
-            spacing: 8px;
-
-            VerticalLayout {
-                spacing: 2px;
-                HorizontalLayout {
-                    Text { text: "Bass (100Hz)"; color: Theme.text-secondary; font-size: 12px; }
-                    Rectangle { horizontal-stretch: 1; }
-                    Text { text: Math.round(eq-bass) + " dB"; color: Theme.primary; font-size: 12px; font-weight: 600; }
-                }
-                Slider {
-                    minimum: -12.0;
-                    maximum: 12.0;
-                    value <=> eq-bass;
-                    changed(v) => {
-                        eq-preset-name = "Custom";
-                        root.set-eq(v, eq-mid, eq-treble);
-                    }
-                }
-            }
-
-            VerticalLayout {
-                spacing: 2px;
-                HorizontalLayout {
-                    Text { text: "Mid (1kHz)"; color: Theme.text-secondary; font-size: 12px; }
-                    Rectangle { horizontal-stretch: 1; }
-                    Text { text: Math.round(eq-mid) + " dB"; color: Theme.primary; font-size: 12px; font-weight: 600; }
-                }
-                Slider {
-                    minimum: -12.0;
-                    maximum: 12.0;
-                    value <=> eq-mid;
-                    changed(v) => {
-                        eq-preset-name = "Custom";
-                        root.set-eq(eq-bass, v, eq-treble);
-                    }
-                }
-            }
-
-            VerticalLayout {
-                spacing: 2px;
-                HorizontalLayout {
-                    Text { text: "Treble (8kHz)"; color: Theme.text-secondary; font-size: 12px; }
-                    Rectangle { horizontal-stretch: 1; }
-                    Text { text: Math.round(eq-treble) + " dB"; color: Theme.primary; font-size: 12px; font-weight: 600; }
-                }
-                Slider {
-                    minimum: -12.0;
-                    maximum: 12.0;
-                    value <=> eq-treble;
-                    changed(v) => {
-                        eq-preset-name = "Custom";
-                        root.set-eq(eq-bass, eq-mid, v);
-                    }
-                }
-            }
-        }
-
-        Rectangle { vertical-stretch: 1; }
-
-        // Subtle bottom decor icon (persis web_presets.png)
-        HorizontalLayout {
-            alignment: center;
-            padding-bottom: 12px;
-            Image {
-                source: @image-url("icons/ms_discover_tune.svg");
-                width: 64px;
-                height: 64px;
-                colorize: #ffffff14;
             }
         }
     }
@@ -397,8 +403,8 @@ export component RightPanel inherits Rectangle {
         width: 100%;
         height: 100%;
         background: has-accent
-            ? @linear-gradient(180deg, accent-color.with-alpha(0.22) 0%, accent-color.with-alpha(0.08) 45%, #ffffff03 75%, transparent 100%)
-            : @linear-gradient(180deg, #ffffff1c 0%, #ffffff0b 45%, #ffffff03 75%, transparent 100%);
+            ? @linear-gradient(180deg, accent-color.with-alpha(0.24) 0%, accent-color.with-alpha(0.09) 45%, #ffffff03 75%, transparent 100%)
+            : @linear-gradient(180deg, #ffffff22 0%, #ffffff0d 45%, #ffffff03 75%, transparent 100%);
         animate background { duration: 400ms; easing: ease; }
     }
 
@@ -449,7 +455,7 @@ export component RightPanel inherits Rectangle {
             spacing: 10px;
 
             Rectangle {
-                height: 310px;
+                height: min(300px, parent.width);
                 border-radius: 12px;
                 background: #111113;
                 drop-shadow-blur: current-has-cover ? 28px : 0px;
@@ -578,7 +584,7 @@ export component RightPanel inherits Rectangle {
 
 export component SettingsModal inherits Rectangle {
     in property <bool> open: false;
-    in-out property <int> section: 0; // 0: Interface, 1: Audio & EQ, 2: Storage, 3: About
+    in-out property <int> section: 0; // 0..9 nav items, 10: Account
     in-out property <string> eq-preset-name: "Default";
     in-out property <float> eq-bass: 0.0;
     in-out property <float> eq-mid: 0.0;
@@ -597,47 +603,49 @@ export component SettingsModal inherits Rectangle {
     visible: self.opacity > 0.01;
     background: #00000085;
     backdrop-blur: 10px;
-    animate opacity { duration: 180ms; easing: ease-out; }
+    animate opacity { duration: 190ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
     // Swallow clicks on backdrop
     TouchArea {
         clicked => { root.close(); }
     }
 
-    // Modal card (persis web_settings.png)
+    // Modal card (persis web_settings.png: min(1060px, 94vw) x min(750px, 88vh), radius 28px, translucent blur)
     Rectangle {
-        width: min(900px, parent.width - 80px);
-        height: min(580px, parent.height - 80px);
+        width: min(1060px, parent.width * 0.94);
+        height: min(750px, parent.height * 0.88);
         x: (parent.width - self.width) / 2;
-        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 14px;
-        border-radius: 12px;
-        background: #16161a;
-        border-width: 1px;
-        border-color: #2a2a32;
-        drop-shadow-blur: 36px;
-        drop-shadow-offset-y: 14px;
+        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 10px;
+        border-radius: 28px;
+        background: #18191cbf;
+        backdrop-blur: 24px;
+        drop-shadow-blur: 40px;
+        drop-shadow-offset-y: 16px;
         drop-shadow-color: #00000099;
         clip: true;
-        animate y { duration: 220ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+        animate y { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
         // Prevent backdrop click inside modal
         TouchArea {}
 
         HorizontalLayout {
-            // Left settings nav (persis web_settings.png)
+            // Left settings nav (256px, persis web_settings.png)
             Rectangle {
-                width: 236px;
-                background: #101013;
+                width: 256px;
+                background: #121316cc;
 
                 VerticalLayout {
-                    padding: 14px;
-                    spacing: 4px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 18px;
+                    padding-bottom: 14px;
+                    spacing: 8px;
 
                     // Search settings pill
                     Rectangle {
                         height: 40px;
                         border-radius: 20px;
-                        background: #1c1c21;
+                        background: #1e1f24;
                         HorizontalLayout {
                             padding-left: 14px;
                             padding-right: 14px;
@@ -650,254 +658,616 @@ export component SettingsModal inherits Rectangle {
                         }
                     }
 
-                    Rectangle { height: 8px; }
+                    // Scrollable nav list with sliding active pill (.settings-nav-active-pill)
+                    ScrollView {
+                        vertical-stretch: 1;
 
-                    for nav in [
-                        { idx: 0, label: "Interface", icon: @image-url("icons/ms_dock_to_left.svg") },
-                        { idx: 1, label: "Audio & EQ", icon: @image-url("icons/ms_tune.svg") },
-                        { idx: 2, label: "Storage", icon: @image-url("icons/ms_folder.svg") },
-                        { idx: 3, label: "About", icon: @image-url("icons/ms_settings.svg") },
-                    ]: Rectangle {
-                        height: 44px;
-                        border-radius: 12px;
-                        background: section == nav.idx ? Theme.primary : (nta.has-hover ? #1c1c22 : transparent);
-                        animate background { duration: 140ms; easing: ease-out; }
+                        Rectangle {
+                            height: 520px;
 
-                        HorizontalLayout {
-                            padding-left: 14px;
-                            padding-right: 14px;
-                            spacing: 12px;
+                            // Sliding active pill (230ms ease-in-out)
+                            Rectangle {
+                                x: 0px;
+                                y: section < 10 ? section * 52px : 0px;
+                                width: parent.width;
+                                height: 48px;
+                                border-radius: 12px;
+                                background: Theme.primary;
+                                opacity: section < 10 ? 1.0 : 0.0;
+                                animate y { duration: 230ms; easing: ease-in-out; }
+                                animate opacity { duration: 140ms; easing: ease-in-out; }
+                            }
 
                             VerticalLayout {
-                                alignment: center;
-                                Image {
-                                    source: nav.icon;
-                                    width: 18px;
-                                    height: 18px;
-                                    colorize: section == nav.idx ? Theme.on-primary : Theme.text-secondary;
+                                spacing: 4px;
+                                alignment: start;
+
+                                for nav in [
+                                    { idx: 0, label: "Interface", icon: @image-url("icons/settings_interface.svg") },
+                                    { idx: 1, label: "Theme", icon: @image-url("icons/settings_theme.svg") },
+                                    { idx: 2, label: "Banners", icon: @image-url("icons/settings_banners.svg") },
+                                    { idx: 3, label: "Tracks", icon: @image-url("icons/win_lyrics.svg") },
+                                    { idx: 4, label: "Integrations", icon: @image-url("icons/settings_integrations.svg") },
+                                    { idx: 5, label: "Storage", icon: @image-url("icons/settings_storage.svg") },
+                                    { idx: 6, label: "Advanced", icon: @image-url("icons/ms_tune.svg") },
+                                    { idx: 7, label: "About", icon: @image-url("icons/settings_about.svg") },
+                                    { idx: 8, label: "Custom themes", icon: @image-url("icons/settings_theme.svg") },
+                                    { idx: 9, label: "Plugins", icon: @image-url("icons/settings_plugins.svg") },
+                                ]: Rectangle {
+                                    height: 48px;
+                                    border-radius: 12px;
+                                    background: section == nav.idx ? transparent : (nta.has-hover ? #ffffff0d : transparent);
+                                    animate background { duration: 140ms; easing: ease-out; }
+
+                                    HorizontalLayout {
+                                        padding-left: 18px;
+                                        padding-right: 18px;
+                                        spacing: 14px;
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Image {
+                                                source: nav.icon;
+                                                width: 20px;
+                                                height: 20px;
+                                                colorize: section == nav.idx ? Theme.on-primary : Theme.text-secondary;
+                                                animate colorize { duration: 160ms; easing: ease-out; }
+                                            }
+                                        }
+
+                                        Text {
+                                            text: nav.label;
+                                            color: section == nav.idx ? Theme.on-primary : Theme.text-primary;
+                                            font-size: 14.5px;
+                                            font-weight: section == nav.idx ? 600 : 500;
+                                            vertical-alignment: center;
+                                            animate color { duration: 160ms; easing: ease-out; }
+                                        }
+                                    }
+
+                                    nta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { section = nav.idx; }
+                                    }
                                 }
                             }
-
-                            Text {
-                                text: nav.label;
-                                color: section == nav.idx ? Theme.on-primary : Theme.text-primary;
-                                font-size: 14.5px;
-                                font-weight: section == nav.idx ? 600 : 500;
-                                vertical-alignment: center;
-                            }
-                        }
-
-                        nta := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { section = nav.idx; }
                         }
                     }
 
-                    Rectangle { vertical-stretch: 1; }
+                    // Account footer (sticky bottom, persis web_settings.png)
+                    Rectangle {
+                        height: 52px;
+                        border-radius: 12px;
+                        background: section == 10 ? Theme.primary : (acc-ta.has-hover ? #ffffff0d : transparent);
+                        animate background { duration: 140ms; easing: ease-out; }
 
-                    // Account footer
-                    HorizontalLayout {
-                        height: 44px;
-                        padding-left: 8px;
-                        spacing: 10px;
-                        VerticalLayout {
-                            alignment: center;
-                            Image { source: @image-url("icons/avatar_default.svg"); width: 30px; height: 30px; }
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 10px;
+                            VerticalLayout {
+                                alignment: center;
+                                Image { source: @image-url("icons/avatar_default.svg"); width: 32px; height: 32px; }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: "User";
+                                    color: section == 10 ? Theme.on-primary : Theme.text-primary;
+                                    font-size: 14px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: "Account";
+                                    color: section == 10 ? Theme.on-primary : Theme.text-muted;
+                                    font-size: 12px;
+                                }
+                            }
                         }
-                        VerticalLayout {
-                            alignment: center;
-                            Text { text: "User"; color: Theme.text-primary; font-size: 14px; font-weight: 700; }
-                            Text { text: "Account"; color: Theme.text-muted; font-size: 12px; }
+
+                        acc-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { section = 10; }
                         }
                     }
                 }
             }
 
-            // Right settings pane (persis web_settings.png: clean rows directly on #16161a)
+            // Right settings pane (persis web_settings.png: .m3-group cards)
             Rectangle {
                 horizontal-stretch: 1;
-                background: #16161a;
+                background: transparent;
 
                 ScrollView {
                     VerticalLayout {
-                        padding: 28px;
-                        padding-right: 72px;
-                        spacing: 20px;
+                        padding-top: 28px;
+                        padding-left: 32px;
+                        padding-right: 68px;
+                        padding-bottom: 40px;
+                        spacing: 16px;
                         alignment: start;
 
+                        // 0: Interface
                         if section == 0: VerticalLayout {
-                            spacing: 20px;
+                            spacing: 14px;
 
                             Text { text: "Interface"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
 
-                            // UI Mode Switch row
-                            HorizontalLayout {
-                                spacing: 16px;
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    spacing: 3px;
-                                    Text { text: "Native Slint UI"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                    Text {
-                                        text: native-ui-enabled
-                                            ? "Active: Native Rust + Slint engine (toggle off to switch back to WebView2 on next launch)"
-                                            : "Switched to WebView2 UI — restart Riff to launch Web UI";
-                                        color: Theme.text-muted;
-                                        font-size: 12.5px;
-                                        wrap: word-wrap;
-                                    }
-                                }
-                                VerticalLayout {
-                                    alignment: center;
-                                    ToggleSwitch {
-                                        checked <=> native-ui-enabled;
-                                        toggled(on) => {
-                                            root.switch-ui-mode(on ? "native" : "web");
+                            VerticalLayout {
+                                spacing: 6px;
+
+                                // Top card (outer top 20px, inner bottom 6px)
+                                Rectangle {
+                                    border-top-left-radius: 20px;
+                                    border-top-right-radius: 20px;
+                                    border-bottom-left-radius: 6px;
+                                    border-bottom-right-radius: 6px;
+                                    background: #202126b8;
+
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Native Slint UI"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text {
+                                                text: native-ui-enabled
+                                                    ? "Active: Native Rust + Slint engine (toggle off to switch back to WebView2 on next launch)"
+                                                    : "Switched to WebView2 UI — restart Riff to launch Web UI";
+                                                color: Theme.text-muted;
+                                                font-size: 12.5px;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> native-ui-enabled;
+                                                toggled(on) => {
+                                                    root.switch-ui-mode(on ? "native" : "web");
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            // Switch to Web UI explicit button row
-                            HorizontalLayout {
-                                spacing: 16px;
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    spacing: 3px;
-                                    Text { text: "WebView2 Classic UI"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                    Text { text: "Switch ui_mode back to WebView2 (takes effect on next launch)"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
-                                }
-                                VerticalLayout {
-                                    alignment: center;
-                                    PillBtn {
-                                        label: "Use Web UI";
-                                        clicked => {
-                                            native-ui-enabled = false;
-                                            root.switch-ui-mode("web");
+                                // Middle card (6px corners)
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "WebView2 Classic UI"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Switch ui_mode back to WebView2 (takes effect on next launch)"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn {
+                                                label: "Use Web UI";
+                                                clicked => {
+                                                    native-ui-enabled = false;
+                                                    root.switch-ui-mode("web");
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            // Local library folder row
-                            HorizontalLayout {
-                                spacing: 16px;
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    spacing: 3px;
-                                    Text { text: "Local Music Library"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                    Text { text: "Scan a folder on your computer for MP3, FLAC, WAV, OGG, M4A"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
-                                }
-                                VerticalLayout {
-                                    alignment: center;
-                                    PillBtn {
-                                        label: "Add folder";
-                                        primary: true;
-                                        clicked => { root.scan-folder(); }
+                                // Bottom card (inner top 6px, outer bottom 20px)
+                                Rectangle {
+                                    border-top-left-radius: 6px;
+                                    border-top-right-radius: 6px;
+                                    border-bottom-left-radius: 20px;
+                                    border-bottom-right-radius: 20px;
+                                    background: #202126b8;
+
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Local Music Library"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Scan a folder on your computer for MP3, FLAC, WAV, OGG, M4A"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn {
+                                                label: "Add folder";
+                                                primary: true;
+                                                clicked => { root.scan-folder(); }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
 
+                        // 1: Theme
                         if section == 1: VerticalLayout {
-                            spacing: 18px;
-
-                            Text { text: "Audio & EQ"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
-
-                            VerticalLayout {
-                                spacing: 10px;
-                                Text { text: "DSP Presets"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    alignment: start;
-                                    for p in [
-                                        { id: "flat", label: "Default" },
-                                        { id: "bass_boost", label: "Bass Boost" },
-                                        { id: "vocal", label: "Vocal" },
-                                        { id: "rock", label: "Rock" },
-                                        { id: "treble_boost", label: "Treble Boost" },
-                                    ]: PillBtn {
-                                        label: p.label;
-                                        primary: eq-preset-name == p.label;
-                                        clicked => {
-                                            eq-preset-name = p.label;
-                                            root.apply-preset(p.id);
-                                        }
-                                    }
-                                }
-                            }
+                            spacing: 14px;
+                            Text { text: "Theme"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
 
                             VerticalLayout {
                                 spacing: 6px;
-                                Text { text: "Bass (100Hz): " + Math.round(eq-bass) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
-
-                                Text { text: "Mid (1kHz): " + Math.round(eq-mid) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
-
-                                Text { text: "Treble (8kHz): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                                Rectangle {
+                                    border-top-left-radius: 20px;
+                                    border-top-right-radius: 20px;
+                                    border-bottom-left-radius: 6px;
+                                    border-bottom-right-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Material You Dark"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Dynamic accent color extracted from the currently playing track cover"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        Rectangle {
+                                            width: 28px;
+                                            height: 28px;
+                                            border-radius: 14px;
+                                            background: Theme.primary;
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    border-top-left-radius: 6px;
+                                    border-top-right-radius: 6px;
+                                    border-bottom-left-radius: 20px;
+                                    border-bottom-right-radius: 20px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Ambient cover blur"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Soft blurred album artwork backdrop behind translucent panels"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        Text { text: "Active"; color: Theme.primary; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                                    }
+                                }
                             }
                         }
 
+                        // 2: Banners
                         if section == 2: VerticalLayout {
-                            spacing: 20px;
+                            spacing: 14px;
+                            Text { text: "Banners"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
 
-                            Text { text: "Storage"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
-
-                            HorizontalLayout {
-                                spacing: 16px;
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    spacing: 3px;
-                                    Text { text: "Add audio files"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                    Text { text: "Import individual MP3, FLAC, WAV, OGG, or M4A files"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
-                                }
-                                VerticalLayout {
-                                    alignment: center;
-                                    PillBtn {
-                                        label: "Add files";
-                                        primary: true;
-                                        clicked => { root.add-files(); }
+                            Rectangle {
+                                border-radius: 20px;
+                                background: #202126b8;
+                                HorizontalLayout {
+                                    padding: 16px;
+                                    spacing: 16px;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 3px;
+                                        Text { text: "Now Playing ambient gradient"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                        Text { text: "Automatically tints the right panel header from track artwork"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
                                     }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                spacing: 16px;
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    spacing: 3px;
-                                    Text { text: "Scan music folder"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                    Text { text: "Recursively scan a directory into your local library"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
-                                }
-                                VerticalLayout {
-                                    alignment: center;
-                                    PillBtn {
-                                        label: "Add folder";
-                                        clicked => { root.scan-folder(); }
-                                    }
+                                    Text { text: "Enabled"; color: Theme.primary; font-size: 13px; font-weight: 600; vertical-alignment: center; }
                                 }
                             }
                         }
 
+                        // 3: Tracks (Audio & EQ)
                         if section == 3: VerticalLayout {
-                            spacing: 16px;
+                            spacing: 14px;
 
-                            Text { text: "About"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+                            Text { text: "Tracks"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
 
-                            VerticalLayout {
-                                spacing: 4px;
-                                Text { text: "Riff v0.7.6 (Native Slint Engine)"; color: Theme.text-primary; font-size: 15px; font-weight: 700; }
-                                Text { text: status-message; color: Theme.text-muted; font-size: 12.5px; }
+                            Rectangle {
+                                border-top-left-radius: 20px;
+                                border-top-right-radius: 20px;
+                                border-bottom-left-radius: 6px;
+                                border-bottom-right-radius: 6px;
+                                background: #202126b8;
+
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 10px;
+                                    Text { text: "Audio Presets"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        for p in [
+                                            { id: "p_default", label: "Default" },
+                                            { id: "p_speedup", label: "Speed up (orig pitch)" },
+                                            { id: "p_speedup_pitch", label: "Speed up" },
+                                            { id: "p_slowed", label: "Slowed + reverb" },
+                                            { id: "p_nightcore", label: "Nightcore" },
+                                            { id: "p_distortion", label: "Distortion" },
+                                        ]: PillBtn {
+                                            label: p.label;
+                                            primary: eq-preset-name == p.label;
+                                            clicked => {
+                                                eq-preset-name = p.label;
+                                                root.apply-preset(p.id);
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             Rectangle {
-                                border-radius: 8px;
-                                background: #121215;
+                                border-top-left-radius: 6px;
+                                border-top-right-radius: 6px;
+                                border-bottom-left-radius: 20px;
+                                border-bottom-right-radius: 20px;
+                                background: #202126b8;
+
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 8px;
+                                    Text { text: "3-Band Equalizer"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+
+                                    Text { text: "Bass (100Hz): " + Math.round(eq-bass) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                    Slider { minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
+
+                                    Text { text: "Mid (1kHz): " + Math.round(eq-mid) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                    Slider { minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
+
+                                    Text { text: "Treble (8kHz): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                    Slider { minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                                }
+                            }
+                        }
+
+                        // 4: Integrations
+                        if section == 4: VerticalLayout {
+                            spacing: 14px;
+                            Text { text: "Integrations"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                Rectangle {
+                                    border-top-left-radius: 20px;
+                                    border-top-right-radius: 20px;
+                                    border-bottom-left-radius: 6px;
+                                    border-bottom-right-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "YouTube Music"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Native Rust search, trending charts, and stream resolver"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        Text { text: "Connected"; color: Theme.primary; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                                    }
+                                }
+                                Rectangle {
+                                    border-top-left-radius: 6px;
+                                    border-top-right-radius: 6px;
+                                    border-bottom-left-radius: 20px;
+                                    border-bottom-right-radius: 20px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "SoundCloud"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Native Rust search and stream resolver"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        Text { text: "Connected"; color: Theme.primary; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 5: Storage
+                        if section == 5: VerticalLayout {
+                            spacing: 14px;
+
+                            Text { text: "Storage"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                Rectangle {
+                                    border-top-left-radius: 20px;
+                                    border-top-right-radius: 20px;
+                                    border-bottom-left-radius: 6px;
+                                    border-bottom-right-radius: 6px;
+                                    background: #202126b8;
+
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Add audio files"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Import individual MP3, FLAC, WAV, OGG, or M4A files"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn {
+                                                label: "Add files";
+                                                primary: true;
+                                                clicked => { root.add-files(); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    border-top-left-radius: 6px;
+                                    border-top-right-radius: 6px;
+                                    border-bottom-left-radius: 20px;
+                                    border-bottom-right-radius: 20px;
+                                    background: #202126b8;
+
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Scan music folder"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Recursively scan a directory into your local library"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn {
+                                                label: "Add folder";
+                                                clicked => { root.scan-folder(); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 6: Advanced
+                        if section == 6: VerticalLayout {
+                            spacing: 14px;
+                            Text { text: "Advanced"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                Rectangle {
+                                    border-top-left-radius: 20px;
+                                    border-top-right-radius: 20px;
+                                    border-bottom-left-radius: 6px;
+                                    border-bottom-right-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Native Slint UI"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Use native Rust + Slint renderer instead of WebView2"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> native-ui-enabled;
+                                                toggled(on) => { root.switch-ui-mode(on ? "native" : "web"); }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    border-top-left-radius: 6px;
+                                    border-top-right-radius: 6px;
+                                    border-bottom-left-radius: 20px;
+                                    border-bottom-right-radius: 20px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Audio Engine"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: status-message; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 7: About
+                        if section == 7: VerticalLayout {
+                            spacing: 14px;
+
+                            Text { text: "About"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+
+                            Rectangle {
+                                border-top-left-radius: 20px;
+                                border-top-right-radius: 20px;
+                                border-bottom-left-radius: 6px;
+                                border-bottom-right-radius: 6px;
+                                background: #202126b8;
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 4px;
+                                    Text { text: "Riff v0.7.6 (Native Slint Engine)"; color: Theme.text-primary; font-size: 15px; font-weight: 700; }
+                                    Text { text: status-message; color: Theme.text-muted; font-size: 12.5px; }
+                                }
+                            }
+
+                            Rectangle {
+                                border-top-left-radius: 6px;
+                                border-top-right-radius: 6px;
+                                border-bottom-left-radius: 20px;
+                                border-bottom-right-radius: 20px;
+                                background: #202126b8;
                                 VerticalLayout {
                                     padding: 16px;
                                     AboutSlint {}
+                                }
+                            }
+                        }
+
+                        // 8: Custom themes
+                        if section == 8: VerticalLayout {
+                            spacing: 14px;
+                            Text { text: "Custom themes"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+                            Rectangle {
+                                border-radius: 20px;
+                                background: #202126b8;
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 4px;
+                                    Text { text: "Native Theme Tokens"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                    Text { text: "Custom CSS themes apply in WebView2 mode; native Slint uses Material You tokens."; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                }
+                            }
+                        }
+
+                        // 9: Plugins
+                        if section == 9: VerticalLayout {
+                            spacing: 14px;
+                            Text { text: "Plugins"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+                            Rectangle {
+                                border-radius: 20px;
+                                background: #202126b8;
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 4px;
+                                    Text { text: "JavaScript Plugins"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                    Text { text: "JS plugins run in WebView2 mode. Switch to Web UI in Interface to manage JS plugins."; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                }
+                            }
+                        }
+
+                        // 10: Account
+                        if section == 10: VerticalLayout {
+                            spacing: 14px;
+                            Text { text: "Account"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+                            Rectangle {
+                                border-radius: 20px;
+                                background: #202126b8;
+                                HorizontalLayout {
+                                    padding: 16px;
+                                    spacing: 14px;
+                                    Image { source: @image-url("icons/avatar_default.svg"); width: 44px; height: 44px; }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: "User"; color: Theme.text-primary; font-size: 15px; font-weight: 700; }
+                                        Text { text: "Local Riff profile"; color: Theme.text-muted; font-size: 12.5px; }
+                                    }
                                 }
                             }
                         }
@@ -908,8 +1278,8 @@ export component SettingsModal inherits Rectangle {
 
         // Close button (X) ESC di kanan atas modal (persis web_settings.png)
         VerticalLayout {
-            x: parent.width - 54px;
-            y: 18px;
+            x: parent.width - 56px;
+            y: 20px;
             width: 36px;
             spacing: 4px;
 
@@ -918,15 +1288,16 @@ export component SettingsModal inherits Rectangle {
                 height: 36px;
                 border-radius: 18px;
                 border-width: 2px;
-                border-color: #8e909999;
+                border-color: cta.has-hover ? Theme.text-primary : #8e909999;
                 background: cta.has-hover ? #ffffff18 : transparent;
-                animate background { duration: 140ms; easing: ease-out; }
+                animate background { duration: 150ms; easing: ease-out; }
+                animate border-color { duration: 150ms; easing: ease-out; }
 
                 Image {
                     source: @image-url("icons/ms_close.svg");
                     width: 18px;
                     height: 18px;
-                    colorize: Theme.text-secondary;
+                    colorize: cta.has-hover ? Theme.text-primary : Theme.text-secondary;
                     x: 9px;
                     y: 9px;
                 }
