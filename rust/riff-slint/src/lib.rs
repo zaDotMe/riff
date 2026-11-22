@@ -83,6 +83,62 @@ fn rgba_to_slint_image(w: u32, h: u32, raw: Vec<u8>) -> Image {
     Image::from_rgba8(buf)
 }
 
+fn compute_ambient_blur_and_accent(w: u32, h: u32, raw: &[u8]) -> Option<(u32, u32, Vec<u8>, (u8, u8, u8))> {
+    let img = image::RgbaImage::from_raw(w, h, raw.to_vec())?;
+    let small = image::imageops::resize(&img, 96, 96, image::imageops::FilterType::Triangle);
+
+    // Extract vibrant dominant accent color
+    let mut sum_r = 0.0f64;
+    let mut sum_g = 0.0f64;
+    let mut sum_b = 0.0f64;
+    let mut total_w = 0.0f64;
+
+    for px in small.pixels() {
+        let r = px[0] as f64;
+        let g = px[1] as f64;
+        let b = px[2] as f64;
+        let max_c = r.max(g).max(b);
+        let min_c = r.min(g).min(b);
+        let sat = if max_c > 1.0 { (max_c - min_c) / max_c } else { 0.0 };
+        let lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+        // Prefer saturated, non-black, non-blown-out pixels
+        let weight = if lum > 0.08 && lum < 0.92 {
+            0.15 + sat * sat * 3.0
+        } else {
+            0.02
+        };
+        sum_r += r * weight;
+        sum_g += g * weight;
+        sum_b += b * weight;
+        total_w += weight;
+    }
+
+    let accent = if total_w > 0.0 {
+        let mut r = (sum_r / total_w).clamp(0.0, 255.0);
+        let mut g = (sum_g / total_w).clamp(0.0, 255.0);
+        let mut b = (sum_b / total_w).clamp(0.0, 255.0);
+        // Ensure accent isn't too dark for the subtle top glow
+        let max_c = r.max(g).max(b);
+        if max_c > 1.0 && max_c < 140.0 {
+            let boost = 140.0 / max_c;
+            r = (r * boost).min(255.0);
+            g = (g * boost).min(255.0);
+            b = (b * boost).min(255.0);
+        } else if max_c <= 1.0 {
+            r = 159.0;
+            g = 153.0;
+            b = 230.0;
+        }
+        (r as u8, g as u8, b as u8)
+    } else {
+        (0x9f, 0x99, 0xe6)
+    };
+
+    let blurred = image::imageops::blur(&small, 14.0);
+    let (bw, bh) = blurred.dimensions();
+    Some((bw, bh, blurred.into_raw(), accent))
+}
+
 fn to_slint_model(items: Vec<TrackItem>) -> ModelRc<TrackData> {
     let data: Vec<TrackData> = items.into_iter().map(TrackItem::into_slint).collect();
     ModelRc::new(VecModel::from(data))
@@ -373,6 +429,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
             w.set_current_has_cover(has_cov);
             if has_cov {
                 w.set_current_cover(track.cover.clone());
+                if let Some(buf) = track.cover.to_rgba8() {
+                    if let Some((bw, bh, braw, (ar, ag, ab))) =
+                        compute_ambient_blur_and_accent(buf.width(), buf.height(), buf.as_bytes())
+                    {
+                        w.set_current_cover_blur(rgba_to_slint_image(bw, bh, braw));
+                        w.set_current_has_blur(true);
+                        w.set_current_accent(slint::Color::from_rgb_u8(ar, ag, ab));
+                    }
+                }
+            } else {
+                w.set_current_has_blur(false);
+                w.set_current_accent(slint::Color::from_rgb_u8(0x9f, 0x99, 0xe6));
             }
         }
 
@@ -382,10 +450,16 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let thumb_url = t_thumb.clone();
             rt_play.spawn(async move {
                 if let Some((cw, ch, raw)) = fetch_cover_rgba(&http_c, &thumb_url).await {
+                    let blur_data = compute_ambient_blur_and_accent(cw, ch, &raw);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = w_c.upgrade() {
                             w.set_current_cover(rgba_to_slint_image(cw, ch, raw));
                             w.set_current_has_cover(true);
+                            if let Some((bw, bh, braw, (ar, ag, ab))) = blur_data {
+                                w.set_current_cover_blur(rgba_to_slint_image(bw, bh, braw));
+                                w.set_current_has_blur(true);
+                                w.set_current_accent(slint::Color::from_rgb_u8(ar, ag, ab));
+                            }
                         }
                     });
                 }
@@ -813,6 +887,27 @@ pub fn run() -> Result<(), slint::PlatformError> {
         rt_mode.spawn(async move {
             let _ = api_m.set_ui_mode(&mode_str).await;
         });
+    });
+
+    // 13b. Frameless Window Controls
+    let w_min = window_weak.clone();
+    main_window.on_window_minimize(move || {
+        if let Some(w) = w_min.upgrade() {
+            w.window().set_minimized(true);
+        }
+    });
+
+    let w_max = window_weak.clone();
+    main_window.on_window_maximize(move || {
+        if let Some(w) = w_max.upgrade() {
+            let next = !w.window().is_maximized();
+            w.window().set_maximized(next);
+            w.set_is_maximized(next);
+        }
+    });
+
+    main_window.on_window_close(move || {
+        let _ = slint::quit_event_loop();
     });
 
     // 14. Subscribe to EventBus

@@ -92,6 +92,7 @@ export component HomeView inherits ScrollView {
                     border-radius: 12px;
                     background: t1.has-hover ? #222228 : #17171a;
                     clip: true;
+                    animate background { duration: 150ms; easing: ease-out; }
 
                     HorizontalLayout {
                         spacing: 12px;
@@ -119,6 +120,7 @@ export component HomeView inherits ScrollView {
                     border-radius: 12px;
                     background: t2.has-hover ? #222228 : #17171a;
                     clip: true;
+                    animate background { duration: 150ms; easing: ease-out; }
 
                     HorizontalLayout {
                         spacing: 12px;
@@ -154,6 +156,7 @@ export component HomeView inherits ScrollView {
                     border-radius: 12px;
                     background: t3.has-hover ? #222228 : #17171a;
                     clip: true;
+                    animate background { duration: 150ms; easing: ease-out; }
 
                     HorizontalLayout {
                         spacing: 12px;
@@ -316,7 +319,8 @@ export component SearchView inherits ScrollView {
             ]: Rectangle {
                 height: 32px;
                 border-radius: 16px;
-                background: search-platform == chip.id ? Theme.text-primary : #1c1c20;
+                background: search-platform == chip.id ? Theme.text-primary : (cta.has-hover ? #26262c : #1c1c20);
+                animate background { duration: 140ms; easing: ease-out; }
 
                 HorizontalLayout {
                     padding-left: 14px;
@@ -327,10 +331,11 @@ export component SearchView inherits ScrollView {
                         font-size: 13px;
                         font-weight: 600;
                         vertical-alignment: center;
+                        animate color { duration: 140ms; easing: ease-out; }
                     }
                 }
 
-                TouchArea {
+                cta := TouchArea {
                     mouse-cursor: pointer;
                     clicked => {
                         search-platform = chip.id;

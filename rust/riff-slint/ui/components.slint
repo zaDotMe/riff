@@ -16,6 +16,8 @@ export component IconBtn inherits Rectangle {
     border-radius: self.width / 2;
     background: active ? active-bg : (ta.has-hover && !disabled ? Theme.surface-hover : base-bg);
     opacity: disabled ? 0.28 : 1.0;
+    animate background { duration: 140ms; easing: ease-out; }
+    animate opacity { duration: 140ms; easing: ease-out; }
 
     Image {
         source: icon;
@@ -24,6 +26,7 @@ export component IconBtn inherits Rectangle {
         colorize: active ? active-icon-color : icon-color;
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
+        animate colorize { duration: 140ms; easing: ease-out; }
     }
 
     ta := TouchArea {
@@ -48,6 +51,7 @@ export component PillBtn inherits Rectangle {
     background: primary
         ? (ta.has-hover ? #b2acef : Theme.primary)
         : (ta.has-hover ? #2e2e34 : #232326);
+    animate background { duration: 150ms; easing: ease-out; }
 
     HorizontalLayout {
         padding-left: h-pad;
@@ -90,6 +94,7 @@ export component ToggleSwitch inherits Rectangle {
     background: checked ? Theme.primary : #1c1c20;
     border-width: checked ? 0px : 2px;
     border-color: Theme.text-muted;
+    animate background { duration: 160ms; easing: ease-out; }
 
     Rectangle {
         width: checked ? 24px : 16px;
@@ -98,7 +103,10 @@ export component ToggleSwitch inherits Rectangle {
         background: checked ? Theme.on-primary : Theme.text-muted;
         x: checked ? parent.width - self.width - 4px : 6px;
         y: (parent.height - self.height) / 2;
-        animate x { duration: 140ms; easing: ease-out; }
+        animate x { duration: 160ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate width { duration: 140ms; easing: ease-out; }
+        animate height { duration: 140ms; easing: ease-out; }
+        animate background { duration: 140ms; easing: ease-out; }
     }
 
     TouchArea {
@@ -120,6 +128,7 @@ export component HomeCard inherits Rectangle {
     height: 226px;
     border-radius: 14px;
     background: ta.has-hover ? #18181c : transparent;
+    animate background { duration: 160ms; easing: ease-out; }
 
     VerticalLayout {
         padding: 0px;
@@ -148,13 +157,19 @@ export component HomeCard inherits Rectangle {
                 y: (parent.height - self.height) / 2;
             }
 
-            if ta.has-hover: Rectangle {
+            Rectangle {
                 width: 42px;
                 height: 42px;
                 border-radius: 21px;
                 background: Theme.primary;
                 x: parent.width - self.width - 10px;
-                y: parent.height - self.height - 10px;
+                y: ta.has-hover ? parent.height - self.height - 10px : parent.height - self.height - 2px;
+                opacity: ta.has-hover ? 1.0 : 0.0;
+                drop-shadow-blur: 14px;
+                drop-shadow-offset-y: 4px;
+                drop-shadow-color: #00000070;
+                animate opacity { duration: 160ms; easing: ease-out; }
+                animate y { duration: 180ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
 
                 Image {
                     source: @image-url("icons/play_fill.svg");
@@ -206,6 +221,7 @@ export component TrackRow inherits Rectangle {
     height: 56px;
     border-radius: 8px;
     background: is-current ? Theme.surface-active : (ta.has-hover ? #18181c : transparent);
+    animate background { duration: 140ms; easing: ease-out; }
 
     ta := TouchArea {
         mouse-cursor: pointer;
@@ -329,22 +345,28 @@ export component ScrubberBar inherits Rectangle {
         y: (parent.height - self.height) / 2;
         border-radius: 3px;
         background: active ? #323238 : #ffffff24;
+        animate height { duration: 120ms; easing: ease-out; }
 
         if active: Rectangle {
             width: parent.width * ratio;
             height: 100%;
             border-radius: 3px;
             background: ta.has-hover || ta.pressed ? Theme.primary : #e2e2e9;
+            animate background { duration: 120ms; easing: ease-out; }
         }
     }
 
-    if active && (ta.has-hover || ta.pressed): Rectangle {
+    if active: Rectangle {
         width: 12px;
         height: 12px;
         border-radius: 6px;
         background: #ffffff;
         x: clamp(parent.width * ratio - 6px, 0px, parent.width - 12px);
         y: (parent.height - self.height) / 2;
+        opacity: (ta.has-hover || ta.pressed) ? 1.0 : 0.0;
+        drop-shadow-blur: 6px;
+        drop-shadow-color: #00000066;
+        animate opacity { duration: 120ms; easing: ease-out; }
     }
 
     ta := TouchArea {
@@ -385,16 +407,21 @@ export component VolumeBar inherits Rectangle {
             height: 100%;
             border-radius: 2px;
             background: ta.has-hover || ta.pressed ? Theme.primary : #ebebef;
+            animate background { duration: 120ms; easing: ease-out; }
         }
     }
 
-    if ta.has-hover || ta.pressed: Rectangle {
+    Rectangle {
         width: 12px;
         height: 12px;
         border-radius: 6px;
         background: #ffffff;
         x: clamp(parent.width * ratio - 6px, 0px, parent.width - 12px);
         y: (parent.height - self.height) / 2;
+        opacity: (ta.has-hover || ta.pressed) ? 1.0 : 0.0;
+        drop-shadow-blur: 6px;
+        drop-shadow-color: #00000066;
+        animate opacity { duration: 120ms; easing: ease-out; }
     }
 
     ta := TouchArea {

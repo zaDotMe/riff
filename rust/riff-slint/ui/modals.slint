@@ -2,18 +2,221 @@ import { Slider, ScrollView, AboutSlint } from "std-widgets.slint";
 import { Theme, LyricLineData } from "theme.slint";
 import { IconBtn, PillBtn, ToggleSwitch } from "components.slint";
 
+export component Titlebar inherits Rectangle {
+    in property <bool> revealed: false;
+    in property <bool> lyrics-open: true;
+    in property <bool> is-maximized: false;
+    out property <bool> any-hover: drag-ta.has-hover || btn-lyrics.has-hover || btn-mini.has-hover || btn-min.has-hover || btn-max.has-hover || btn-close.has-hover;
+
+    callback toggle-lyrics();
+    callback go-home();
+    callback minimize();
+    callback maximize();
+    callback close();
+
+    height: 40px;
+    y: revealed ? 0px : -42px;
+    opacity: revealed ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
+    background: #18181be8;
+    backdrop-blur: 16px;
+    drop-shadow-blur: 18px;
+    drop-shadow-offset-y: 4px;
+    drop-shadow-color: #00000066;
+
+    animate y { duration: 220ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+    animate opacity { duration: 180ms; easing: ease; }
+
+    // Bottom hairline border
+    Rectangle {
+        y: parent.height - 1px;
+        width: 100%;
+        height: 1px;
+        background: #ffffff14;
+    }
+
+    // Drag region across the bar
+    WindowMoveArea {
+        width: 100%;
+        height: 100%;
+
+        drag-ta := TouchArea {
+            double-clicked => { root.maximize(); }
+        }
+    }
+
+    // Centered Riff logo
+    Rectangle {
+        width: 32px;
+        height: 32px;
+        border-radius: 16px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: logo-ta.has-hover ? #ffffff12 : transparent;
+        animate background { duration: 140ms; easing: ease-out; }
+
+        Image {
+            source: @image-url("assets/riff.svg");
+            width: 20px;
+            height: 20px;
+            colorize: Theme.primary;
+            x: 6px;
+            y: 6px;
+        }
+
+        logo-ta := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.go-home(); }
+        }
+    }
+
+    // Right window controls (persis src/renderer/index.html)
+    HorizontalLayout {
+        x: parent.width - self.width - 10px;
+        y: 0px;
+        height: 40px;
+        spacing: 4px;
+        alignment: end;
+
+        // Lyrics toggle
+        Rectangle {
+            width: 34px;
+            height: 28px;
+            y: 6px;
+            border-radius: 14px;
+            background: btn-lyrics.has-hover ? #2a2a30 : transparent;
+            animate background { duration: 140ms; easing: ease-out; }
+
+            Image {
+                source: @image-url("icons/win_lyrics.svg");
+                width: 14px;
+                height: 14px;
+                colorize: lyrics-open ? Theme.primary : Theme.text-secondary;
+                x: 10px;
+                y: 7px;
+                animate colorize { duration: 140ms; easing: ease-out; }
+            }
+
+            btn-lyrics := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.toggle-lyrics(); }
+            }
+        }
+
+        // Compact mini player / toggle lyrics
+        Rectangle {
+            width: 34px;
+            height: 28px;
+            y: 6px;
+            border-radius: 14px;
+            background: btn-mini.has-hover ? #2a2a30 : transparent;
+            animate background { duration: 140ms; easing: ease-out; }
+
+            Image {
+                source: @image-url("icons/win_mini_player.svg");
+                width: 14px;
+                height: 14px;
+                colorize: btn-mini.has-hover ? Theme.text-primary : Theme.text-secondary;
+                x: 10px;
+                y: 7px;
+            }
+
+            btn-mini := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.toggle-lyrics(); }
+            }
+        }
+
+        // Minimize
+        Rectangle {
+            width: 36px;
+            height: 28px;
+            y: 6px;
+            border-radius: 14px;
+            background: btn-min.has-hover ? #2a2a30 : transparent;
+            animate background { duration: 140ms; easing: ease-out; }
+
+            Image {
+                source: @image-url("icons/win_minimize.svg");
+                width: 14px;
+                height: 14px;
+                colorize: btn-min.has-hover ? Theme.text-primary : Theme.text-secondary;
+                x: 11px;
+                y: 7px;
+            }
+
+            btn-min := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.minimize(); }
+            }
+        }
+
+        // Maximize / Restore
+        Rectangle {
+            width: 36px;
+            height: 28px;
+            y: 6px;
+            border-radius: 14px;
+            background: btn-max.has-hover ? #2a2a30 : transparent;
+            animate background { duration: 140ms; easing: ease-out; }
+
+            Image {
+                source: @image-url("icons/win_maximize.svg");
+                width: 13px;
+                height: 13px;
+                colorize: btn-max.has-hover ? Theme.text-primary : Theme.text-secondary;
+                x: 11.5px;
+                y: 7.5px;
+            }
+
+            btn-max := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.maximize(); }
+            }
+        }
+
+        // Close
+        Rectangle {
+            width: 36px;
+            height: 28px;
+            y: 6px;
+            border-radius: 14px;
+            background: btn-close.has-hover ? #b3261e : transparent;
+            animate background { duration: 140ms; easing: ease-out; }
+
+            Image {
+                source: @image-url("icons/ms_close.svg");
+                width: 15px;
+                height: 15px;
+                colorize: btn-close.has-hover ? #ffffff : Theme.text-secondary;
+                x: 10.5px;
+                y: 6.5px;
+                animate colorize { duration: 140ms; easing: ease-out; }
+            }
+
+            btn-close := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.close(); }
+            }
+        }
+    }
+}
+
 export component PresetsDrawer inherits Rectangle {
     in-out property <string> eq-preset-name: "Default";
     in-out property <float> eq-bass: 0.0;
     in-out property <float> eq-mid: 0.0;
     in-out property <float> eq-treble: 0.0;
+    in property <bool> ambient-active: false;
     callback apply-preset(string);
     callback set-eq(float, float, float);
     callback close();
 
     width: 220px;
-    background: #141417;
+    background: ambient-active ? #141417d9 : #141417;
+    backdrop-blur: ambient-active ? 24px : 0px;
     border-radius: 12px;
+    animate background { duration: 400ms; easing: ease; }
 
     VerticalLayout {
         padding: 14px;
@@ -67,6 +270,7 @@ export component PresetsDrawer inherits Rectangle {
                     height: 30px;
                     border-radius: 8px;
                     background: eq-preset-name == p.label ? Theme.primary : (pta.has-hover ? #24242a : #1c1c20);
+                    animate background { duration: 140ms; easing: ease-out; }
 
                     HorizontalLayout {
                         padding-left: 12px;
@@ -174,13 +378,29 @@ export component RightPanel inherits Rectangle {
     in property <string> current-artist: "Select a track to listen";
     in property <image> current-cover;
     in property <bool> current-has-cover: false;
+    in property <color> accent-color: Theme.primary;
+    in property <bool> has-accent: false;
+    in property <bool> ambient-active: false;
     in property <[LyricLineData]> lyrics-lines: [];
     callback seek-to(float);
     callback close();
 
     width: 350px;
-    background: Theme.right-panel-bg;
+    background: ambient-active ? #161618d9 : Theme.right-panel-bg;
+    backdrop-blur: ambient-active ? 24px : 0px;
     border-radius: 10px;
+    clip: true;
+    animate background { duration: 400ms; easing: ease; }
+
+    // Top ambient accent gradient (#right-panel::before equivalent)
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: has-accent
+            ? @linear-gradient(180deg, accent-color.with-alpha(0.22) 0%, accent-color.with-alpha(0.08) 45%, #ffffff03 75%, transparent 100%)
+            : @linear-gradient(180deg, #ffffff1c 0%, #ffffff0b 45%, #ffffff03 75%, transparent 100%);
+        animate background { duration: 400ms; easing: ease; }
+    }
 
     panel-ta := TouchArea {}
 
@@ -194,6 +414,7 @@ export component RightPanel inherits Rectangle {
             spacing: 6px;
             alignment: end;
             opacity: (current-id != "" || lyrics-lines.length > 0 || panel-ta.has-hover) ? 1.0 : 0.0;
+            animate opacity { duration: 180ms; easing: ease-out; }
 
             Rectangle {
                 height: 28px;
@@ -231,22 +452,31 @@ export component RightPanel inherits Rectangle {
                 height: 310px;
                 border-radius: 12px;
                 background: #111113;
-                clip: true;
+                drop-shadow-blur: current-has-cover ? 28px : 0px;
+                drop-shadow-offset-y: 10px;
+                drop-shadow-color: current-has-cover ? accent-color.with-alpha(0.35) : transparent;
 
-                if current-has-cover: Image {
-                    source: current-cover;
+                Rectangle {
                     width: 100%;
                     height: 100%;
-                    image-fit: cover;
-                }
+                    border-radius: 12px;
+                    clip: true;
 
-                if !current-has-cover: Image {
-                    source: @image-url("icons/play_circle.svg");
-                    width: 36px;
-                    height: 36px;
-                    colorize: Theme.text-muted;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
+                    if current-has-cover: Image {
+                        source: current-cover;
+                        width: 100%;
+                        height: 100%;
+                        image-fit: cover;
+                    }
+
+                    if !current-has-cover: Image {
+                        source: @image-url("icons/play_circle.svg");
+                        width: 36px;
+                        height: 36px;
+                        colorize: Theme.text-muted;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
                 }
             }
 
@@ -319,6 +549,7 @@ export component RightPanel inherits Rectangle {
                     for line in lyrics-lines: Rectangle {
                         border-radius: 8px;
                         background: lta.has-hover ? #1e1e22 : transparent;
+                        animate background { duration: 140ms; easing: ease-out; }
 
                         HorizontalLayout {
                             padding: 8px;
@@ -329,6 +560,8 @@ export component RightPanel inherits Rectangle {
                                 font-size: line.is_active ? 18px : 15px;
                                 font-weight: line.is_active ? 700 : 500;
                                 wrap: word-wrap;
+                                animate color { duration: 180ms; easing: ease-out; }
+                                animate font-size { duration: 180ms; easing: ease-out; }
                             }
                         }
 
@@ -344,6 +577,7 @@ export component RightPanel inherits Rectangle {
 }
 
 export component SettingsModal inherits Rectangle {
+    in property <bool> open: false;
     in-out property <int> section: 0; // 0: Interface, 1: Audio & EQ, 2: Storage, 3: About
     in-out property <string> eq-preset-name: "Default";
     in-out property <float> eq-bass: 0.0;
@@ -359,7 +593,11 @@ export component SettingsModal inherits Rectangle {
 
     property <bool> native-ui-enabled: true;
 
+    opacity: open ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
     background: #00000085;
+    backdrop-blur: 10px;
+    animate opacity { duration: 180ms; easing: ease-out; }
 
     // Swallow clicks on backdrop
     TouchArea {
@@ -371,12 +609,16 @@ export component SettingsModal inherits Rectangle {
         width: min(900px, parent.width - 80px);
         height: min(580px, parent.height - 80px);
         x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
+        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 14px;
         border-radius: 12px;
         background: #16161a;
         border-width: 1px;
         border-color: #2a2a32;
+        drop-shadow-blur: 36px;
+        drop-shadow-offset-y: 14px;
+        drop-shadow-color: #00000099;
         clip: true;
+        animate y { duration: 220ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
 
         // Prevent backdrop click inside modal
         TouchArea {}
@@ -419,6 +661,7 @@ export component SettingsModal inherits Rectangle {
                         height: 44px;
                         border-radius: 12px;
                         background: section == nav.idx ? Theme.primary : (nta.has-hover ? #1c1c22 : transparent);
+                        animate background { duration: 140ms; easing: ease-out; }
 
                         HorizontalLayout {
                             padding-left: 14px;
@@ -677,6 +920,7 @@ export component SettingsModal inherits Rectangle {
                 border-width: 2px;
                 border-color: #8e909999;
                 background: cta.has-hover ? #ffffff18 : transparent;
+                animate background { duration: 140ms; easing: ease-out; }
 
                 Image {
                     source: @image-url("icons/ms_close.svg");
