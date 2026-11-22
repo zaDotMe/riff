@@ -101,136 +101,106 @@ fn create_node_cmd() -> std::process::Command {
     cmd
 }
 
-fn find_rust_core_bin() -> Option<PathBuf> {
-    let bin_name = if cfg!(windows) { "riff-core.exe" } else { "riff-core" };
-
-    #[cfg(debug_assertions)]
-    let candidates = [
-        PathBuf::from("target").join("debug").join(bin_name),
-        PathBuf::from("target").join("release").join(bin_name),
-        PathBuf::from("bin").join(bin_name),
-    ];
-
-    #[cfg(not(debug_assertions))]
-    let candidates = [
-        PathBuf::from("target").join("release").join(bin_name),
-        PathBuf::from("target").join("debug").join(bin_name),
-        PathBuf::from("bin").join(bin_name),
-    ];
-
-    for c in &candidates {
-        if c.exists() {
-            if let Ok(abs) = std::fs::canonicalize(c) {
-                return Some(abs);
-            }
-            return Some(c.clone());
-        }
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let candidate = parent.join(bin_name);
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
-
-    None
-}
-
 fn start_backend_server() {
     let explicit_node = std::env::var("RIFF_BACKEND")
         .map(|v| v.to_lowercase() == "node")
         .unwrap_or(false);
-    let rust_bin_opt = find_rust_core_bin();
-    let prefer_rust = !explicit_node && rust_bin_opt.is_some();
 
-    let mut cmd = if prefer_rust {
-        if let Some(rust_bin) = rust_bin_opt {
-            println!("[tauri] Spawning native Rust core backend: {}", rust_bin.display());
-            let mut c = std::process::Command::new(&rust_bin);
-            c.arg("--port").arg(DEFAULT_PORT.to_string());
-            c.arg("--token").arg(DEFAULT_TOKEN);
-            if let Some(proj_dir) = find_server_script().and_then(|p| p.parent().and_then(|p| p.parent().map(|p| p.to_path_buf()))) {
-                c.current_dir(proj_dir);
-            }
-            c
-        } else {
-            eprintln!("[tauri] Warning: riff-core binary was not found. Falling back to Node server.");
-            create_node_cmd()
-        }
-    } else {
-        create_node_cmd()
-    };
+    if explicit_node {
+        println!("[tauri] Explicit RIFF_BACKEND=node requested. Spawning Node background server...");
+        let mut cmd = create_node_cmd();
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
 
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
 
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
+        match cmd.spawn() {
+            Ok(mut child) => {
+                #[cfg(target_os = "windows")]
+                assign_to_kill_on_close_job(&child);
 
-    match cmd.spawn() {
-        Ok(mut child) => {
-            #[cfg(target_os = "windows")]
-            assign_to_kill_on_close_job(&child);
+                let stdout = child.stdout.take();
+                let stderr = child.stderr.take();
 
-            let stdout = child.stdout.take();
-            let stderr = child.stderr.take();
+                if let Ok(mut lock) = CHILD_PROCESS.lock() {
+                    *lock = Some(child);
+                }
 
-            if let Ok(mut lock) = CHILD_PROCESS.lock() {
-                *lock = Some(child);
-            }
-
-            // Monitor stdout for readiness event
-            if let Some(stdout) = stdout {
-                std::thread::spawn(move || {
-                    let reader = std::io::BufReader::new(stdout);
-                    for line in reader.lines().flatten() {
-                        if line.contains("\"event\":\"ready\"") || line.contains("\"event\": \"ready\"") {
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                                if let Some(p) = val.get("port").and_then(|v| v.as_u64()) {
-                                    SERVER_PORT.store(p as u16, Ordering::SeqCst);
-                                    println!("[tauri] Backend server ready on port {}", p);
+                if let Some(stdout) = stdout {
+                    std::thread::spawn(move || {
+                        let reader = std::io::BufReader::new(stdout);
+                        for line in reader.lines().flatten() {
+                            if line.contains("\"event\":\"ready\"") || line.contains("\"event\": \"ready\"") {
+                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                                    if let Some(p) = val.get("port").and_then(|v| v.as_u64()) {
+                                        SERVER_PORT.store(p as u16, Ordering::SeqCst);
+                                        println!("[tauri] Backend server ready on port {}", p);
+                                    }
                                 }
-                            }
-                        } else if let Some(idx) = line.find("http://127.0.0.1:") {
-                            let rest = &line[idx + "http://127.0.0.1:".len()..];
-                            if let Some(port_str) = rest.split(|c: char| !c.is_numeric()).next() {
-                                if let Ok(p) = port_str.parse::<u16>() {
-                                    SERVER_PORT.store(p, Ordering::SeqCst);
-                                    println!("[tauri] Backend server ready on port {}", p);
-                                }
-                            }
-                        } else if let Some(idx) = line.find("listening on ") {
-                            let rest = &line[idx + "listening on ".len()..];
-                            if let Some(port_str) = rest.split(|c: char| !c.is_numeric()).next() {
-                                if let Ok(p) = port_str.parse::<u16>() {
-                                    SERVER_PORT.store(p, Ordering::SeqCst);
-                                    println!("[tauri] Backend server listening on port {}", p);
+                            } else if let Some(idx) = line.find("http://127.0.0.1:") {
+                                let rest = &line[idx + "http://127.0.0.1:".len()..];
+                                if let Some(port_str) = rest.split(|c: char| !c.is_numeric()).next() {
+                                    if let Ok(p) = port_str.parse::<u16>() {
+                                        SERVER_PORT.store(p, Ordering::SeqCst);
+                                        println!("[tauri] Backend server ready on port {}", p);
+                                    }
                                 }
                             }
                         }
-                    }
-                });
-            }
+                    });
+                }
 
-            // Monitor stderr for errors in debug mode
-            if let Some(stderr) = stderr {
-                std::thread::spawn(move || {
-                    let reader = std::io::BufReader::new(stderr);
-                    for _line in reader.lines().flatten() {
-                        #[cfg(debug_assertions)]
-                        eprintln!("[server-stderr] {}", _line);
-                    }
-                });
+                if let Some(stderr) = stderr {
+                    std::thread::spawn(move || {
+                        let reader = std::io::BufReader::new(stderr);
+                        for _line in reader.lines().flatten() {
+                            #[cfg(debug_assertions)]
+                            eprintln!("[server-stderr] {}", _line);
+                        }
+                    });
+                }
+            }
+            Err(err) => {
+                eprintln!("[tauri] Failed to spawn Node backend server: {}. Falling back to default port {}", err, DEFAULT_PORT);
+                SERVER_PORT.store(DEFAULT_PORT, Ordering::SeqCst);
             }
         }
-        Err(err) => {
-            eprintln!("[tauri] Failed to spawn Node backend server: {}. Falling back to default port {}", err, DEFAULT_PORT);
-            SERVER_PORT.store(DEFAULT_PORT, Ordering::SeqCst);
-        }
+        return;
     }
+
+    println!("[tauri] Launching native Axum riff-core in-process server...");
+    let data_dir = PathBuf::from(get_data_dir());
+    let library_dir = data_dir.join("library");
+
+    let config = match riff_core::config::Config::new(
+        DEFAULT_PORT,
+        Some(DEFAULT_TOKEN.to_string()),
+        Some(data_dir),
+        Some(library_dir),
+        None,
+        None,
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[tauri] Failed to initialize riff-core config: {}", e);
+            SERVER_PORT.store(DEFAULT_PORT, Ordering::SeqCst);
+            return;
+        }
+    };
+
+    tauri::async_runtime::spawn(async move {
+        match riff_core::start_server_in_process(config).await {
+            Ok((port, _handle)) => {
+                SERVER_PORT.store(port, Ordering::SeqCst);
+                println!("[tauri] In-process riff-core server ready on port {}", port);
+            }
+            Err(e) => {
+                eprintln!("[tauri] Failed to start in-process riff-core server: {}", e);
+                SERVER_PORT.store(DEFAULT_PORT, Ordering::SeqCst);
+            }
+        }
+    });
 }
 
 #[tauri::command]

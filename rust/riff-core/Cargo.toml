@@ -3,8 +3,16 @@ name = "riff-core"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Rust core sidecar for Riff: local library, SQLite index, and stream resolution"
+description = "Rust core library & binary for Riff: local library, SQLite index, and stream resolution"
 repository = "https://github.com/zaDotMe/riff"
+
+[lib]
+name = "riff_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "riff-core"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"

@@ -25,6 +25,7 @@ anyhow = "1.0"
 open = "5.3"
 lofty = "0.25"
 walkdir = "2"
+riff-core = { path = "../rust/riff-core" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }

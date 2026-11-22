@@ -32,6 +32,9 @@ pub fn open(path: &Path) -> Result<Db> {
         .with_context(|| format!("open sqlite database {}", path.display()))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "cache_size", -2000)?;
+    conn.pragma_update(None, "mmap_size", 16777216)?;
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
     conn.execute_batch(SCHEMA)?;
     Ok(Arc::new(Mutex::new(conn)))
 }

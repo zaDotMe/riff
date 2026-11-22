@@ -3364,6 +3364,7 @@ dependencies = [
  "anyhow",
  "lofty",
  "open",
+ "riff-core",
  "serde",
  "serde_json",
  "tauri",

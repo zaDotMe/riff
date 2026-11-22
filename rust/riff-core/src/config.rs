@@ -46,16 +46,19 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_args() -> Result<Self> {
-        let args = Args::parse();
-
-        let data_dir = match args.data_dir {
+    pub fn new(
+        port: u16,
+        token: Option<String>,
+        data_dir: Option<PathBuf>,
+        library_dir: Option<PathBuf>,
+        ytdlp: Option<PathBuf>,
+        ffmpeg: Option<PathBuf>,
+    ) -> Result<Self> {
+        let data_dir = match data_dir {
             Some(path) => path,
             None => default_data_dir()?,
         };
-        let library_dir = args
-            .library_dir
-            .unwrap_or_else(|| data_dir.join("library"));
+        let library_dir = library_dir.unwrap_or_else(|| data_dir.join("library"));
 
         std::fs::create_dir_all(&data_dir)
             .with_context(|| format!("create data directory {}", data_dir.display()))?;
@@ -68,16 +71,12 @@ impl Config {
             .with_context(|| format!("resolve library directory {}", library_dir.display()))?;
 
         let db_path = data_dir.join("riff-core.sqlite3");
-        let token = args.token.unwrap_or_else(generate_token);
-        let ytdlp = args
-            .ytdlp
-            .or_else(|| resolve_binary(&data_dir, "yt-dlp"));
-        let ffmpeg = args
-            .ffmpeg
-            .or_else(|| resolve_binary(&data_dir, "ffmpeg"));
+        let token = token.unwrap_or_else(generate_token);
+        let ytdlp = ytdlp.or_else(|| resolve_binary(&data_dir, "yt-dlp"));
+        let ffmpeg = ffmpeg.or_else(|| resolve_binary(&data_dir, "ffmpeg"));
 
         Ok(Self {
-            port: args.port,
+            port,
             data_dir,
             library_dir,
             db_path,
@@ -85,6 +84,18 @@ impl Config {
             ytdlp,
             ffmpeg,
         })
+    }
+
+    pub fn from_args() -> Result<Self> {
+        let args = Args::parse();
+        Self::new(
+            args.port,
+            args.token,
+            args.data_dir,
+            args.library_dir,
+            args.ytdlp,
+            args.ffmpeg,
+        )
     }
 }
 

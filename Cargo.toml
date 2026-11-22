@@ -3,6 +3,8 @@ resolver = "2"
 members = ["rust/riff-core", "src-tauri"]
 
 [profile.release]
-lto = "thin"
+opt-level = "s"
+lto = "fat"
 codegen-units = 1
+panic = "abort"
 strip = true
