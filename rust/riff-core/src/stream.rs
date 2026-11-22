@@ -175,6 +175,8 @@ pub async fn proxy_audio(
                     ua = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip";
                 } else if v == "IOS" {
                     ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+                } else if v == "VISIONOS" || v == "WEB" || v == "WEB_REMIX" || v == "MWEB" {
+                    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
                 }
             }
         }

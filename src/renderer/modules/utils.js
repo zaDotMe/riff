@@ -58,7 +58,11 @@ var flushSync = window.flushSync || function() {};
     window.fetch = function (input, init) {
       try {
         const raw = typeof input === 'string' ? input : (input && input.url) || '';
-        if (raw.indexOf('/api/') !== -1 && token) {
+        const isLocalApi = (raw.startsWith('/') && raw.startsWith('/api/'))
+          || raw.includes('127.0.0.1')
+          || raw.includes('localhost')
+          || raw.includes('tauri.localhost');
+        if (raw.indexOf('/api/') !== -1 && isLocalApi && token) {
           const opts = Object.assign({}, init || {});
           const headers = new Headers(opts.headers || (input && input.headers) || undefined);
           if (!headers.has('X-Riff-Token')) headers.set('X-Riff-Token', token);

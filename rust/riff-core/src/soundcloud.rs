@@ -334,9 +334,38 @@ impl SoundCloudClient {
                         .get("media")
                         .and_then(|m| m.get("transcodings"))
                         .and_then(|tr| tr.as_array())
-                        .map(|arr| !arr.is_empty())
+                        .map(|arr| {
+                            arr.iter().any(|tr| {
+                                let proto = tr
+                                    .get("format")
+                                    .and_then(|f| f.get("protocol"))
+                                    .and_then(|p| p.as_str())
+                                    .unwrap_or("");
+                                !proto.contains("encrypted")
+                                    && !proto.starts_with("cbc")
+                                    && !proto.starts_with("ctr")
+                                    && (proto == "progressive" || proto == "hls")
+                            })
+                        })
                         .unwrap_or(false);
                     if !has_transcodings {
+                        return false;
+                    }
+
+                    // Reject edits, remixes, covers, slowed, etc. if target song did not ask for them
+                    let cand_title_lower = t
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    let song_lower = song.to_lowercase();
+                    const EDIT_WORDS: &[&str] = &[
+                        "edit", "remix", "cover", "tribute", "slowed", "reverb", "mashup",
+                        "sped up", "speed up", "karaoke", "instrumental",
+                    ];
+                    let cand_has_edit = EDIT_WORDS.iter().any(|w| cand_title_lower.contains(w));
+                    let song_has_edit = EDIT_WORDS.iter().any(|w| song_lower.contains(w));
+                    if cand_has_edit && !song_has_edit {
                         return false;
                     }
 
@@ -507,7 +536,7 @@ impl SoundCloudClient {
             None => return Ok(None),
         };
 
-        // Filter out snippets and preview endpoints
+        // Filter out snippets, preview endpoints, and DRM-encrypted protocols (e.g. cbc-encrypted-hls, ctr-encrypted-hls)
         let valid_transcodings: Vec<&Value> = list
             .iter()
             .filter(|t| {
@@ -516,7 +545,21 @@ impl SoundCloudClient {
                     return false;
                 }
                 let url = t.get("url").and_then(|u| u.as_str()).unwrap_or("");
-                !url.contains("/preview/")
+                if url.contains("/preview/") {
+                    return false;
+                }
+                let protocol = t
+                    .get("format")
+                    .and_then(|f| f.get("protocol"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("");
+                if protocol.contains("encrypted")
+                    || protocol.starts_with("cbc")
+                    || protocol.starts_with("ctr")
+                {
+                    return false;
+                }
+                protocol == "progressive" || protocol == "hls"
             })
             .collect();
 

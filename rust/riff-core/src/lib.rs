@@ -103,6 +103,14 @@ pub async fn build_app(config: Arc<config::Config>) -> anyhow::Result<(Router, A
         .route("/api/trending", get(trending_handler))
         .route("/api/top-chart", get(top_chart_handler))
         .route("/api/vibe", post(vibe_handler))
+        .route("/api/default-settings", get(|| async { Json(json!({ "success": true, "defaults": {}, "isOwnerEnv": false })) }))
+        .route("/api/check-cache", get(|| async { Json(json!({ "cached": false, "exists": false })) }).post(|| async { Json(json!({ "cached": false, "exists": false })) }))
+        .route("/api/net-check", get(|| async { Json(json!({ "success": true, "online": true })) }))
+        .route("/api/proxy-config", get(|| async { Json(json!({ "proxy": null, "configured": false })) }))
+        .route("/api/offline-library", get(|| async { Json(json!({ "tracks": [] })) }))
+        .route("/api/devsize-memes", get(|| async { Json(json!([])) }))
+        .route("/api/youtube-account-info", get(|| async { Json(json!({ "connected": false })) }))
+        .route("/api/track-credits", get(|| async { Json(json!({ "success": true, "credits": [] })) }))
         .merge(protected)
         .with_state(state)
         .layer(CorsLayer::permissive())
@@ -651,8 +659,44 @@ async fn stream_info(
     }
 
     let quality = query.quality.as_deref().unwrap_or("medium");
+    let timeout_secs = query.timeout.unwrap_or(20).clamp(5, 30);
 
-    // 2b. Attempt native InnerTube player resolution for YouTube
+    // 2b. Attempt yt-dlp resolution first (provides unthrottled audio streams via modern clients like VISIONOS)
+    if let Ok(raw_stream) = stream::resolve_with_ytdlp(
+        state.config.ytdlp.as_deref(),
+        &target_url,
+        timeout_secs,
+    )
+    .await
+    {
+        let is_hls = raw_stream.contains(".m3u8");
+        let proxy_url = format!(
+            "http://127.0.0.1:{port}/api/audio-proxy?url={}",
+            url_encode(&raw_stream)
+        );
+        let stream_url = if is_hls { raw_stream.clone() } else { proxy_url.clone() };
+
+        return Ok(Json(json!({
+            "success": true,
+            "isLocal": false,
+            "streamUrl": stream_url,
+            "rawStreamUrl": raw_stream,
+            "proxyUrl": proxy_url,
+            "isHls": is_hls,
+            "resolvedId": id,
+            "sourceMeta": {
+                "id": id,
+                "title": title_val,
+                "artist": artist_val,
+                "duration": duration_val,
+                "thumbnail": query.thumbnail.unwrap_or_default(),
+                "platform": query.platform.unwrap_or_else(|| "ytmusic".to_string()),
+                "url": target_url,
+            },
+        })));
+    }
+
+    // 2c. Fallback: native InnerTube player resolution for YouTube
     if is_yt {
         let cand_id = if !id.is_empty() { &id } else { &target_url };
         if let Ok(direct_url) = state.youtube.resolve_stream(cand_id, quality).await {
@@ -682,41 +726,10 @@ async fn stream_info(
         }
     }
 
-    // 2c. Fallback: resolve via yt-dlp process
-    let timeout_secs = query.timeout.unwrap_or(20).clamp(5, 30);
-    let raw_stream = stream::resolve_with_ytdlp(
-        state.config.ytdlp.as_deref(),
-        &target_url,
-        timeout_secs,
-    )
-    .await
-    .map_err(|error| ApiError::new(StatusCode::BAD_GATEWAY, error.to_string()))?;
-
-    let is_hls = raw_stream.contains(".m3u8");
-    let proxy_url = format!(
-        "http://127.0.0.1:{port}/api/audio-proxy?url={}",
-        url_encode(&raw_stream)
-    );
-    let stream_url = if is_hls { raw_stream.clone() } else { proxy_url.clone() };
-
-    Ok(Json(json!({
-        "success": true,
-        "isLocal": false,
-        "streamUrl": stream_url,
-        "rawStreamUrl": raw_stream,
-        "proxyUrl": proxy_url,
-        "isHls": is_hls,
-        "resolvedId": id,
-        "sourceMeta": {
-            "id": id,
-            "title": title_val,
-            "artist": artist_val,
-            "duration": duration_val,
-            "thumbnail": query.thumbnail.unwrap_or_default(),
-            "platform": query.platform.unwrap_or_else(|| "ytmusic".to_string()),
-            "url": target_url,
-        },
-    })))
+    Err(ApiError::new(
+        StatusCode::BAD_GATEWAY,
+        "failed to resolve audio stream via smart mirror, yt-dlp, or innertube",
+    ))
 }
 
 async fn image_proxy_handler(

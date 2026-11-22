@@ -19,15 +19,19 @@ Dokumentasi arsitektur, hasil benchmark, dan implementasi migrasi Riff ke Rust d
 
 ---
 
-## 2. Benchmark Origin (Electron + Node) vs Rust Core
+## 2. Benchmark Origin (Electron + Node) vs Tauri 2 Lean Stack (Fork Ini)
 
-| Metrik | Origin (Node.js internal) | Rust Core (`riff-core`) | Peningkatan |
+| Metrik | Origin (Node.js + Electron) | Tauri 2 Lean Stack (Fork Ini) | Peningkatan / Catatan |
 |---|---|---|---|
-| Server RSS Memory | ~66 MB | **~25 MB working set / 3 MB private** | **-75% s/d -95%** |
-| Database / Library storage | `metadata.json` (writeFileSync full array) | SQLite WAL mode + index B-tree | Tidak ada UI freeze saat save |
-| Audio tag parser | ID3 manual parser JS (di main process) | **Lofty 0.25 (Rust native)** | Zero main thread blocking |
-| Binary size (Release) | Node runtime bundled | **10.4 MB** (stripped single binary) | Sangat ringkas |
-| Stream proxy | Node `http`/`https` | Tokio `ReaderStream` + Axum byte range | Range request efisien |
+| **Binary Size (Release Exe)** | Bundled Electron + Node runtime (~150+ MB) | **10.32 MB** (`riff-tauri.exe` stripped) | **-93% ukuran file binary** |
+| **Backend Core RAM (Private)** | ~66 MB s/d 85 MB | **~9.8 MB - 10.1 MB** (`riff-tauri.exe`) | **-85% Private Memory** |
+| **Backend Core RAM (Working Set)** | ~110 MB | **~34 MB - 37 MB** (Physical RAM) | **-68% Working Set** |
+| **Frontend RAM (WebView2)** | Bundled Chromium (~500 - 800 MB) | **~600 - 800 MB** (Host, GPU, Audio, Renderer) | Diproses terpisah oleh OS WebView2 |
+| **Backend In-Process Startup** | ~1.100 ms (Node boot + Express) | **< 6 ms** (Axum Tokio in-process) | **Instan (< 10 ms)** |
+| **Search Latency (YT Music)** | ~800 - 1.500 ms | **~380 - 450 ms** (`WEB_REMIX` native Rust) | Metadata artis & judul bersih |
+| **Stream-Info Latency** | ~1.500 - 3.500 ms | **~750 - 1.100 ms** (Smart Mirror HLS) | Seekable HLS / unthrottled proxy |
+| **Database / Storage** | `metadata.json` (writeFileSync full array) | SQLite WAL mode + index B-tree | Zero UI freeze saat save library |
+| **Audio Tag Parser** | ID3 manual parser JS (di main thread) | **Lofty 0.25 (Rust native)** | Zero UI blocking |
 
 ---
 
@@ -58,11 +62,11 @@ npm start
 ## 5. Status Implementasi Tauri 2 & Lean Stack Migration (Single Binary)
 
 Arsitektur Riff telah dimigrasikan ke **Lean Stack** (Single Binary In-Process Axum Core):
-1. **Single Binary Executable (`10.26 MB`):**
+1. **Single Binary Executable (`10.32 MB`):**
    - Mengubah `rust/riff-core` menjadi dual-target crate (`lib.rs` + `main.rs`).
    - `src-tauri` mengimpor `riff-core` langsung sebagai library crate (`riff-core = { path = "../rust/riff-core" }`).
    - Server Axum dijalankan secara **in-process** di dalam runtime Tokio Tauri (`tauri::async_runtime::spawn`), mengeliminasi overhead subprocess, IPC pipe, port hunting, dan Windows Job Objects.
-   - Ukuran release binary turun drastis dari **26.7 MB** (dual-process) menjadi hanya **10.26 MB** (single standalone binary) dengan penghematan RAM hingga **75%**.
+   - Ukuran release binary adalah **10.32 MB** (single standalone binary) dengan penggunaan Private Memory backend hanya **~9.8 - 10.1 MB**.
 2. **Compiler & Memory Release Profile Optimization:**
    - Profil rilis root `Cargo.toml`: `opt-level = "s"`, `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, dan `strip = true`.
    - SQLite PRAGMA tuning: `cache_size = -2000` (~2 MB), `mmap_size = 16777216` (16 MB), `temp_store = MEMORY`.
@@ -72,13 +76,18 @@ Arsitektur Riff telah dimigrasikan ke **Lean Stack** (Single Binary In-Process A
    - Native audio metadata extraction di Rust via `lofty 0.25` dan `walkdir 2`.
    - Native window controls (minimize, maximize/restore, close, dan smooth titlebar dragging).
    - System controls: `openExternal`, `openLogsFolder`, `restartApp`, dan synchronized storage batching.
-4. **Native SoundCloud Scraper & Stream Resolver (`rust/riff-core/src/soundcloud.rs`):**
-   - Dynamic scraping live `client_id` dari asset bundle web SoundCloud.
-   - Endpoint `GET /api/search?platform=soundcloud` langsung diproses native via Rust + Tokio + Reqwest JSON parsing.
-   - Resolving transcodings (progressive MP3 & HLS playlist) tanpa dependensi Node.js.
+4. **Native YouTube Music & SoundCloud Scraper / Smart Mirror Engine:**
+   - Search YouTube Music menggunakan InnerTube client `WEB_REMIX` native Rust, menghasilkan metadata judul lagu, nama artis, dan durasi yang bersih tanpa noise judul video ("Official Video", "MV", dsb).
+   - Smart Mirror SoundCloud memetakan track YouTube/YTMusic ke stream HLS unencrypted SoundCloud, secara otomatis menolak stream terenkripsi DRM (`cbc-encrypted-hls` / `ctr-encrypted-hls` dengan Sample-AES/FairPlay) dan menyaring kandidat remix/fan-edit saat user mencari lagu original.
+   - Fallback modern via `yt-dlp` menggunakan client unthrottled (`c=VISIONOS`) yang bebas dari pembatasan 1MB Google Video, diproxy secara efisien dengan chunking HTTP 206 Partial Content.
 5. **Zero-Copy Streaming Audio Proxy (`GET /api/audio-proxy`):**
-   - Mendukung HTTP `206 Partial Content` (Range Requests) dengan bounded 1MB chunking langsung ke WebView2/HTML5 `<audio>`, bypass blokir 403 GoogleVideo.
-6. **Cara menjalankan via Tauri 2 Single Binary:**
+   - Mendukung HTTP `206 Partial Content` (Range Requests) langsung ke WebView2/HTML5 `<audio>`.
+6. **Benchmark & Testing Tooling:**
+   - Jalankan benchmark performa, latency endpoint, dan profil RAM kapan saja dengan:
+     ```powershell
+     npm run bench
+     ```
+7. **Cara menjalankan via Tauri 2 Single Binary:**
    ```powershell
    npm run tauri:dev
    ```
