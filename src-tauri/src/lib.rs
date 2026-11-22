@@ -2,7 +2,9 @@ use std::io::BufRead;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Mutex;
+use lofty::file::TaggedFileExt;
 use tauri::Window;
+use tauri_plugin_dialog::DialogExt;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::io::AsRawHandle;
@@ -325,6 +327,194 @@ fn get_storage_all() -> serde_json::Value {
 }
 
 #[tauri::command]
+fn start_drag(window: Window) {
+    let _ = window.start_dragging();
+}
+
+fn read_audio_metadata(path: &std::path::Path) -> serde_json::Value {
+    let file_name = path.file_name().and_then(|v| v.to_str()).unwrap_or("track");
+    let base = path.file_stem().and_then(|v| v.to_str()).unwrap_or(file_name);
+
+    let (mut title, mut artist) = if let Some((a, t)) = base.split_once(" - ") {
+        (t.trim().to_string(), a.trim().to_string())
+    } else {
+        (base.trim().to_string(), "Unknown Artist".to_string())
+    };
+
+    let mut album = String::new();
+    let mut duration = 0.0;
+
+    if let Ok(tagged) = lofty::read_from_path(path) {
+        use lofty::file::AudioFile;
+        use lofty::tag::Accessor;
+        if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
+            if let Some(t) = tag.title() {
+                let s = t.trim();
+                if !s.is_empty() {
+                    title = s.to_string();
+                }
+            }
+            if let Some(a) = tag.artist() {
+                let s = a.trim();
+                if !s.is_empty() {
+                    artist = s.to_string();
+                }
+            }
+            if let Some(al) = tag.album() {
+                album = al.trim().to_string();
+            }
+        }
+        duration = tagged.properties().duration().as_secs_f64();
+    }
+
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in path.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let id = format!("local_{:012x}", hash & 0x0000_ffff_ffff_ffff);
+    let path_str = path.to_string_lossy().to_string();
+    let file_url = format!("file:///{}", path_str.replace('\\', "/"));
+
+    serde_json::json!({
+        "id": id,
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "duration": duration.round() as u64,
+        "path": path_str,
+        "url": file_url,
+        "platform": "local"
+    })
+}
+
+#[tauri::command]
+async fn pick_media(app: tauri::AppHandle) -> Option<String> {
+    let file = app.dialog().file()
+        .add_filter("Media", &["png", "jpg", "jpeg", "webp", "gif", "mp4", "webm"])
+        .blocking_pick_file();
+    file.and_then(|fp| fp.into_path().ok()).map(|p| p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn pick_local_files(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+    let files = app.dialog().file()
+        .add_filter("Audio", &["mp3", "flac", "wav", "ogg", "oga", "m4a", "aac", "webm", "weba", "opus", "wma"])
+        .blocking_pick_files();
+
+    let mut result = Vec::new();
+    if let Some(files) = files {
+        for file in files {
+            if let Ok(path) = file.into_path() {
+                if path.is_file() {
+                    result.push(read_audio_metadata(&path));
+                }
+            }
+        }
+    }
+    result
+}
+
+#[tauri::command]
+async fn pick_local_folder(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+    let folder = app.dialog().file().blocking_pick_folder();
+    let mut result = Vec::new();
+    let audio_exts = ["mp3", "flac", "wav", "ogg", "oga", "m4a", "aac", "webm", "weba", "opus", "wma"];
+
+    if let Some(folder) = folder {
+        if let Ok(dir) = folder.into_path() {
+            for entry in walkdir::WalkDir::new(&dir).follow_links(false).into_iter().flatten() {
+                if entry.file_type().is_file() {
+                    let path = entry.path();
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                    if audio_exts.contains(&ext.as_str()) {
+                        result.push(read_audio_metadata(path));
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
+#[tauri::command]
+async fn import_audio_files(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+    let files = app.dialog().file()
+        .add_filter("Audio", &["mp3", "flac", "wav", "ogg", "oga", "m4a", "aac", "webm", "weba", "opus"])
+        .blocking_pick_files();
+
+    let mut out = Vec::new();
+    let library_dir = std::path::PathBuf::from(get_data_dir()).join("library");
+    let _ = std::fs::create_dir_all(&library_dir);
+
+    if let Some(files) = files {
+        for file in files {
+            let path = match file.into_path() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !path.is_file() { continue; }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            let base_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("track").to_string();
+
+            let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+            for byte in format!("{base_name}{file_size}").as_bytes() {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            let id = format!("local_{:012x}", hash & 0x0000_ffff_ffff_ffff);
+            let target_name = format!("{id}.{ext}");
+            let target_path = library_dir.join(&target_name);
+
+            if !target_path.exists() {
+                let _ = std::fs::copy(&path, &target_path);
+            }
+
+            out.push(serde_json::json!({
+                "id": id,
+                "file": target_name,
+                "ext": ext,
+                "name": base_name
+            }));
+        }
+    }
+    out
+}
+
+#[tauri::command]
+async fn pick_data_dir(app: tauri::AppHandle) -> Option<String> {
+    let folder = app.dialog().file().blocking_pick_folder();
+    folder.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn get_download_dir() -> String {
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join("Downloads").to_string_lossy().to_string()
+}
+
+#[tauri::command]
+async fn pick_download_dir(app: tauri::AppHandle) -> Option<String> {
+    let folder = app.dialog().file().blocking_pick_folder();
+    folder.and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_logs_folder() {
+    let data_dir = get_data_dir();
+    let logs_dir = std::path::PathBuf::from(data_dir).join("logs");
+    let _ = std::fs::create_dir_all(&logs_dir);
+    let _ = open::that(&logs_dir);
+}
+
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    kill_backend();
+    app.restart();
+}
+
+#[tauri::command]
 fn save_storage_batch(data: serde_json::Value) {
     let path = PathBuf::from("src/storage.json");
     if let Ok(str_val) = serde_json::to_string_pretty(&data) {
@@ -342,6 +532,7 @@ pub fn run() {
             minimize_window,
             maximize_window,
             close_window,
+            start_drag,
             get_server_port,
             get_server_token,
             get_app_version,
@@ -350,6 +541,15 @@ pub fn run() {
             get_storage_all,
             save_storage_batch,
             log_error,
+            pick_media,
+            pick_local_files,
+            pick_local_folder,
+            import_audio_files,
+            pick_data_dir,
+            get_download_dir,
+            pick_download_dir,
+            open_logs_folder,
+            restart_app,
         ])
         .setup(|_app| {
             start_backend_server();

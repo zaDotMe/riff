@@ -3362,6 +3362,7 @@ name = "riff-tauri"
 version = "0.7.6"
 dependencies = [
  "anyhow",
+ "lofty",
  "open",
  "serde",
  "serde_json",
@@ -3371,6 +3372,7 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-shell",
  "tokio",
+ "walkdir",
  "windows-sys 0.52.0",
 ]
 

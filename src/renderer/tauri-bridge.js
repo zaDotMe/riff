@@ -33,11 +33,69 @@
     },
     openExternal: (url) => getInvoke()('open_external', { url: String(url) }),
     getDataDir: () => getInvoke()('get_data_dir'),
+    pickDataDir: async () => {
+      try { return await getInvoke()('pick_data_dir'); } catch (_) { return null; }
+    },
+    setDataDir: async () => true,
+    getDownloadDir: async () => {
+      try { return await getInvoke()('get_download_dir'); } catch (_) { return ''; }
+    },
+    pickDownloadDir: async () => {
+      try { return await getInvoke()('pick_download_dir'); } catch (_) { return null; }
+    },
+    setDownloadDir: async () => true,
+    resetDownloadDir: async () => true,
+    pickMedia: async () => {
+      try {
+        const filePath = await getInvoke()('pick_media');
+        if (!filePath) return null;
+        if (window.__TAURI__?.core?.convertFileSrc) {
+          return window.__TAURI__.core.convertFileSrc(filePath);
+        }
+        return 'file:///' + filePath.replace(/\\/g, '/');
+      } catch (_) {
+        return null;
+      }
+    },
+    pickLocalFiles: async () => {
+      try {
+        return (await getInvoke()('pick_local_files')) || [];
+      } catch (e) {
+        console.warn('pickLocalFiles error:', e);
+        return [];
+      }
+    },
+    pickLocalFolder: async () => {
+      try {
+        return (await getInvoke()('pick_local_folder')) || [];
+      } catch (e) {
+        console.warn('pickLocalFolder error:', e);
+        return [];
+      }
+    },
+    importAudioFiles: async () => {
+      try {
+        return (await getInvoke()('import_audio_files')) || [];
+      } catch (e) {
+        console.warn('importAudioFiles error:', e);
+        return [];
+      }
+    },
+    rescanLocalMetadata: async () => [],
     readCacheFile: async () => null,
     writeCacheFile: () => {},
     getGpuCompositing: async () => true,
     setAppProxy: async () => true,
+    restartApp: () => {
+      try { getInvoke()('restart_app'); } catch (_) {}
+    },
+    googleLogin: async () => ({ success: false }),
+    googleLogout: async () => ({ success: true }),
+    googleAccountInfo: async () => null,
+    googleImportLibrary: async () => ({ success: false }),
     googleAuthStatus: async () => ({ loggedIn: false }),
+    youtubePlaybackLogin: async () => false,
+    youtubePlaybackLogout: async () => true,
     youtubePlaybackStatus: async () => ({ loggedIn: false }),
     onYoutubePlaybackAuth: () => {},
     onWindowVisibility: () => {},
@@ -49,6 +107,20 @@
     discordRpcReconnect: () => {},
     getCacheSize: async () => ({ size: 0 }),
     clearCache: async () => ({ success: true }),
+    getAudioOutputInfo: async () => ({ device: 'default' }),
+    checkForUpdates: async () => ({ available: false }),
+    updateAction: () => {},
+    installUpdateNow: () => {},
+    onUpdateAvailable: () => {},
+    onUpdateDownloaded: () => {},
+    onUpdateProgress: () => {},
+    onUpdateReady: () => {},
+    onUpdateError: () => {},
+    onUpdateNotAvailable: () => {},
+    savePlaylistsJson: async () => true,
+    showPlaylistContextMenu: async () => {},
+    accountExport: async () => null,
+    accountImport: async () => null,
     logError: (level, message, stack) => {
       console.error(`[${level}]`, message, stack);
       try {
@@ -61,7 +133,9 @@
         });
       } catch (_) {}
     },
-    openLogsFolder: () => {},
+    openLogsFolder: () => {
+      try { getInvoke()('open_logs_folder'); } catch (_) {}
+    },
     getDiagnostics: async () => `Riff Tauri 2 Runtime\nOS: ${navigator.platform}`,
     setZoomFactor: () => {},
     getZoomFactor: () => 1.0,
@@ -127,4 +201,15 @@
       return true;
     }
   };
+
+  // Enable native titlebar dragging for Tauri 2 WebView2
+  window.addEventListener('mousedown', (e) => {
+    if (e.buttons === 1) {
+      const titlebar = e.target.closest('.titlebar-drag, .titlebar');
+      const isInteractive = e.target.closest('button, input, select, a, .win-btn, .app-logo, .no-drag, [data-no-drag]');
+      if (titlebar && !isInteractive) {
+        try { getInvoke()('start_drag'); } catch (_) {}
+      }
+    }
+  });
 })();

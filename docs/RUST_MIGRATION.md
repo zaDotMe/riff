@@ -55,24 +55,29 @@ npm start
 
 ---
 
-## 5. Status Implementasi Tauri 2 & Fase 2 (Native Rust Core)
+## 5. Status Implementasi Tauri 2 & Fase 3 (Desktop Shell Migration)
 
 Runtime Tauri 2 (`src-tauri`) dan Native Rust Scraper Core (`rust/riff-core`) telah terintegrasi penuh:
 1. **`src-tauri/` crate:** Berbasis Tauri 2 (`tauri = "2"`), WebView2 di Windows, dengan custom frameless window, Windows Job Object (auto-cleanup proses backend saat quit), dan hybrid sidecar runner (`RIFF_BACKEND=rust` atau fallback Node).
 2. **Icons asset pack:** Digenerate lengkap untuk Windows (`.ico`), macOS (`.icns`), dan PNG multipack.
-3. **`src/renderer/tauri-bridge.js`:** Strangler bridge otomatis mendeteksi environment Tauri dan memetakan `window.electronAPI` ke Tauri commands sehingga UI web (65k LOC) tidak memerlukan perubahan masif.
+3. **`src/renderer/tauri-bridge.js` (Strangler Bridge):**
+   - Otomatis mendeteksi environment Tauri dan memetakan `window.electronAPI` ke Tauri commands sehingga UI web (65k LOC) berjalan tanpa modifikasi masif.
+   - Native file/folder dialogs: `pickMedia`, `pickLocalFiles`, `pickLocalFolder`, `importAudioFiles`, `pickDataDir`, `pickDownloadDir`.
+   - Native audio metadata extraction di Rust via `lofty 0.25` dan `walkdir 2`.
+   - Native window controls (minimize, maximize/restore, close, dan smooth titlebar dragging).
+   - System controls: `openExternal`, `openLogsFolder`, `restartApp`, dan synchronized storage batching.
 4. **Native SoundCloud Scraper & Stream Resolver (`rust/riff-core/src/soundcloud.rs`):**
    - Dynamic scraping live `client_id` dari asset bundle web SoundCloud.
    - Endpoint `GET /api/search?platform=soundcloud` langsung diproses native via Rust + Tokio + Reqwest JSON parsing.
    - Resolving transcodings (progressive MP3 & HLS playlist) tanpa dependensi Node.js.
 5. **Zero-Copy Streaming Audio Proxy (`GET /api/audio-proxy`):**
-   - Mendukung HTTP `206 Partial Content` (Range Requests) via streaming chunks bytes langsung ke WebView2/HTML5 `<audio>`.
+   - Mendukung HTTP `206 Partial Content` (Range Requests) dengan bounded 1MB chunking langsung ke WebView2/HTML5 `<audio>`, bypass blokir 403 GoogleVideo.
 6. **Cara menjalankan via Tauri 2 dengan Native Rust Backend:**
    ```powershell
    $env:RIFF_BACKEND = "rust"
    npm run tauri:dev
    ```
-   Atau jalankan binary langsung:
+   Atau jalankan binary release langsung:
    ```powershell
-   .\target\debug\riff-tauri.exe
+   .\target\release\riff-tauri.exe
    ```
