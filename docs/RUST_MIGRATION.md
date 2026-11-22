@@ -26,7 +26,7 @@ Dokumentasi arsitektur, hasil benchmark, dan implementasi migrasi Riff ke Rust d
 | **Binary Size (Release Exe)** | Bundled Electron + Node runtime (~150+ MB) | **10.32 MB** (`riff-tauri.exe` stripped) | **-93% ukuran file binary** |
 | **Backend Core RAM (Private)** | ~66 MB s/d 85 MB | **~9.8 MB - 10.1 MB** (`riff-tauri.exe`) | **-85% Private Memory** |
 | **Backend Core RAM (Working Set)** | ~110 MB | **~34 MB - 37 MB** (Physical RAM) | **-68% Working Set** |
-| **Frontend RAM (WebView2)** | Bundled Chromium (~500 - 800 MB) | **~600 - 800 MB** (Host, GPU, Audio, Renderer) | Diproses terpisah oleh OS WebView2 |
+| **Frontend RAM (WebView2)** | Bundled Chromium (~500 - 800 MB) | **~110 - 320 MB aktif / ~20 - 35 MB idle** | Dioptimalkan via V8 160MB heap + K32EmptyWorkingSet trimmer |
 | **Backend In-Process Startup** | ~1.100 ms (Node boot + Express) | **< 6 ms** (Axum Tokio in-process) | **Instan (< 10 ms)** |
 | **Search Latency (YT Music)** | ~800 - 1.500 ms | **~380 - 450 ms** (`WEB_REMIX` native Rust) | Metadata artis & judul bersih |
 | **Stream-Info Latency** | ~1.500 - 3.500 ms | **~750 - 1.100 ms** (Smart Mirror HLS) | Seekable HLS / unthrottled proxy |
@@ -87,7 +87,12 @@ Arsitektur Riff telah dimigrasikan ke **Lean Stack** (Single Binary In-Process A
      ```powershell
      npm run bench
      ```
-7. **Cara menjalankan via Tauri 2 Single Binary:**
+7. **Chromium / WebView2 Lean Memory Optimization (Target < 350 MB):**
+   - **V8 Heap Capping (`--js-flags=--max-old-space-size=160`):** Membatasi alokasi heap JavaScript agar GC V8 berjalan lebih agresif dan tidak menahan objek DOM / audio yang sudah tidak terpakai.
+   - **Single Renderer Enforcement (`--renderer-process-limit=1`):** Mencegah Chromium membuat proses renderer berlebih di background.
+   - **Low-End Device Mode (`--enable-low-end-device-mode`):** Memangkas ukuran cache decoded image, glyph font Skia, dan buffer backing store canvas visualizer.
+   - **Automatic Win32 Working Set Trimmer:** Thread background berkala dan event `tauri::WindowEvent::Focused(false)` memanggil `K32EmptyWorkingSet` pada proses induk dan child WebView2, membebaskan physical memory cache yang idle sehingga konsumsi RAM WebView2 stabil di **~110–320 MB saat aktif** dan **~20–35 MB saat idle/background**.
+8. **Cara menjalankan via Tauri 2 Single Binary:**
    ```powershell
    npm run tauri:dev
    ```

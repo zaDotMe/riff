@@ -492,8 +492,109 @@ fn save_storage_batch(data: serde_json::Value) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn init_lean_webview_environment() {
+    let existing_args = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+    let lean_flags = [
+        "--js-flags=--max-old-space-size=160",
+        "--renderer-process-limit=1",
+        "--disable-features=SpareRendererForSitePerProcess,CalculateNativeWinOcclusion,PreloadMediaEngagementData",
+        "--enable-low-end-device-mode",
+        "--disable-gpu-shader-disk-cache",
+        "--memory-pressure-off",
+    ].join(" ");
+
+    let combined = if existing_args.is_empty() {
+        lean_flags
+    } else if !existing_args.contains("--max-old-space-size") {
+        format!("{} {}", existing_args, lean_flags)
+    } else {
+        existing_args
+    };
+
+    std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", combined);
+}
+
+#[cfg(target_os = "windows")]
+pub fn trim_app_memory() {
+    use windows_sys::Win32::System::ProcessStatus::K32EmptyWorkingSet;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, OpenProcess, PROCESS_SET_QUOTA, PROCESS_QUERY_INFORMATION};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::Foundation::CloseHandle;
+
+    unsafe {
+        let cur_handle = GetCurrentProcess();
+        let _ = K32EmptyWorkingSet(cur_handle);
+
+        let my_pid = GetCurrentProcessId();
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == 0 || snapshot == -1 {
+            return;
+        }
+
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        let mut child_pids = Vec::new();
+        if Process32FirstW(snapshot, &mut entry) != 0 {
+            loop {
+                if entry.th32ParentProcessID == my_pid {
+                    child_pids.push(entry.th32ProcessID);
+                }
+                if Process32NextW(snapshot, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+
+        // Also find grand-children (e.g. WebView2 browser-host -> renderer/gpu)
+        if Process32FirstW(snapshot, &mut entry) != 0 {
+            loop {
+                if child_pids.contains(&entry.th32ParentProcessID) && !child_pids.contains(&entry.th32ProcessID) {
+                    child_pids.push(entry.th32ProcessID);
+                }
+                if Process32NextW(snapshot, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+
+        CloseHandle(snapshot);
+
+        for pid in child_pids {
+            let h = OpenProcess(PROCESS_SET_QUOTA | PROCESS_QUERY_INFORMATION, 0, pid);
+            if h != 0 {
+                let _ = K32EmptyWorkingSet(h);
+                CloseHandle(h);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_memory_trimmer() {
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(15));
+        loop {
+            trim_app_memory();
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
+    });
+}
+
+#[tauri::command]
+fn trim_memory() {
+    #[cfg(target_os = "windows")]
+    trim_app_memory();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "windows")]
+    init_lean_webview_environment();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -520,14 +621,24 @@ pub fn run() {
             pick_download_dir,
             open_logs_folder,
             restart_app,
+            trim_memory,
         ])
         .setup(|_app| {
             start_backend_server();
+            #[cfg(target_os = "windows")]
+            spawn_memory_trimmer();
             Ok(())
         })
         .on_window_event(|_window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                kill_backend();
+            match event {
+                tauri::WindowEvent::Destroyed => {
+                    kill_backend();
+                }
+                tauri::WindowEvent::Focused(false) => {
+                    #[cfg(target_os = "windows")]
+                    trim_app_memory();
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())
