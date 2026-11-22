@@ -86,6 +86,18 @@ impl Config {
         })
     }
 
+    pub fn default_or_fallback() -> Self {
+        Self::new(0, None, None, None, None, None).unwrap_or_else(|_| Self {
+            port: 0,
+            data_dir: PathBuf::from("."),
+            library_dir: PathBuf::from("./library"),
+            db_path: PathBuf::from("./riff-core.sqlite3"),
+            token: "riff-token".to_string(),
+            ytdlp: None,
+            ffmpeg: None,
+        })
+    }
+
     pub fn from_args() -> Result<Self> {
         let args = Args::parse();
         Self::new(
@@ -96,6 +108,12 @@ impl Config {
             args.ytdlp,
             args.ffmpeg,
         )
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::default_or_fallback()
     }
 }
 

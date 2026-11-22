@@ -6,6 +6,7 @@ pub mod image_proxy;
 pub mod library;
 pub mod lyrics;
 pub mod models;
+pub mod player;
 pub mod soundcloud;
 pub mod stream;
 pub mod youtube;
@@ -45,6 +46,7 @@ pub struct AppState {
     pub port: Arc<AtomicU16>,
     pub api: Arc<api::RiffApi>,
     pub events: Arc<events::EventBus>,
+    pub player: Arc<player::AudioPlayer>,
 }
 
 pub async fn build_app(config: Arc<config::Config>) -> anyhow::Result<(Router, Arc<AtomicU16>)> {
@@ -69,6 +71,7 @@ pub async fn build_app(config: Arc<config::Config>) -> anyhow::Result<(Router, A
 
     let port = Arc::new(AtomicU16::new(0));
     let events = Arc::new(events::EventBus::default());
+    let player = Arc::new(player::AudioPlayer::new(events.clone()));
     let api = Arc::new(api::RiffApi::new(
         db.clone(),
         config.clone(),
@@ -76,6 +79,7 @@ pub async fn build_app(config: Arc<config::Config>) -> anyhow::Result<(Router, A
         youtube.clone(),
         lyrics.clone(),
         events.clone(),
+        player.clone(),
     ));
 
     let state = AppState {
@@ -91,6 +95,7 @@ pub async fn build_app(config: Arc<config::Config>) -> anyhow::Result<(Router, A
         config: config.clone(),
         api,
         events,
+        player,
     };
 
     let protected = Router::new()

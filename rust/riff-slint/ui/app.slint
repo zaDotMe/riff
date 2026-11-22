@@ -1,0 +1,545 @@
+import { Button, Slider, LineEdit, ScrollView, ListView, AboutSlint } from "std-widgets.slint";
+
+export struct TrackData {
+    id: string,
+    title: string,
+    artist: string,
+    duration_str: string,
+    duration_sec: float,
+    platform: string,
+}
+
+export global Theme {
+    in-out property <color> background: #0f0f12;
+    in-out property <color> surface: #18181c;
+    in-out property <color> card: #222228;
+    in-out property <color> card-hover: #2e2e36;
+    in-out property <color> accent: #8b5cf6;
+    in-out property <color> accent-hover: #7c3aed;
+    in-out property <color> text-primary: #f4f4f5;
+    in-out property <color> text-secondary: #a1a1aa;
+    in-out property <color> border: #2e2e36;
+}
+
+export component MainWindow inherits Window {
+    title: "Riff - Native Player";
+    min-width: 860px;
+    min-height: 580px;
+    default-font-family: "Segoe UI, Inter, Roboto, sans-serif";
+    background: Theme.background;
+    no-frame: false;
+
+    // Data models & state
+    in-out property <[TrackData]> library_tracks: [];
+    in-out property <[TrackData]> search_results: [];
+    in-out property <string> current_title: "No track playing";
+    in-out property <string> current_artist: "Select a track to start playback";
+    in-out property <bool> is_playing: false;
+    in-out property <float> current_pos: 0.0;
+    in-out property <float> current_duration: 1.0;
+    in-out property <string> pos_text: "0:00";
+    in-out property <string> dur_text: "0:00";
+    in-out property <float> volume: 1.0;
+    in-out property <[float]> spectrum_bands: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    in-out property <int> active_tab: 0; // 0: Library, 1: Search, 2: Settings
+    in-out property <string> ui_mode: "native";
+    in-out property <string> status_message: "Ready";
+
+    // Callbacks
+    callback play_track(TrackData);
+    callback toggle_play_pause();
+    callback seek_to(float);
+    callback set_volume(float);
+    callback trigger_search(string);
+    callback scan_local_folder();
+    callback switch_ui_mode(string);
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // Custom Titlebar / Header
+        Rectangle {
+            height: 48px;
+            background: Theme.surface;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: space-between;
+
+                // Logo and App Name
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Rectangle {
+                        width: 24px;
+                        height: 24px;
+                        border-radius: 6px;
+                        background: Theme.accent;
+                        Text {
+                            text: "R";
+                            font-weight: 700;
+                            color: #ffffff;
+                            font-size: 14px;
+                        }
+                    }
+                    Text {
+                        text: "Riff Native";
+                        font-size: 15px;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 65px;
+                        height: 20px;
+                        border-radius: 10px;
+                        background: #2e1065;
+                        Text {
+                            text: "Slint Mode";
+                            font-size: 10px;
+                            color: #c4b5fd;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                // Navigation Tabs
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 90px;
+                        height: 32px;
+                        border-radius: 6px;
+                        background: root.active_tab == 0 ? Theme.card : transparent;
+                        Text {
+                            text: "Library";
+                            color: root.active_tab == 0 ? Theme.text-primary : Theme.text-secondary;
+                            font-size: 13px;
+                            font-weight: root.active_tab == 0 ? 600 : 400;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                        TouchArea {
+                            clicked => { root.active_tab = 0; }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 90px;
+                        height: 32px;
+                        border-radius: 6px;
+                        background: root.active_tab == 1 ? Theme.card : transparent;
+                        Text {
+                            text: "Search";
+                            color: root.active_tab == 1 ? Theme.text-primary : Theme.text-secondary;
+                            font-size: 13px;
+                            font-weight: root.active_tab == 1 ? 600 : 400;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                        TouchArea {
+                            clicked => { root.active_tab = 1; }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 90px;
+                        height: 32px;
+                        border-radius: 6px;
+                        background: root.active_tab == 2 ? Theme.card : transparent;
+                        Text {
+                            text: "Settings";
+                            color: root.active_tab == 2 ? Theme.text-primary : Theme.text-secondary;
+                            font-size: 13px;
+                            font-weight: root.active_tab == 2 ? 600 : 400;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                        TouchArea {
+                            clicked => { root.active_tab = 2; }
+                        }
+                    }
+                }
+
+                // Status Indicator
+                HorizontalLayout {
+                    alignment: end;
+                    Text {
+                        text: root.status_message;
+                        font-size: 11px;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Main Content Area
+        Rectangle {
+            background: Theme.background;
+
+            // View 0: Library
+            if root.active_tab == 0: VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: "Local Library (" + root.library_tracks.length + " tracks)";
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                    }
+                    Button {
+                        text: "Scan Music Folder";
+                        clicked => { root.scan_local_folder(); }
+                    }
+                }
+
+                if root.library_tracks.length == 0: Rectangle {
+                    border-radius: 8px;
+                    background: Theme.surface;
+                    height: 180px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Text {
+                            text: "No audio tracks in library yet.";
+                            font-size: 14px;
+                            color: Theme.text-primary;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Click 'Scan Music Folder' above to import your local MP3, FLAC, WAV, or AAC files.";
+                            font-size: 12px;
+                            color: Theme.text-secondary;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                if root.library_tracks.length > 0: ListView {
+                    for track in root.library_tracks: Rectangle {
+                        height: 48px;
+                        background: track_touch.has-hover ? Theme.card : transparent;
+                        border-radius: 6px;
+
+                        track_touch := TouchArea {
+                            clicked => { root.play_track(track); }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 12px;
+                            alignment: space-between;
+
+                            HorizontalLayout {
+                                spacing: 12px;
+                                alignment: start;
+                                Text {
+                                    text: "🎵";
+                                    font-size: 14px;
+                                    vertical-alignment: center;
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: track.title;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        color: Theme.text-primary;
+                                    }
+                                    Text {
+                                        text: track.artist;
+                                        font-size: 11px;
+                                        color: Theme.text-secondary;
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: track.duration_str;
+                                font-size: 12px;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // View 1: Search
+            if root.active_tab == 1: VerticalLayout {
+                padding: 20px;
+                spacing: 14px;
+
+                Text {
+                    text: "Search Online & Local Music";
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    search_input := LineEdit {
+                        placeholder-text: "Type title or artist (e.g. Sway, Yellow, Sheila on 7)...";
+                        accepted => { root.trigger_search(self.text); }
+                    }
+                    Button {
+                        text: "Search";
+                        clicked => { root.trigger_search(search_input.text); }
+                    }
+                }
+
+                ListView {
+                    for track in root.search_results: Rectangle {
+                        height: 52px;
+                        background: s_touch.has-hover ? Theme.card : Theme.surface;
+                        border-radius: 6px;
+
+                        s_touch := TouchArea {
+                            clicked => { root.play_track(track); }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 14px;
+                            alignment: space-between;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: track.title;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    color: Theme.text-primary;
+                                }
+                                Text {
+                                    text: track.artist + " • " + track.platform;
+                                    font-size: 11px;
+                                    color: Theme.text-secondary;
+                                }
+                            }
+
+                            Text {
+                                text: track.duration_str;
+                                font-size: 12px;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // View 2: Settings
+            if root.active_tab == 2: VerticalLayout {
+                padding: 20px;
+                spacing: 16px;
+
+                Text {
+                    text: "Settings & UI Mode Switcher";
+                    font-size: 18px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                }
+
+                // Dual UI Mode Selection Card
+                Rectangle {
+                    background: Theme.surface;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    height: 120px;
+
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 8px;
+
+                        Text {
+                            text: "Active Frontend UI Architecture";
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: Theme.text-primary;
+                        }
+
+                        Text {
+                            text: "Currently running: Native Slint UI (RAM ~40-80 MB). You can switch back to the Chromium/Web UI anytime.";
+                            font-size: 12px;
+                            color: Theme.text-secondary;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 12px;
+                            alignment: start;
+                            Button {
+                                text: "Switch to Web UI (WebView2) & Restart";
+                                clicked => { root.switch_ui_mode("web"); }
+                            }
+                        }
+                    }
+                }
+
+                // Slint Attribution (Required by Slint Royalty-Free 2.0 License)
+                Rectangle {
+                    background: Theme.surface;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    height: 140px;
+
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 8px;
+
+                        Text {
+                            text: "Open Source Licensing & Credits";
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: Theme.text-primary;
+                        }
+
+                        Text {
+                            text: "Riff Native UI is powered by Slint under the Slint Royalty-Free Desktop License 2.0. Core audio & scrapers are MIT.";
+                            font-size: 12px;
+                            color: Theme.text-secondary;
+                        }
+
+                        AboutSlint {}
+                    }
+                }
+            }
+        }
+
+        // Bottom Player Bar
+        Rectangle {
+            height: 84px;
+            background: Theme.surface;
+
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 6px;
+                padding-bottom: 8px;
+                spacing: 4px;
+
+                // Scrubber Bar
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    Text {
+                        text: root.pos_text;
+                        font-size: 11px;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                    Slider {
+                        minimum: 0.0;
+                        maximum: root.current_duration > 0.0 ? root.current_duration : 1.0;
+                        value: root.current_pos;
+                        changed(val) => { root.seek_to(val); }
+                    }
+                    Text {
+                        text: root.dur_text;
+                        font-size: 11px;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Controls, Meta, Spectrum, Volume
+                HorizontalLayout {
+                    alignment: space-between;
+
+                    // Current track info
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: start;
+                        Rectangle {
+                            width: 36px;
+                            height: 36px;
+                            border-radius: 4px;
+                            background: Theme.card;
+                            Text {
+                                text: "🎵";
+                                font-size: 16px;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 1px;
+                            Text {
+                                text: root.current_title;
+                                font-size: 13px;
+                                font-weight: 600;
+                                color: Theme.text-primary;
+                            }
+                            Text {
+                                text: root.current_artist;
+                                font-size: 11px;
+                                color: Theme.text-secondary;
+                            }
+                        }
+                    }
+
+                    // Playback Buttons
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: center;
+                        Button {
+                            text: root.is_playing ? "⏸ Pause" : "▶ Play";
+                            clicked => { root.toggle_play_pause(); }
+                        }
+                    }
+
+                    // Real-Time 16-Band Spectrum Visualizer
+                    HorizontalLayout {
+                        spacing: 2px;
+                        alignment: center;
+                        for bar in root.spectrum_bands: VerticalLayout {
+                            alignment: end;
+                            Rectangle {
+                                width: 4px;
+                                height: (bar * 28px) + 2px;
+                                border-radius: 2px;
+                                background: Theme.accent;
+                            }
+                        }
+                    }
+
+                    // Volume Control
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+                        Text {
+                            text: "🔊";
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                        Slider {
+                            width: 90px;
+                            minimum: 0.0;
+                            maximum: 1.0;
+                            value: root.volume;
+                            changed(val) => { root.set_volume(val); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

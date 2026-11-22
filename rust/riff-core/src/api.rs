@@ -26,6 +26,7 @@ pub struct RiffApi {
     pub youtube: Arc<YouTubeClient>,
     pub lyrics: Arc<LyricsService>,
     pub events: Arc<EventBus>,
+    pub player: Arc<crate::player::AudioPlayer>,
 }
 
 impl RiffApi {
@@ -36,6 +37,7 @@ impl RiffApi {
         youtube: Arc<YouTubeClient>,
         lyrics: Arc<LyricsService>,
         events: Arc<EventBus>,
+        player: Arc<crate::player::AudioPlayer>,
     ) -> Self {
         Self {
             db,
@@ -44,7 +46,49 @@ impl RiffApi {
             youtube,
             lyrics,
             events,
+            player,
         }
+    }
+
+    pub fn play_file(&self, path: std::path::PathBuf, track: Option<Track>) {
+        self.player.play_file(path, track);
+    }
+
+    pub fn play_bytes(&self, data: Vec<u8>, hint: Option<String>, track: Option<Track>) {
+        self.player.play_bytes(data, hint, track);
+    }
+
+    pub fn pause(&self) {
+        self.player.pause();
+    }
+
+    pub fn resume(&self) {
+        self.player.resume();
+    }
+
+    pub fn seek(&self, pos_sec: f64) {
+        self.player.seek(pos_sec);
+    }
+
+    pub fn stop(&self) {
+        self.player.stop();
+    }
+
+    pub fn set_volume(&self, vol: f32) {
+        self.player.set_volume(vol);
+    }
+
+    pub fn set_eq(&self, bass: f32, mid: f32, treble: f32) {
+        self.player.set_eq(bass, mid, treble);
+    }
+
+    pub fn get_playback_state(&self) -> (bool, f64, f64, f32) {
+        (
+            self.player.is_playing(),
+            self.player.get_position(),
+            self.player.get_duration(),
+            self.player.get_volume(),
+        )
     }
 
     /// Unified search across YouTube, YouTube Music, SoundCloud, and local SQLite library
