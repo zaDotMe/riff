@@ -1,0 +1,705 @@
+import { Slider, ScrollView, AboutSlint } from "std-widgets.slint";
+import { Theme, LyricLineData } from "theme.slint";
+import { IconBtn, PillBtn, ToggleSwitch } from "components.slint";
+
+export component PresetsDrawer inherits Rectangle {
+    in-out property <string> eq-preset-name: "Default";
+    in-out property <float> eq-bass: 0.0;
+    in-out property <float> eq-mid: 0.0;
+    in-out property <float> eq-treble: 0.0;
+    callback apply-preset(string);
+    callback set-eq(float, float, float);
+    callback close();
+
+    width: 220px;
+    background: #141417;
+    border-radius: 12px;
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 12px;
+
+        // Header (persis web_presets.png)
+        HorizontalLayout {
+            height: 36px;
+            spacing: 4px;
+            Text {
+                text: "Presets";
+                color: Theme.text-primary;
+                font-size: 22px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            IconBtn {
+                width: 32px;
+                height: 32px;
+                icon: @image-url("icons/ms_add.svg");
+                icon-size: 18px;
+                clicked => {
+                    eq-preset-name = "Default";
+                    root.apply-preset("flat");
+                }
+            }
+            IconBtn {
+                width: 32px;
+                height: 32px;
+                icon: @image-url("icons/ms_close.svg");
+                icon-size: 18px;
+                clicked => { root.close(); }
+            }
+        }
+
+        // Preset chips (persis web_presets.png)
+        VerticalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            for p in [
+                { id: "flat", label: "Default" },
+                { id: "bass_boost", label: "Bass Boost" },
+                { id: "vocal", label: "Vocal" },
+                { id: "rock", label: "Rock" },
+                { id: "treble_boost", label: "Treble Boost" },
+            ]: HorizontalLayout {
+                alignment: start;
+                Rectangle {
+                    height: 30px;
+                    border-radius: 8px;
+                    background: eq-preset-name == p.label ? Theme.primary : (pta.has-hover ? #24242a : #1c1c20);
+
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        Text {
+                            text: p.label;
+                            color: eq-preset-name == p.label ? Theme.on-primary : Theme.text-primary;
+                            font-size: 13px;
+                            font-weight: eq-preset-name == p.label ? 700 : 500;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    pta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            eq-preset-name = p.label;
+                            root.apply-preset(p.id);
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.divider; }
+
+        // 3-Band EQ Sliders
+        VerticalLayout {
+            spacing: 8px;
+
+            VerticalLayout {
+                spacing: 2px;
+                HorizontalLayout {
+                    Text { text: "Bass (100Hz)"; color: Theme.text-secondary; font-size: 12px; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: Math.round(eq-bass) + " dB"; color: Theme.primary; font-size: 12px; font-weight: 600; }
+                }
+                Slider {
+                    minimum: -12.0;
+                    maximum: 12.0;
+                    value <=> eq-bass;
+                    changed(v) => {
+                        eq-preset-name = "Custom";
+                        root.set-eq(v, eq-mid, eq-treble);
+                    }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 2px;
+                HorizontalLayout {
+                    Text { text: "Mid (1kHz)"; color: Theme.text-secondary; font-size: 12px; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: Math.round(eq-mid) + " dB"; color: Theme.primary; font-size: 12px; font-weight: 600; }
+                }
+                Slider {
+                    minimum: -12.0;
+                    maximum: 12.0;
+                    value <=> eq-mid;
+                    changed(v) => {
+                        eq-preset-name = "Custom";
+                        root.set-eq(eq-bass, v, eq-treble);
+                    }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 2px;
+                HorizontalLayout {
+                    Text { text: "Treble (8kHz)"; color: Theme.text-secondary; font-size: 12px; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: Math.round(eq-treble) + " dB"; color: Theme.primary; font-size: 12px; font-weight: 600; }
+                }
+                Slider {
+                    minimum: -12.0;
+                    maximum: 12.0;
+                    value <=> eq-treble;
+                    changed(v) => {
+                        eq-preset-name = "Custom";
+                        root.set-eq(eq-bass, eq-mid, v);
+                    }
+                }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+
+        // Subtle bottom decor icon (persis web_presets.png)
+        HorizontalLayout {
+            alignment: center;
+            padding-bottom: 12px;
+            Image {
+                source: @image-url("icons/ms_discover_tune.svg");
+                width: 64px;
+                height: 64px;
+                colorize: #ffffff14;
+            }
+        }
+    }
+}
+
+export component RightPanel inherits Rectangle {
+    in property <string> current-id: "";
+    in property <string> current-title: "No track playing";
+    in property <string> current-artist: "Select a track to listen";
+    in property <image> current-cover;
+    in property <bool> current-has-cover: false;
+    in property <[LyricLineData]> lyrics-lines: [];
+    callback seek-to(float);
+    callback close();
+
+    width: 350px;
+    background: Theme.right-panel-bg;
+    border-radius: 10px;
+
+    panel-ta := TouchArea {}
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+
+        // Header actions (hidden when idle like web_cdp.png, visible on hover or when playing)
+        HorizontalLayout {
+            height: 32px;
+            spacing: 6px;
+            alignment: end;
+            opacity: (current-id != "" || lyrics-lines.length > 0 || panel-ta.has-hover) ? 1.0 : 0.0;
+
+            Rectangle {
+                height: 28px;
+                border-radius: 14px;
+                background: #222226;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    Text {
+                        text: "Line";
+                        color: Theme.text-secondary;
+                        font-size: 12.5px;
+                        font-weight: 500;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            IconBtn {
+                width: 30px;
+                height: 30px;
+                icon: @image-url("icons/ms_close.svg");
+                icon-size: 18px;
+                clicked => { root.close(); }
+            }
+        }
+
+        // Empty / Artwork view (persis web_cdp.png)
+        if lyrics-lines.length == 0: VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            spacing: 10px;
+
+            Rectangle {
+                height: 310px;
+                border-radius: 12px;
+                background: #111113;
+                clip: true;
+
+                if current-has-cover: Image {
+                    source: current-cover;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: cover;
+                }
+
+                if !current-has-cover: Image {
+                    source: @image-url("icons/play_circle.svg");
+                    width: 36px;
+                    height: 36px;
+                    colorize: Theme.text-muted;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 2px;
+                Text {
+                    text: current-title;
+                    color: Theme.text-primary;
+                    font-size: 30px;
+                    font-weight: 800;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: current-artist;
+                    color: Theme.text-secondary;
+                    font-size: 19px;
+                    font-weight: 500;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // Synced Lyrics view
+        if lyrics-lines.length > 0: VerticalLayout {
+            vertical-stretch: 1;
+            spacing: 12px;
+
+            HorizontalLayout {
+                spacing: 10px;
+                height: 48px;
+
+                Rectangle {
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 8px;
+                    background: #111113;
+                    clip: true;
+
+                    if current-has-cover: Image {
+                        source: current-cover;
+                        width: 100%;
+                        height: 100%;
+                        image-fit: cover;
+                    }
+                    if !current-has-cover: Image {
+                        source: @image-url("icons/play_circle.svg");
+                        width: 20px;
+                        height: 20px;
+                        colorize: Theme.text-muted;
+                        x: 14px;
+                        y: 14px;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    Text { text: current-title; color: Theme.text-primary; font-size: 15px; font-weight: 700; overflow: elide; }
+                    Text { text: current-artist; color: Theme.text-secondary; font-size: 13px; overflow: elide; }
+                }
+            }
+
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 8px;
+                    padding-top: 8px;
+                    padding-bottom: 24px;
+
+                    for line in lyrics-lines: Rectangle {
+                        border-radius: 8px;
+                        background: lta.has-hover ? #1e1e22 : transparent;
+
+                        HorizontalLayout {
+                            padding: 8px;
+                            spacing: 8px;
+                            Text {
+                                text: line.text;
+                                color: line.is_active ? Theme.text-primary : Theme.text-muted;
+                                font-size: line.is_active ? 18px : 15px;
+                                font-weight: line.is_active ? 700 : 500;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        lta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.seek-to(line.time_sec); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component SettingsModal inherits Rectangle {
+    in-out property <int> section: 0; // 0: Interface, 1: Audio & EQ, 2: Storage, 3: About
+    in-out property <string> eq-preset-name: "Default";
+    in-out property <float> eq-bass: 0.0;
+    in-out property <float> eq-mid: 0.0;
+    in-out property <float> eq-treble: 0.0;
+    in property <string> status-message: "";
+    callback switch-ui-mode(string);
+    callback scan-folder();
+    callback add-files();
+    callback apply-preset(string);
+    callback set-eq(float, float, float);
+    callback close();
+
+    property <bool> native-ui-enabled: true;
+
+    background: #00000085;
+
+    // Swallow clicks on backdrop
+    TouchArea {
+        clicked => { root.close(); }
+    }
+
+    // Modal card (persis web_settings.png)
+    Rectangle {
+        width: min(900px, parent.width - 80px);
+        height: min(580px, parent.height - 80px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: 12px;
+        background: #16161a;
+        border-width: 1px;
+        border-color: #2a2a32;
+        clip: true;
+
+        // Prevent backdrop click inside modal
+        TouchArea {}
+
+        HorizontalLayout {
+            // Left settings nav (persis web_settings.png)
+            Rectangle {
+                width: 236px;
+                background: #101013;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 4px;
+
+                    // Search settings pill
+                    Rectangle {
+                        height: 40px;
+                        border-radius: 20px;
+                        background: #1c1c21;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                Image { source: @image-url("icons/search_stroke.svg"); width: 16px; height: 16px; colorize: Theme.text-secondary; }
+                            }
+                            Text { text: "Search settings..."; color: Theme.text-muted; font-size: 13.5px; font-weight: 500; vertical-alignment: center; }
+                        }
+                    }
+
+                    Rectangle { height: 8px; }
+
+                    for nav in [
+                        { idx: 0, label: "Interface", icon: @image-url("icons/ms_dock_to_left.svg") },
+                        { idx: 1, label: "Audio & EQ", icon: @image-url("icons/ms_tune.svg") },
+                        { idx: 2, label: "Storage", icon: @image-url("icons/ms_folder.svg") },
+                        { idx: 3, label: "About", icon: @image-url("icons/ms_settings.svg") },
+                    ]: Rectangle {
+                        height: 44px;
+                        border-radius: 12px;
+                        background: section == nav.idx ? Theme.primary : (nta.has-hover ? #1c1c22 : transparent);
+
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 12px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                Image {
+                                    source: nav.icon;
+                                    width: 18px;
+                                    height: 18px;
+                                    colorize: section == nav.idx ? Theme.on-primary : Theme.text-secondary;
+                                }
+                            }
+
+                            Text {
+                                text: nav.label;
+                                color: section == nav.idx ? Theme.on-primary : Theme.text-primary;
+                                font-size: 14.5px;
+                                font-weight: section == nav.idx ? 600 : 500;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        nta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { section = nav.idx; }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    // Account footer
+                    HorizontalLayout {
+                        height: 44px;
+                        padding-left: 8px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            Image { source: @image-url("icons/avatar_default.svg"); width: 30px; height: 30px; }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text { text: "User"; color: Theme.text-primary; font-size: 14px; font-weight: 700; }
+                            Text { text: "Account"; color: Theme.text-muted; font-size: 12px; }
+                        }
+                    }
+                }
+            }
+
+            // Right settings pane (persis web_settings.png: clean rows directly on #16161a)
+            Rectangle {
+                horizontal-stretch: 1;
+                background: #16161a;
+
+                ScrollView {
+                    VerticalLayout {
+                        padding: 28px;
+                        padding-right: 72px;
+                        spacing: 20px;
+                        alignment: start;
+
+                        if section == 0: VerticalLayout {
+                            spacing: 20px;
+
+                            Text { text: "Interface"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+
+                            // UI Mode Switch row
+                            HorizontalLayout {
+                                spacing: 16px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text { text: "Native Slint UI"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                    Text {
+                                        text: native-ui-enabled
+                                            ? "Active: Native Rust + Slint engine (toggle off to switch back to WebView2 on next launch)"
+                                            : "Switched to WebView2 UI — restart Riff to launch Web UI";
+                                        color: Theme.text-muted;
+                                        font-size: 12.5px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    ToggleSwitch {
+                                        checked <=> native-ui-enabled;
+                                        toggled(on) => {
+                                            root.switch-ui-mode(on ? "native" : "web");
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Switch to Web UI explicit button row
+                            HorizontalLayout {
+                                spacing: 16px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text { text: "WebView2 Classic UI"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                    Text { text: "Switch ui_mode back to WebView2 (takes effect on next launch)"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    PillBtn {
+                                        label: "Use Web UI";
+                                        clicked => {
+                                            native-ui-enabled = false;
+                                            root.switch-ui-mode("web");
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Local library folder row
+                            HorizontalLayout {
+                                spacing: 16px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text { text: "Local Music Library"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                    Text { text: "Scan a folder on your computer for MP3, FLAC, WAV, OGG, M4A"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    PillBtn {
+                                        label: "Add folder";
+                                        primary: true;
+                                        clicked => { root.scan-folder(); }
+                                    }
+                                }
+                            }
+                        }
+
+                        if section == 1: VerticalLayout {
+                            spacing: 18px;
+
+                            Text { text: "Audio & EQ"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+
+                            VerticalLayout {
+                                spacing: 10px;
+                                Text { text: "DSP Presets"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    for p in [
+                                        { id: "flat", label: "Default" },
+                                        { id: "bass_boost", label: "Bass Boost" },
+                                        { id: "vocal", label: "Vocal" },
+                                        { id: "rock", label: "Rock" },
+                                        { id: "treble_boost", label: "Treble Boost" },
+                                    ]: PillBtn {
+                                        label: p.label;
+                                        primary: eq-preset-name == p.label;
+                                        clicked => {
+                                            eq-preset-name = p.label;
+                                            root.apply-preset(p.id);
+                                        }
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 6px;
+                                Text { text: "Bass (100Hz): " + Math.round(eq-bass) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
+
+                                Text { text: "Mid (1kHz): " + Math.round(eq-mid) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
+
+                                Text { text: "Treble (8kHz): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                            }
+                        }
+
+                        if section == 2: VerticalLayout {
+                            spacing: 20px;
+
+                            Text { text: "Storage"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+
+                            HorizontalLayout {
+                                spacing: 16px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text { text: "Add audio files"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                    Text { text: "Import individual MP3, FLAC, WAV, OGG, or M4A files"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    PillBtn {
+                                        label: "Add files";
+                                        primary: true;
+                                        clicked => { root.add-files(); }
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 16px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text { text: "Scan music folder"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                    Text { text: "Recursively scan a directory into your local library"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    PillBtn {
+                                        label: "Add folder";
+                                        clicked => { root.scan-folder(); }
+                                    }
+                                }
+                            }
+                        }
+
+                        if section == 3: VerticalLayout {
+                            spacing: 16px;
+
+                            Text { text: "About"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+
+                            VerticalLayout {
+                                spacing: 4px;
+                                Text { text: "Riff v0.7.6 (Native Slint Engine)"; color: Theme.text-primary; font-size: 15px; font-weight: 700; }
+                                Text { text: status-message; color: Theme.text-muted; font-size: 12.5px; }
+                            }
+
+                            Rectangle {
+                                border-radius: 8px;
+                                background: #121215;
+                                VerticalLayout {
+                                    padding: 16px;
+                                    AboutSlint {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Close button (X) ESC di kanan atas modal (persis web_settings.png)
+        VerticalLayout {
+            x: parent.width - 54px;
+            y: 18px;
+            width: 36px;
+            spacing: 4px;
+
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                border-radius: 18px;
+                border-width: 2px;
+                border-color: #8e909999;
+                background: cta.has-hover ? #ffffff18 : transparent;
+
+                Image {
+                    source: @image-url("icons/ms_close.svg");
+                    width: 18px;
+                    height: 18px;
+                    colorize: Theme.text-secondary;
+                    x: 9px;
+                    y: 9px;
+                }
+
+                cta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.close(); }
+                }
+            }
+
+            Text {
+                text: "ESC";
+                color: Theme.text-muted;
+                font-size: 10px;
+                font-weight: 700;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

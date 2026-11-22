@@ -1,0 +1,48 @@
+import "fonts/Inter-400.ttf";
+import "fonts/Inter-500.ttf";
+import "fonts/Inter-600.ttf";
+import "fonts/Inter-700.ttf";
+import "fonts/Inter-800.ttf";
+
+export struct TrackData {
+    id: string,
+    title: string,
+    artist: string,
+    album: string,
+    duration_str: string,
+    duration_sec: float,
+    platform: string,
+    thumbnail: string,
+    is_favorite: bool,
+    cover: image,
+    has_cover: bool,
+}
+
+export struct LyricLineData {
+    time_sec: float,
+    time_str: string,
+    text: string,
+    is_active: bool,
+}
+
+export global Theme {
+    in-out property <color> window-bg: #2b2b2e;
+    in-out property <color> panel-bg: #0d0d0d;
+    in-out property <color> right-panel-bg: #161618;
+    in-out property <color> surface: #1c1c20;
+    in-out property <color> surface-elevated: #232327;
+    in-out property <color> surface-hover: #2a2a30;
+    in-out property <color> surface-active: #232230;
+    in-out property <color> primary: #9f99e6;
+    in-out property <color> on-primary: #1e1a4d;
+    in-out property <color> primary-dim: #313041;
+    in-out property <color> primary-dim-text: #cfcde4;
+    in-out property <color> text-primary: #e2e2e9;
+    in-out property <color> text-secondary: #c4c6d0;
+    in-out property <color> text-muted: #8e9099;
+    in-out property <color> divider: #282a3359;
+    in-out property <color> border-subtle: #2a2a32;
+    in-out property <color> hero-fav: #5038a0;
+    in-out property <color> hero-local: #26262c;
+    in-out property <color> hero-hist: #282366;
+}

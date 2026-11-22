@@ -1,0 +1,415 @@
+import { Theme, TrackData } from "theme.slint";
+
+export component IconBtn inherits Rectangle {
+    in property <image> icon;
+    in property <length> icon-size: 20px;
+    in property <color> icon-color: Theme.text-secondary;
+    in property <color> active-bg: Theme.primary;
+    in property <color> active-icon-color: Theme.on-primary;
+    in property <bool> active: false;
+    in property <bool> disabled: false;
+    in property <color> base-bg: transparent;
+    callback clicked();
+
+    width: 36px;
+    height: 36px;
+    border-radius: self.width / 2;
+    background: active ? active-bg : (ta.has-hover && !disabled ? Theme.surface-hover : base-bg);
+    opacity: disabled ? 0.28 : 1.0;
+
+    Image {
+        source: icon;
+        width: icon-size;
+        height: icon-size;
+        colorize: active ? active-icon-color : icon-color;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        enabled: !disabled;
+        mouse-cursor: disabled ? default : pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component PillBtn inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <bool> has-icon: false;
+    in property <bool> primary: false;
+    in property <length> btn-height: 34px;
+    in property <length> h-pad: 12px;
+    in property <length> radius: 10px;
+    callback clicked();
+
+    height: btn-height;
+    border-radius: radius;
+    background: primary
+        ? (ta.has-hover ? #b2acef : Theme.primary)
+        : (ta.has-hover ? #2e2e34 : #232326);
+
+    HorizontalLayout {
+        padding-left: h-pad;
+        padding-right: h-pad;
+        spacing: 6px;
+        alignment: center;
+
+        if has-icon: VerticalLayout {
+            alignment: center;
+            Image {
+                source: icon;
+                width: 16px;
+                height: 16px;
+                colorize: primary ? Theme.on-primary : Theme.text-primary;
+            }
+        }
+
+        Text {
+            text: label;
+            color: primary ? Theme.on-primary : Theme.text-primary;
+            font-size: 12.5px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component ToggleSwitch inherits Rectangle {
+    in-out property <bool> checked: false;
+    callback toggled(bool);
+
+    width: 52px;
+    height: 32px;
+    border-radius: 16px;
+    background: checked ? Theme.primary : #1c1c20;
+    border-width: checked ? 0px : 2px;
+    border-color: Theme.text-muted;
+
+    Rectangle {
+        width: checked ? 24px : 16px;
+        height: checked ? 24px : 16px;
+        border-radius: self.width / 2;
+        background: checked ? Theme.on-primary : Theme.text-muted;
+        x: checked ? parent.width - self.width - 4px : 6px;
+        y: (parent.height - self.height) / 2;
+        animate x { duration: 140ms; easing: ease-out; }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            checked = !checked;
+            root.toggled(checked);
+        }
+    }
+}
+
+export component HomeCard inherits Rectangle {
+    in property <TrackData> track;
+    in property <string> override-title: "";
+    in property <string> override-sub: "";
+    callback clicked();
+
+    width: 180px;
+    height: 226px;
+    border-radius: 14px;
+    background: ta.has-hover ? #18181c : transparent;
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 8px;
+
+        Rectangle {
+            width: 180px;
+            height: 180px;
+            border-radius: 14px;
+            background: #17171a;
+            clip: true;
+
+            if track.has_cover: Image {
+                source: track.cover;
+                width: 100%;
+                height: 100%;
+                image-fit: cover;
+            }
+
+            if !track.has_cover: Image {
+                source: @image-url("icons/play_circle.svg");
+                width: 36px;
+                height: 36px;
+                colorize: Theme.text-muted;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+
+            if ta.has-hover: Rectangle {
+                width: 42px;
+                height: 42px;
+                border-radius: 21px;
+                background: Theme.primary;
+                x: parent.width - self.width - 10px;
+                y: parent.height - self.height - 10px;
+
+                Image {
+                    source: @image-url("icons/play_fill.svg");
+                    width: 18px;
+                    height: 18px;
+                    colorize: Theme.on-primary;
+                    x: 13px;
+                    y: 12px;
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            padding-left: 2px;
+            padding-right: 2px;
+
+            Text {
+                text: override-title != "" ? override-title : track.title;
+                color: Theme.text-primary;
+                font-size: 14.5px;
+                font-weight: 600;
+                overflow: elide;
+            }
+
+            Text {
+                text: override-sub != "" ? override-sub : track.artist;
+                color: Theme.text-secondary;
+                font-size: 12.5px;
+                font-weight: 400;
+                overflow: elide;
+            }
+        }
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component TrackRow inherits Rectangle {
+    in property <int> index;
+    in property <TrackData> track;
+    in property <bool> is-current: false;
+    in property <bool> show-album: true;
+    callback play-clicked();
+
+    height: 56px;
+    border-radius: 8px;
+    background: is-current ? Theme.surface-active : (ta.has-hover ? #18181c : transparent);
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.play-clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+
+        // #
+        Text {
+            width: 24px;
+            text: is-current ? "▶" : (index + 1);
+            color: is-current ? Theme.primary : Theme.text-muted;
+            font-size: 13px;
+            font-weight: is-current ? 700 : 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        // Cover 40x40
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 40px;
+                height: 40px;
+                border-radius: 6px;
+                background: #1a1a1e;
+                clip: true;
+
+                if track.has_cover: Image {
+                    source: track.cover;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: cover;
+                }
+
+                if !track.has_cover: Image {
+                    source: @image-url("icons/play_circle.svg");
+                    width: 18px;
+                    height: 18px;
+                    colorize: Theme.text-muted;
+                    x: 11px;
+                    y: 11px;
+                }
+            }
+        }
+
+        // Title + Artist
+        VerticalLayout {
+            horizontal-stretch: 2;
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: track.title;
+                color: is-current ? Theme.primary : Theme.text-primary;
+                font-size: 14px;
+                font-weight: 600;
+                overflow: elide;
+            }
+
+            Text {
+                text: track.artist;
+                color: Theme.text-secondary;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+
+        // Album
+        if show-album: Text {
+            horizontal-stretch: 1;
+            text: track.album != "" ? track.album : track.platform;
+            color: Theme.text-muted;
+            font-size: 12.5px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        // Fav indicator
+        VerticalLayout {
+            width: 24px;
+            alignment: center;
+            if track.is_favorite: Image {
+                source: @image-url("icons/heart_fill.svg");
+                width: 14px;
+                height: 14px;
+                colorize: Theme.primary;
+            }
+        }
+
+        // Duration
+        Text {
+            width: 44px;
+            text: track.duration_str;
+            color: Theme.text-muted;
+            font-size: 12.5px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component ScrubberBar inherits Rectangle {
+    in property <float> value: 0.0;
+    in property <float> maximum: 1.0;
+    in property <bool> active: false;
+    callback seeked(float);
+
+    height: 20px;
+    background: transparent;
+
+    property <float> ratio: active && maximum > 0.0 ? clamp(value / maximum, 0.0, 1.0) : 0.0;
+
+    Rectangle {
+        height: active ? (ta.has-hover || ta.pressed ? 5px : 4px) : 3px;
+        width: 100%;
+        y: (parent.height - self.height) / 2;
+        border-radius: 3px;
+        background: active ? #323238 : #ffffff24;
+
+        if active: Rectangle {
+            width: parent.width * ratio;
+            height: 100%;
+            border-radius: 3px;
+            background: ta.has-hover || ta.pressed ? Theme.primary : #e2e2e9;
+        }
+    }
+
+    if active && (ta.has-hover || ta.pressed): Rectangle {
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: #ffffff;
+        x: clamp(parent.width * ratio - 6px, 0px, parent.width - 12px);
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        enabled: active;
+        mouse-cursor: active ? pointer : default;
+        clicked => {
+            if (maximum > 0.0 && self.width > 0px) {
+                root.seeked(clamp(self.mouse-x / self.width, 0.0, 1.0) * maximum);
+            }
+        }
+        moved => {
+            if (self.pressed && maximum > 0.0 && self.width > 0px) {
+                root.seeked(clamp(self.mouse-x / self.width, 0.0, 1.0) * maximum);
+            }
+        }
+    }
+}
+
+export component VolumeBar inherits Rectangle {
+    in-out property <float> value: 1.0;
+    callback changed(float);
+
+    width: 90px;
+    height: 24px;
+    background: transparent;
+
+    property <float> ratio: clamp(value, 0.0, 1.0);
+
+    Rectangle {
+        height: 4px;
+        width: 100%;
+        y: (parent.height - self.height) / 2;
+        border-radius: 2px;
+        background: #3a3a40;
+
+        Rectangle {
+            width: parent.width * ratio;
+            height: 100%;
+            border-radius: 2px;
+            background: ta.has-hover || ta.pressed ? Theme.primary : #ebebef;
+        }
+    }
+
+    if ta.has-hover || ta.pressed: Rectangle {
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: #ffffff;
+        x: clamp(parent.width * ratio - 6px, 0px, parent.width - 12px);
+        y: (parent.height - self.height) / 2;
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            if (self.width > 0px) {
+                value = clamp(self.mouse-x / self.width, 0.0, 1.0);
+                root.changed(value);
+            }
+        }
+        moved => {
+            if (self.pressed && self.width > 0px) {
+                value = clamp(self.mouse-x / self.width, 0.0, 1.0);
+                root.changed(value);
+            }
+        }
+    }
+}
