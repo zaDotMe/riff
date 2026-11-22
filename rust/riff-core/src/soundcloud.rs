@@ -242,53 +242,72 @@ impl SoundCloudClient {
         target_dur_sec: f64,
     ) -> Result<SoundCloudResolvedStream> {
         let cleaned_title = self.clean_title(title);
-        let query = if !cleaned_title.is_empty() && !artist.is_empty() {
-            format!("{} {}", cleaned_title, artist)
-        } else if !cleaned_title.is_empty() {
-            cleaned_title.clone()
-        } else if !artist.is_empty() {
-            artist.to_string()
-        } else {
+        let (song, artist_hint) = split_song_artist(&cleaned_title, artist);
+        if song.is_empty() && artist_hint.is_empty() {
             return Err(anyhow!("empty title and artist for smart mirror"));
+        }
+
+        let mut queries: Vec<String> = Vec::new();
+        let mut push_query = |q: String| {
+            let q = q.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !q.is_empty() && !queries.contains(&q) {
+                queries.push(q);
+            }
         };
+        push_query(format!("{} {}", song, artist_hint));
+        push_query(format!("{} {}", song, artist));
+        push_query(song.clone());
+        push_query(cleaned_title.clone());
 
         let mut cid = self.get_client_id(false).await;
+        let mut last_err = anyhow!("no smart mirror query attempted");
 
-        for attempt in 0..2 {
-            let ep = format!(
-                "https://api-v2.soundcloud.com/search/tracks?q={}&limit=15&client_id={}",
-                url_encode(&query),
-                cid
-            );
+        for query in queries.iter().take(3) {
+            let mut collection: Vec<Value> = Vec::new();
+            let mut fetched = false;
 
-            let resp = match self.http.get(&ep).header("User-Agent", USER_AGENT).send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    if attempt == 1 {
-                        return Err(e.into());
+            for attempt in 0..2 {
+                let ep = format!(
+                    "https://api-v2.soundcloud.com/search/tracks?q={}&limit=20&client_id={}",
+                    url_encode(query),
+                    cid
+                );
+
+                let resp = match self.http.get(&ep).header("User-Agent", USER_AGENT).send().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        last_err = e.into();
+                        continue;
                     }
+                };
+
+                let status = resp.status();
+                if (status == 401 || status == 403) && attempt == 0 {
+                    cid = self.get_client_id(true).await;
                     continue;
                 }
-            };
+                if !status.is_success() {
+                    last_err = anyhow!("SoundCloud search returned status {}", status);
+                    break;
+                }
 
-            let status = resp.status();
-            if (status == 401 || status == 403) && attempt == 0 {
-                cid = self.get_client_id(true).await;
+                let json: Value = resp
+                    .json()
+                    .await
+                    .context("parse soundcloud smart mirror search response")?;
+                collection = json
+                    .get("collection")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                fetched = true;
+                break;
+            }
+
+            if !fetched {
                 continue;
             }
 
-            if !status.is_success() {
-                return Err(anyhow!("SoundCloud search returned status {}", status));
-            }
-
-            let json: Value = resp.json().await.context("parse soundcloud smart mirror search response")?;
-            let collection = json
-                .get("collection")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-
-            // Filter out snippets and extreme durations (<35s or >660s)
             let mut candidates: Vec<Value> = collection
                 .into_iter()
                 .filter(|t| {
@@ -307,6 +326,9 @@ impl SoundCloudClient {
                     if dur_sec < 35.0 || dur_sec > 660.0 {
                         return false;
                     }
+                    if target_dur_sec > 0.0 && target_dur_sec <= 660.0 && (dur_sec - target_dur_sec).abs() > 90.0 {
+                        return false;
+                    }
 
                     let has_transcodings = t
                         .get("media")
@@ -314,23 +336,25 @@ impl SoundCloudClient {
                         .and_then(|tr| tr.as_array())
                         .map(|arr| !arr.is_empty())
                         .unwrap_or(false);
+                    if !has_transcodings {
+                        return false;
+                    }
 
-                    has_transcodings
+                    title_match_ratio(t, &song) >= 0.6
                 })
                 .collect();
 
             if candidates.is_empty() {
-                return Err(anyhow!("no viable candidates found on soundcloud for '{}'", query));
+                last_err = anyhow!("no viable candidates found on soundcloud for '{}'", query);
+                continue;
             }
 
-            // Rank candidates by score descending
             candidates.sort_by(|a, b| {
-                let sa = score_track(a, &cleaned_title, artist, target_dur_sec);
-                let sb = score_track(b, &cleaned_title, artist, target_dur_sec);
+                let sa = score_track(a, &song, &artist_hint, target_dur_sec);
+                let sb = score_track(b, &song, &artist_hint, target_dur_sec);
                 sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
             });
 
-            // Try the top candidates until one successfully yields a playable stream
             for cand in candidates.iter().take(5) {
                 if let Ok(Some((stream_url, is_hls))) = self.resolve_transcoding(cand, &cid).await {
                     let track_title = cand
@@ -359,12 +383,11 @@ impl SoundCloudClient {
                     });
                 }
             }
-            break;
+            last_err = anyhow!("could not resolve a playable transcoding for '{}'", query);
         }
 
-        Err(anyhow!("could not resolve smart mirror audio stream for '{}'", query))
+        Err(anyhow!("smart mirror failed for '{}': {}", cleaned_title, last_err))
     }
-
     pub async fn resolve_stream(
         &self,
         url_or_id: &str,
@@ -632,4 +655,73 @@ fn score_track(t: &Value, target_title: &str, target_artist: &str, target_dur_se
     }
 
     score
+}
+
+const TITLE_NOISE: &[&str] = &[
+    "official", "video", "audio", "lyrics", "lyric", "mv", "hd", "4k", "feat", "ft", "featuring",
+    "topic", "vevo", "music", "visualizer", "remastered", "remaster",
+];
+
+fn strip_brackets(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0i32;
+    for ch in s.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = (depth - 1).max(0),
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn tokenize(s: &str) -> Vec<String> {
+    strip_brackets(s)
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty() && !TITLE_NOISE.contains(w))
+        .map(|w| w.to_string())
+        .collect()
+}
+
+fn split_song_artist(cleaned_title: &str, artist: &str) -> (String, String) {
+    let base = strip_brackets(cleaned_title);
+    let base = base.trim();
+    let parts: Vec<&str> = base.splitn(2, " - ").collect();
+    if parts.len() == 2 {
+        let left = parts[0].trim();
+        let right = parts[1].trim();
+        if !left.is_empty() && !right.is_empty() {
+            let artist_tokens = tokenize(artist);
+            let right_tokens = tokenize(right);
+            let left_tokens = tokenize(left);
+            let right_is_artist = !artist_tokens.is_empty()
+                && right_tokens.iter().all(|t| artist_tokens.contains(t))
+                && !left_tokens.iter().all(|t| artist_tokens.contains(t));
+            return if right_is_artist {
+                (left.to_string(), right.to_string())
+            } else {
+                (right.to_string(), left.to_string())
+            };
+        }
+    }
+    let song = if base.is_empty() { cleaned_title.trim() } else { base };
+    (song.to_string(), artist.trim().to_string())
+}
+
+fn title_match_ratio(t: &Value, song: &str) -> f64 {
+    let wanted = tokenize(song);
+    if wanted.is_empty() {
+        return 1.0;
+    }
+    let title = t.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    let artist = t
+        .get("user")
+        .and_then(|u| u.get("username").or_else(|| u.get("name")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let have: Vec<String> = tokenize(&format!("{} {}", title, artist));
+    let hits = wanted.iter().filter(|w| have.contains(w)).count();
+    hits as f64 / wanted.len() as f64
 }

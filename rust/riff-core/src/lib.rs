@@ -248,6 +248,23 @@ async fn search(
     }
 
     // 2. Query YouTube via native InnerTube API if requested
+    if platform == "ytmusic" || platform == "rifflibrary" {
+        match state.youtube.search_music(&q, limit).await {
+            Ok(tracks) if !tracks.is_empty() => {
+                let has_more = tracks.len() >= limit;
+                return Ok(Json(json!({
+                    "success": true,
+                    "tracks": tracks,
+                    "hasMore": has_more,
+                })));
+            }
+            Ok(_) => {}
+            Err(err) => {
+                warn!("YouTube Music native search error: {}", err);
+            }
+        }
+    }
+
     if platform == "ytmusic" || platform == "youtube" || platform == "rifflibrary" {
         match state.youtube.search(&q, limit).await {
             Ok(tracks) if !tracks.is_empty() => {
