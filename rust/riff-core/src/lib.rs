@@ -1,5 +1,7 @@
+pub mod api;
 pub mod config;
 pub mod db;
+pub mod events;
 pub mod image_proxy;
 pub mod library;
 pub mod lyrics;
@@ -41,6 +43,8 @@ pub struct AppState {
     pub lyrics: Arc<lyrics::LyricsService>,
     pub app_state: Arc<RwLock<Value>>,
     pub port: Arc<AtomicU16>,
+    pub api: Arc<api::RiffApi>,
+    pub events: Arc<events::EventBus>,
 }
 
 pub async fn build_app(config: Arc<config::Config>) -> anyhow::Result<(Router, Arc<AtomicU16>)> {
@@ -64,6 +68,15 @@ pub async fn build_app(config: Arc<config::Config>) -> anyhow::Result<(Router, A
     ));
 
     let port = Arc::new(AtomicU16::new(0));
+    let events = Arc::new(events::EventBus::default());
+    let api = Arc::new(api::RiffApi::new(
+        db.clone(),
+        config.clone(),
+        soundcloud.clone(),
+        youtube.clone(),
+        lyrics.clone(),
+        events.clone(),
+    ));
 
     let state = AppState {
         db,
@@ -76,6 +89,8 @@ pub async fn build_app(config: Arc<config::Config>) -> anyhow::Result<(Router, A
         app_state: Arc::new(RwLock::new(Value::Null)),
         port: port.clone(),
         config: config.clone(),
+        api,
+        events,
     };
 
     let protected = Router::new()
@@ -111,6 +126,7 @@ pub async fn build_app(config: Arc<config::Config>) -> anyhow::Result<(Router, A
         .route("/api/devsize-memes", get(|| async { Json(json!([])) }))
         .route("/api/youtube-account-info", get(|| async { Json(json!({ "connected": false })) }))
         .route("/api/track-credits", get(|| async { Json(json!({ "success": true, "credits": [] })) }))
+        .route("/api/settings", get(get_settings_handler).post(set_setting_handler))
         .merge(protected)
         .with_state(state)
         .layer(CorsLayer::permissive())
@@ -209,6 +225,35 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
+#[derive(serde::Deserialize)]
+pub struct SetSettingPayload {
+    pub key: String,
+    pub value: String,
+}
+
+async fn get_settings_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, ApiError> {
+    let settings = state
+        .api
+        .get_all_settings()
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(Json(json!({ "success": true, "settings": settings })))
+}
+
+async fn set_setting_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<SetSettingPayload>,
+) -> Result<Json<Value>, ApiError> {
+    state
+        .api
+        .set_setting(&payload.key, &payload.value)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(Json(json!({ "success": true, "key": payload.key, "value": payload.value })))
+}
+
 async fn list_library(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<LibraryItem>>, ApiError> {
@@ -230,116 +275,16 @@ async fn search(
     let offset = query.offset.unwrap_or(0);
     let platform = query.platform.as_deref().unwrap_or("ytmusic");
 
-    if q.is_empty() {
-        return Ok(Json(json!({
-            "success": true,
-            "tracks": [],
-            "hasMore": false,
-        })));
-    }
-
-    // 1. If platform is explicitly SoundCloud, use native high-performance Rust scraper
-    if platform == "soundcloud" {
-        match state.soundcloud.search(&q, limit).await {
-            Ok(tracks) => {
-                let has_more = tracks.len() >= limit;
-                return Ok(Json(json!({
-                    "success": true,
-                    "tracks": tracks,
-                    "hasMore": has_more,
-                })));
-            }
-            Err(err) => {
-                warn!("SoundCloud native search error: {}", err);
-            }
-        }
-    }
-
-    // 2. Query YouTube via native InnerTube API if requested
-    if platform == "ytmusic" || platform == "rifflibrary" {
-        match state.youtube.search_music(&q, limit).await {
-            Ok(tracks) if !tracks.is_empty() => {
-                let has_more = tracks.len() >= limit;
-                return Ok(Json(json!({
-                    "success": true,
-                    "tracks": tracks,
-                    "hasMore": has_more,
-                })));
-            }
-            Ok(_) => {}
-            Err(err) => {
-                warn!("YouTube Music native search error: {}", err);
-            }
-        }
-    }
-
-    if platform == "ytmusic" || platform == "youtube" || platform == "rifflibrary" {
-        match state.youtube.search(&q, limit).await {
-            Ok(tracks) if !tracks.is_empty() => {
-                let has_more = tracks.len() >= limit;
-                return Ok(Json(json!({
-                    "success": true,
-                    "tracks": tracks,
-                    "hasMore": has_more,
-                })));
-            }
-            Ok(_) => {}
-            Err(err) => {
-                warn!("YouTube native search error: {}", err);
-            }
-        }
-    }
-
-    // 3. Query local SQLite B-Tree database
-    let tracks = run_db(&state.db, {
-        let q = q.clone();
-        move |conn| db::search_tracks(conn, &q, limit + 1, offset)
-    })
-    .await?;
-
-    if !tracks.is_empty() || platform == "local" {
-        let has_more = tracks.len() > limit;
-        let sliced: Vec<Value> = tracks
-            .into_iter()
-            .take(limit)
-            .map(|t| {
-                json!({
-                    "id": t.id,
-                    "title": t.title,
-                    "artist": t.artist,
-                    "album": t.album.unwrap_or_default(),
-                    "duration": t.duration,
-                    "thumbnail": t.thumbnail,
-                    "platform": "local",
-                    "isLocal": true,
-                    "isCached": true,
-                })
-            })
-            .collect();
-
-        return Ok(Json(json!({
-            "success": true,
-            "tracks": sliced,
-            "hasMore": has_more,
-        })));
-    }
-
-    // 4. Fallback: query SoundCloud if no YouTube/local matches
-    if let Ok(tracks) = state.soundcloud.search(&q, limit).await {
-        if !tracks.is_empty() {
-            let has_more = tracks.len() >= limit;
-            return Ok(Json(json!({
-                "success": true,
-                "tracks": tracks,
-                "hasMore": has_more,
-            })));
-        }
-    }
+    let (tracks, has_more) = state
+        .api
+        .search(&q, platform, limit, offset)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok(Json(json!({
         "success": true,
-        "tracks": [],
-        "hasMore": false,
+        "tracks": tracks,
+        "hasMore": has_more,
     })))
 }
 
@@ -497,239 +442,13 @@ async fn stream_info(
     Query(query): Query<StreamQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let port = state.port.load(Ordering::SeqCst);
-    let id = query.id.clone().unwrap_or_default().trim().to_string();
-    let platform = query.platform.clone().unwrap_or_default().trim().to_string();
-    let track_url = query.url.clone().unwrap_or_default().trim().to_string();
+    let result = state
+        .api
+        .resolve_stream(&query, port)
+        .await
+        .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    if id.starts_with("local_") {
-        let track = run_db(&state.db, {
-            let id = id.clone();
-            move |conn| db::get_track(conn, &id)
-        })
-        .await?
-        .ok_or_else(|| ApiError::not_found("local track not found"))?;
-
-        return Ok(Json(json!({
-            "success": true,
-            "isLocal": true,
-            "streamUrl": format!(
-                "http://127.0.0.1:{port}/api/library-file?id={}",
-                url_encode(&track.id)
-            ),
-            "sourceMeta": {
-                "id": track.id,
-                "title": track.title,
-                "artist": track.artist,
-                "platform": "local",
-            },
-        })));
-    }
-
-    // 1. Resolve SoundCloud stream natively in Rust
-    let is_soundcloud = platform == "soundcloud"
-        || track_url.contains("soundcloud.com")
-        || (!id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) && id.len() >= 6);
-
-    if is_soundcloud {
-        let identifier = if !track_url.is_empty() {
-            &track_url
-        } else {
-            &id
-        };
-        let query_fallback = query.title.as_deref();
-
-        match state.soundcloud.resolve_stream(identifier, query_fallback).await {
-            Ok(resolved) => {
-                let is_hls = resolved.is_hls;
-                let stream_url = if is_hls {
-                    resolved.url.clone()
-                } else {
-                    format!(
-                        "http://127.0.0.1:{port}/api/audio-proxy?url={}",
-                        url_encode(&resolved.url)
-                    )
-                };
-
-                return Ok(Json(json!({
-                    "success": true,
-                    "isLocal": false,
-                    "streamUrl": stream_url,
-                    "rawStreamUrl": resolved.url,
-                    "proxyUrl": format!("http://127.0.0.1:{port}/api/audio-proxy?url={}", url_encode(&resolved.url)),
-                    "isHls": is_hls,
-                    "sourceMeta": {
-                        "id": id,
-                        "title": if !resolved.title.is_empty() { resolved.title } else { query.title.unwrap_or_default() },
-                        "artist": if !resolved.artist.is_empty() { resolved.artist } else { query.artist.unwrap_or_default() },
-                        "duration": if resolved.duration > 0.0 { resolved.duration } else { query.duration.unwrap_or(0.0) },
-                        "thumbnail": query.thumbnail.unwrap_or_default(),
-                        "platform": "soundcloud",
-                        "url": track_url,
-                    },
-                })));
-            }
-            Err(err) => {
-                warn!("SoundCloud native stream resolution failed: {}. Falling back.", err);
-            }
-        }
-    }
-
-    // 2. Resolve YouTube / other platforms via native InnerTube or yt-dlp
-    let target_url = if !track_url.is_empty() {
-        track_url
-    } else if id.len() == 11
-        && id
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-    {
-        format!("https://www.youtube.com/watch?v={id}")
-    } else if is_soundcloud {
-        return Err(ApiError::new(
-            StatusCode::BAD_GATEWAY,
-            "failed to resolve soundcloud stream",
-        ));
-    } else {
-        return Err(ApiError::bad_request("missing url or id"));
-    };
-
-    let title_val = query.title.clone().unwrap_or_default();
-    let artist_val = query.artist.clone().unwrap_or_default();
-    let q_val = query.q.clone().unwrap_or_default();
-    let duration_val = query.duration.unwrap_or(0.0);
-    let effective_title = if !title_val.is_empty() {
-        title_val.clone()
-    } else {
-        q_val
-    };
-
-    // 2a. Attempt Smart Mirror via SoundCloud for YouTube/ytmusic tracks
-    // (Bypasses Google Video Server 1MB PO-Token restriction, enables full seekable playback)
-    let is_yt = platform == "youtube"
-        || platform == "ytmusic"
-        || target_url.contains("youtube.com")
-        || target_url.contains("youtu.be");
-
-    if is_yt && (!effective_title.is_empty() || !artist_val.is_empty()) {
-        match state
-            .soundcloud
-            .resolve_smart_mirror(&effective_title, &artist_val, duration_val)
-            .await
-        {
-            Ok(resolved) => {
-                info!(
-                    "Smart Mirror resolved full track '{}' by '{}' (dur: {}s, is_hls: {})",
-                    resolved.title, resolved.artist, resolved.duration, resolved.is_hls
-                );
-                let is_hls = resolved.is_hls;
-                let stream_url = if is_hls {
-                    resolved.url.clone()
-                } else {
-                    format!(
-                        "http://127.0.0.1:{port}/api/audio-proxy?url={}",
-                        url_encode(&resolved.url)
-                    )
-                };
-
-                return Ok(Json(json!({
-                    "success": true,
-                    "isLocal": false,
-                    "streamUrl": stream_url,
-                    "rawStreamUrl": resolved.url,
-                    "proxyUrl": format!("http://127.0.0.1:{port}/api/audio-proxy?url={}", url_encode(&resolved.url)),
-                    "isHls": is_hls,
-                    "resolvedId": id,
-                    "sourceMeta": {
-                        "id": id,
-                        "title": title_val,
-                        "artist": artist_val,
-                        "duration": duration_val,
-                        "thumbnail": query.thumbnail.unwrap_or_default(),
-                        "platform": if platform.is_empty() { "ytmusic".to_string() } else { platform },
-                        "url": target_url,
-                    },
-                })));
-            }
-            Err(err) => {
-                warn!(
-                    "Smart Mirror SoundCloud fallback failed: {}. Falling back to InnerTube / yt-dlp.",
-                    err
-                );
-            }
-        }
-    }
-
-    let quality = query.quality.as_deref().unwrap_or("medium");
-    let timeout_secs = query.timeout.unwrap_or(20).clamp(5, 30);
-
-    // 2b. Attempt yt-dlp resolution first (provides unthrottled audio streams via modern clients like VISIONOS)
-    if let Ok(raw_stream) = stream::resolve_with_ytdlp(
-        state.config.ytdlp.as_deref(),
-        &target_url,
-        timeout_secs,
-    )
-    .await
-    {
-        let is_hls = raw_stream.contains(".m3u8");
-        let proxy_url = format!(
-            "http://127.0.0.1:{port}/api/audio-proxy?url={}",
-            url_encode(&raw_stream)
-        );
-        let stream_url = if is_hls { raw_stream.clone() } else { proxy_url.clone() };
-
-        return Ok(Json(json!({
-            "success": true,
-            "isLocal": false,
-            "streamUrl": stream_url,
-            "rawStreamUrl": raw_stream,
-            "proxyUrl": proxy_url,
-            "isHls": is_hls,
-            "resolvedId": id,
-            "sourceMeta": {
-                "id": id,
-                "title": title_val,
-                "artist": artist_val,
-                "duration": duration_val,
-                "thumbnail": query.thumbnail.unwrap_or_default(),
-                "platform": query.platform.unwrap_or_else(|| "ytmusic".to_string()),
-                "url": target_url,
-            },
-        })));
-    }
-
-    // 2c. Fallback: native InnerTube player resolution for YouTube
-    if is_yt {
-        let cand_id = if !id.is_empty() { &id } else { &target_url };
-        if let Ok(direct_url) = state.youtube.resolve_stream(cand_id, quality).await {
-            let proxy_url = format!(
-                "http://127.0.0.1:{port}/api/audio-proxy?url={}",
-                url_encode(&direct_url)
-            );
-
-            return Ok(Json(json!({
-                "success": true,
-                "isLocal": false,
-                "streamUrl": proxy_url,
-                "rawStreamUrl": direct_url,
-                "proxyUrl": proxy_url,
-                "isHls": false,
-                "resolvedId": id,
-                "sourceMeta": {
-                    "id": id,
-                    "title": title_val,
-                    "artist": artist_val,
-                    "duration": duration_val,
-                    "thumbnail": query.thumbnail.unwrap_or_default(),
-                    "platform": "youtube",
-                    "url": target_url,
-                },
-            })));
-        }
-    }
-
-    Err(ApiError::new(
-        StatusCode::BAD_GATEWAY,
-        "failed to resolve audio stream via smart mirror, yt-dlp, or innertube",
-    ))
+    Ok(Json(result))
 }
 
 async fn image_proxy_handler(
@@ -999,6 +718,7 @@ fn token_matches(provided: &[u8], expected: &[u8]) -> bool {
     difference == 0
 }
 
+#[allow(dead_code)]
 fn url_encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }

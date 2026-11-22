@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS tracks (
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_title  ON tracks(title);
 CREATE INDEX IF NOT EXISTS idx_tracks_added  ON tracks(added_at DESC);
+
+CREATE TABLE IF NOT EXISTS kv_store (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
 "#;
 
 pub fn open(path: &Path) -> Result<Db> {
@@ -157,4 +163,37 @@ pub fn now_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+pub fn get_kv(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT value FROM kv_store WHERE key = ?1 LIMIT 1")?;
+    let val = stmt.query_row([key], |row| row.get(0)).optional()?;
+    Ok(val)
+}
+
+pub fn set_kv(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        r#"
+        INSERT OR REPLACE INTO kv_store (key, value, updated_at)
+        VALUES (?1, ?2, ?3)
+        "#,
+        params![key, value, now_millis() as i64],
+    )?;
+    Ok(())
+}
+
+pub fn get_all_kv(conn: &Connection) -> Result<std::collections::HashMap<String, String>> {
+    let mut stmt = conn.prepare("SELECT key, value FROM kv_store")?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        let (k, v) = row?;
+        map.insert(k, v);
+    }
+    Ok(map)
+}
+
+pub fn delete_kv(conn: &Connection, key: &str) -> Result<bool> {
+    let changed = conn.execute("DELETE FROM kv_store WHERE key = ?1", [key])?;
+    Ok(changed > 0)
 }
