@@ -88,6 +88,7 @@ pub struct StreamQuery {
     pub timeout: Option<u64>,
     #[allow(dead_code)]
     pub quality: Option<String>,
+    pub q: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

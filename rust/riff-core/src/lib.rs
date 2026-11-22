@@ -514,23 +514,29 @@ async fn stream_info(
         let query_fallback = query.title.as_deref();
 
         match state.soundcloud.resolve_stream(identifier, query_fallback).await {
-            Ok(direct_url) => {
-                let proxy_url = format!(
-                    "http://127.0.0.1:{port}/api/audio-proxy?url={}",
-                    url_encode(&direct_url)
-                );
+            Ok(resolved) => {
+                let is_hls = resolved.is_hls;
+                let stream_url = if is_hls {
+                    resolved.url.clone()
+                } else {
+                    format!(
+                        "http://127.0.0.1:{port}/api/audio-proxy?url={}",
+                        url_encode(&resolved.url)
+                    )
+                };
 
                 return Ok(Json(json!({
                     "success": true,
                     "isLocal": false,
-                    "streamUrl": proxy_url,
-                    "rawStreamUrl": direct_url,
-                    "proxyUrl": proxy_url,
+                    "streamUrl": stream_url,
+                    "rawStreamUrl": resolved.url,
+                    "proxyUrl": format!("http://127.0.0.1:{port}/api/audio-proxy?url={}", url_encode(&resolved.url)),
+                    "isHls": is_hls,
                     "sourceMeta": {
                         "id": id,
-                        "title": query.title.unwrap_or_default(),
-                        "artist": query.artist.unwrap_or_default(),
-                        "duration": query.duration.unwrap_or(0.0),
+                        "title": if !resolved.title.is_empty() { resolved.title } else { query.title.unwrap_or_default() },
+                        "artist": if !resolved.artist.is_empty() { resolved.artist } else { query.artist.unwrap_or_default() },
+                        "duration": if resolved.duration > 0.0 { resolved.duration } else { query.duration.unwrap_or(0.0) },
                         "thumbnail": query.thumbnail.unwrap_or_default(),
                         "platform": "soundcloud",
                         "url": track_url,
@@ -538,7 +544,7 @@ async fn stream_info(
                 })));
             }
             Err(err) => {
-                warn!("SoundCloud native stream resolution failed: {}. Falling back to yt-dlp.", err);
+                warn!("SoundCloud native stream resolution failed: {}. Falling back.", err);
             }
         }
     }
@@ -561,14 +567,75 @@ async fn stream_info(
         return Err(ApiError::bad_request("missing url or id"));
     };
 
-    let quality = query.quality.as_deref().unwrap_or("medium");
+    let title_val = query.title.clone().unwrap_or_default();
+    let artist_val = query.artist.clone().unwrap_or_default();
+    let q_val = query.q.clone().unwrap_or_default();
+    let duration_val = query.duration.unwrap_or(0.0);
+    let effective_title = if !title_val.is_empty() {
+        title_val.clone()
+    } else {
+        q_val
+    };
 
-    // 2a. Attempt native InnerTube player resolution for YouTube
+    // 2a. Attempt Smart Mirror via SoundCloud for YouTube/ytmusic tracks
+    // (Bypasses Google Video Server 1MB PO-Token restriction, enables full seekable playback)
     let is_yt = platform == "youtube"
         || platform == "ytmusic"
         || target_url.contains("youtube.com")
         || target_url.contains("youtu.be");
 
+    if is_yt && (!effective_title.is_empty() || !artist_val.is_empty()) {
+        match state
+            .soundcloud
+            .resolve_smart_mirror(&effective_title, &artist_val, duration_val)
+            .await
+        {
+            Ok(resolved) => {
+                info!(
+                    "Smart Mirror resolved full track '{}' by '{}' (dur: {}s, is_hls: {})",
+                    resolved.title, resolved.artist, resolved.duration, resolved.is_hls
+                );
+                let is_hls = resolved.is_hls;
+                let stream_url = if is_hls {
+                    resolved.url.clone()
+                } else {
+                    format!(
+                        "http://127.0.0.1:{port}/api/audio-proxy?url={}",
+                        url_encode(&resolved.url)
+                    )
+                };
+
+                return Ok(Json(json!({
+                    "success": true,
+                    "isLocal": false,
+                    "streamUrl": stream_url,
+                    "rawStreamUrl": resolved.url,
+                    "proxyUrl": format!("http://127.0.0.1:{port}/api/audio-proxy?url={}", url_encode(&resolved.url)),
+                    "isHls": is_hls,
+                    "resolvedId": id,
+                    "sourceMeta": {
+                        "id": id,
+                        "title": title_val,
+                        "artist": artist_val,
+                        "duration": duration_val,
+                        "thumbnail": query.thumbnail.unwrap_or_default(),
+                        "platform": if platform.is_empty() { "ytmusic".to_string() } else { platform },
+                        "url": target_url,
+                    },
+                })));
+            }
+            Err(err) => {
+                warn!(
+                    "Smart Mirror SoundCloud fallback failed: {}. Falling back to InnerTube / yt-dlp.",
+                    err
+                );
+            }
+        }
+    }
+
+    let quality = query.quality.as_deref().unwrap_or("medium");
+
+    // 2b. Attempt native InnerTube player resolution for YouTube
     if is_yt {
         let cand_id = if !id.is_empty() { &id } else { &target_url };
         if let Ok(direct_url) = state.youtube.resolve_stream(cand_id, quality).await {
@@ -583,11 +650,13 @@ async fn stream_info(
                 "streamUrl": proxy_url,
                 "rawStreamUrl": direct_url,
                 "proxyUrl": proxy_url,
+                "isHls": false,
+                "resolvedId": id,
                 "sourceMeta": {
                     "id": id,
-                    "title": query.title.unwrap_or_default(),
-                    "artist": query.artist.unwrap_or_default(),
-                    "duration": query.duration.unwrap_or(0.0),
+                    "title": title_val,
+                    "artist": artist_val,
+                    "duration": duration_val,
                     "thumbnail": query.thumbnail.unwrap_or_default(),
                     "platform": "youtube",
                     "url": target_url,
@@ -596,7 +665,7 @@ async fn stream_info(
         }
     }
 
-    // 2b. Fallback: resolve via yt-dlp process
+    // 2c. Fallback: resolve via yt-dlp process
     let timeout_secs = query.timeout.unwrap_or(20).clamp(5, 30);
     let raw_stream = stream::resolve_with_ytdlp(
         state.config.ytdlp.as_deref(),
@@ -606,22 +675,26 @@ async fn stream_info(
     .await
     .map_err(|error| ApiError::new(StatusCode::BAD_GATEWAY, error.to_string()))?;
 
+    let is_hls = raw_stream.contains(".m3u8");
     let proxy_url = format!(
         "http://127.0.0.1:{port}/api/audio-proxy?url={}",
         url_encode(&raw_stream)
     );
+    let stream_url = if is_hls { raw_stream.clone() } else { proxy_url.clone() };
 
     Ok(Json(json!({
         "success": true,
         "isLocal": false,
-        "streamUrl": proxy_url,
+        "streamUrl": stream_url,
         "rawStreamUrl": raw_stream,
         "proxyUrl": proxy_url,
+        "isHls": is_hls,
+        "resolvedId": id,
         "sourceMeta": {
             "id": id,
-            "title": query.title.unwrap_or_default(),
-            "artist": query.artist.unwrap_or_default(),
-            "duration": query.duration.unwrap_or(0.0),
+            "title": title_val,
+            "artist": artist_val,
+            "duration": duration_val,
             "thumbnail": query.thumbnail.unwrap_or_default(),
             "platform": query.platform.unwrap_or_else(|| "ytmusic".to_string()),
             "url": target_url,
