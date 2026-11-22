@@ -235,3 +235,82 @@ impl SpectrumAnalyzer {
         bands
     }
 }
+
+/// Lightweight stereo Schroeder reverb + soft-clipping distortion processor
+pub struct AudioEffects {
+    comb_l: [Vec<f32>; 4],
+    comb_r: [Vec<f32>; 4],
+    idx_l: [usize; 4],
+    idx_r: [usize; 4],
+    reverb_mix: f32,     // 0.0 .. 1.0
+    distortion_amt: f32, // 0.0 .. 1.0
+}
+
+impl AudioEffects {
+    pub fn new(sample_rate: f32) -> Self {
+        let scale = (sample_rate / 44100.0).max(0.5);
+        let delays_l = [1557, 1617, 1491, 1422];
+        let delays_r = [1580, 1640, 1514, 1445];
+        Self {
+            comb_l: delays_l.map(|d| vec![0.0; ((d as f32 * scale) as usize).max(64)]),
+            comb_r: delays_r.map(|d| vec![0.0; ((d as f32 * scale) as usize).max(64)]),
+            idx_l: [0; 4],
+            idx_r: [0; 4],
+            reverb_mix: 0.0,
+            distortion_amt: 0.0,
+        }
+    }
+
+    pub fn set_params(&mut self, reverb_pct: f32, distortion_pct: f32) {
+        self.reverb_mix = (reverb_pct / 100.0).clamp(0.0, 1.0);
+        self.distortion_amt = (distortion_pct / 100.0).clamp(0.0, 1.0);
+    }
+
+    pub fn reset(&mut self) {
+        for buf in &mut self.comb_l {
+            buf.fill(0.0);
+        }
+        for buf in &mut self.comb_r {
+            buf.fill(0.0);
+        }
+        self.idx_l = [0; 4];
+        self.idx_r = [0; 4];
+    }
+
+    #[inline]
+    pub fn process_stereo(&mut self, mut l: f32, mut r: f32) -> (f32, f32) {
+        if self.distortion_amt > 0.005 {
+            let drive = 1.0 + self.distortion_amt * 14.0;
+            let norm = (drive).tanh().max(0.001);
+            l = (l * drive).tanh() / norm;
+            r = (r * drive).tanh() / norm;
+        }
+
+        if self.reverb_mix > 0.005 {
+            let feedback = 0.78;
+            let mut wet_l = 0.0f32;
+            let mut wet_r = 0.0f32;
+            for i in 0..4 {
+                let il = self.idx_l[i];
+                let dl = self.comb_l[i][il];
+                self.comb_l[i][il] = l + dl * feedback;
+                self.idx_l[i] = (il + 1) % self.comb_l[i].len();
+                wet_l += dl;
+
+                let ir = self.idx_r[i];
+                let dr = self.comb_r[i][ir];
+                self.comb_r[i][ir] = r + dr * feedback;
+                self.idx_r[i] = (ir + 1) % self.comb_r[i].len();
+                wet_r += dr;
+            }
+            wet_l *= 0.25;
+            wet_r *= 0.25;
+            let dry = 1.0 - self.reverb_mix * 0.45;
+            let wet = self.reverb_mix * 0.65;
+            l = (l * dry + wet_l * wet).clamp(-1.0, 1.0);
+            r = (r * dry + wet_r * wet).clamp(-1.0, 1.0);
+        }
+
+        (l, r)
+    }
+}

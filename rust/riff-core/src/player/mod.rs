@@ -13,7 +13,7 @@ use tracing::{error, warn};
 use crate::events::{EventBus, RiffEvent};
 use crate::models::Track;
 use decoder::AudioDecoder;
-use dsp::{Equalizer3Band, SpectrumAnalyzer};
+use dsp::{AudioEffects, Equalizer3Band, SpectrumAnalyzer};
 use sink::AudioSink;
 
 enum PlayerCommand {
@@ -25,6 +25,8 @@ enum PlayerCommand {
     Stop,
     SetVolume(f32),
     SetEq { bass: f32, mid: f32, treble: f32 },
+    SetSpeed(f32),
+    SetEffects { reverb: f32, distortion: f32 },
 }
 
 pub struct AudioPlayer {
@@ -66,12 +68,14 @@ impl AudioPlayer {
             let sink_channels = sink.as_ref().map(|s| s.channels()).unwrap_or(2) as usize;
 
             let mut eq = Equalizer3Band::new(sink_sample_rate);
+            let mut fx = AudioEffects::new(sink_sample_rate);
             let mut spectrum = SpectrumAnalyzer::new(512, 16);
             let mut current_decoder: Option<AudioDecoder> = None;
             let mut current_position = 0.0f64;
             let mut current_duration = 0.0f64;
             let mut is_active = false;
             let mut vol_factor = 1.0f32;
+            let mut speed_factor = 1.0f32;
 
             let mut last_spectrum_emit = Instant::now();
             let mut last_state_emit = Instant::now();
@@ -213,6 +217,12 @@ impl AudioPlayer {
                         PlayerCommand::SetEq { bass, mid, treble } => {
                             eq.update(sink_sample_rate, bass, mid, treble);
                         }
+                        PlayerCommand::SetSpeed(spd) => {
+                            speed_factor = spd.clamp(0.5, 2.0);
+                        }
+                        PlayerCommand::SetEffects { reverb, distortion } => {
+                            fx.set_params(reverb, distortion);
+                        }
                     }
                 }
 
@@ -239,25 +249,60 @@ impl AudioPlayer {
 
                             let mut processed = Vec::with_capacity(raw_samples.len() * 2);
                             let step = dec_channels.max(1);
+                            let frames = raw_samples.len() / step;
 
-                            // Process samples through Volume & EQ
-                            for chunk in raw_samples.chunks(step) {
-                                let left = chunk.get(0).copied().unwrap_or(0.0);
-                                let right = chunk.get(1).copied().unwrap_or(left);
+                            if (speed_factor - 1.0).abs() < 0.01 || frames < 2 {
+                                // Process samples through EQ, FX & Volume at 1.0x
+                                for chunk in raw_samples.chunks(step) {
+                                    let left = chunk.get(0).copied().unwrap_or(0.0);
+                                    let right = chunk.get(1).copied().unwrap_or(left);
 
-                                let eq_l = eq.process(left) * vol_factor;
-                                let eq_r = eq.process(right) * vol_factor;
+                                    let eq_l = eq.process(left);
+                                    let eq_r = eq.process(right);
+                                    let (fx_l, fx_r) = fx.process_stereo(eq_l, eq_r);
+                                    let out_l = fx_l * vol_factor;
+                                    let out_r = fx_r * vol_factor;
 
-                                processed.push(eq_l);
-                                if sink_channels >= 2 {
-                                    processed.push(eq_r);
+                                    processed.push(out_l);
+                                    if sink_channels >= 2 {
+                                        processed.push(out_r);
+                                    }
+
+                                    spectrum_samples_acc.push((out_l + out_r) * 0.5);
                                 }
+                            } else {
+                                // Linear resampling for speed/pitch adjustment (0.5x .. 2.0x)
+                                let mut pos = 0.0f32;
+                                while (pos as usize) + 1 < frames {
+                                    let i0 = pos as usize;
+                                    let frac = pos - i0 as f32;
+                                    let i1 = i0 + 1;
 
-                                spectrum_samples_acc.push((eq_l + eq_r) * 0.5);
+                                    let l0 = raw_samples[i0 * step];
+                                    let l1 = raw_samples[i1 * step];
+                                    let r0 = if step > 1 { raw_samples[i0 * step + 1] } else { l0 };
+                                    let r1 = if step > 1 { raw_samples[i1 * step + 1] } else { l1 };
+
+                                    let left = l0 + (l1 - l0) * frac;
+                                    let right = r0 + (r1 - r0) * frac;
+
+                                    let eq_l = eq.process(left);
+                                    let eq_r = eq.process(right);
+                                    let (fx_l, fx_r) = fx.process_stereo(eq_l, eq_r);
+                                    let out_l = fx_l * vol_factor;
+                                    let out_r = fx_r * vol_factor;
+
+                                    processed.push(out_l);
+                                    if sink_channels >= 2 {
+                                        processed.push(out_r);
+                                    }
+
+                                    spectrum_samples_acc.push((out_l + out_r) * 0.5);
+                                    pos += speed_factor;
+                                }
                             }
 
                             // Advance tracked position
-                            let frames = raw_samples.len() / step;
                             let dt = frames as f64 / dec_sr as f64;
                             current_position += dt;
                             t_pos.store(current_position.to_bits(), Ordering::SeqCst);
@@ -348,6 +393,14 @@ impl AudioPlayer {
 
     pub fn set_eq(&self, bass: f32, mid: f32, treble: f32) {
         let _ = self.cmd_tx.send(PlayerCommand::SetEq { bass, mid, treble });
+    }
+
+    pub fn set_speed(&self, speed: f32) {
+        let _ = self.cmd_tx.send(PlayerCommand::SetSpeed(speed));
+    }
+
+    pub fn set_effects(&self, reverb: f32, distortion: f32) {
+        let _ = self.cmd_tx.send(PlayerCommand::SetEffects { reverb, distortion });
     }
 
     pub fn is_playing(&self) -> bool {

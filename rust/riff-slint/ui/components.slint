@@ -226,10 +226,12 @@ export component TrackRow inherits Rectangle {
     in property <bool> is-current: false;
     in property <bool> show-album: true;
     callback play-clicked();
+    callback toggle-favorite();
+    callback add-to-playlist();
 
     height: 64px;
     border-radius: 8px;
-    background: is-current ? Theme.surface-active : (ta.has-hover ? #ffffff0d : transparent);
+    background: is-current ? Theme.surface-active : (ta.has-hover || fav-ta.has-hover || add-ta.has-hover ? #ffffff0d : transparent);
     animate background { duration: 140ms; easing: ease-out; }
 
     ta := TouchArea {
@@ -313,15 +315,57 @@ export component TrackRow inherits Rectangle {
             overflow: elide;
         }
 
-        // Fav indicator
+        // Add to playlist button (visible on hover)
         VerticalLayout {
-            width: 24px;
+            width: 26px;
             alignment: center;
-            if track.is_favorite: Image {
-                source: @image-url("icons/heart_fill.svg");
-                width: 14px;
-                height: 14px;
-                colorize: Theme.primary;
+            opacity: (ta.has-hover || add-ta.has-hover || fav-ta.has-hover) ? 1.0 : 0.0;
+            animate opacity { duration: 140ms; easing: ease-out; }
+
+            Rectangle {
+                width: 26px;
+                height: 26px;
+                border-radius: 13px;
+                background: add-ta.has-hover ? #ffffff18 : transparent;
+                Image {
+                    source: @image-url("icons/ms_playlist_add.svg");
+                    width: 16px;
+                    height: 16px;
+                    colorize: add-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                    x: 5px;
+                    y: 5px;
+                }
+                add-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.add-to-playlist(); }
+                }
+            }
+        }
+
+        // Fav toggle button
+        VerticalLayout {
+            width: 26px;
+            alignment: center;
+            opacity: (track.is_favorite || ta.has-hover || fav-ta.has-hover || add-ta.has-hover) ? 1.0 : 0.0;
+            animate opacity { duration: 140ms; easing: ease-out; }
+
+            Rectangle {
+                width: 26px;
+                height: 26px;
+                border-radius: 13px;
+                background: fav-ta.has-hover ? #ffffff18 : transparent;
+                Image {
+                    source: track.is_favorite ? @image-url("icons/heart_fill.svg") : @image-url("icons/heart_outline.svg");
+                    width: 15px;
+                    height: 15px;
+                    colorize: track.is_favorite ? Theme.primary : Theme.text-secondary;
+                    x: 5.5px;
+                    y: 5.5px;
+                }
+                fav-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.toggle-favorite(); }
+                }
             }
         }
 

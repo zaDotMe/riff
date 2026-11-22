@@ -49,6 +49,21 @@ impl LyricsService {
         }
     }
 
+    pub async fn save_custom_lyrics(&self, title: &str, artist: &str, content: &str) -> anyhow::Result<()> {
+        let safe_title = title.trim().replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+        let safe_artist = artist.trim().replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+        let file_name = format!("{safe_artist} - {safe_title}.lrc");
+        let custom_path = self.custom_lyrics_dir.join(&file_name);
+        if content.trim().is_empty() {
+            if custom_path.exists() {
+                let _ = tokio::fs::remove_file(&custom_path).await;
+            }
+        } else {
+            tokio::fs::write(&custom_path, content).await?;
+        }
+        Ok(())
+    }
+
     pub async fn fetch_lyrics(&self, query: LyricsQuery) -> Json<Value> {
         let title = query.title.unwrap_or_default().trim().to_string();
         let artist = query.artist.unwrap_or_default().trim().to_string();
@@ -64,8 +79,11 @@ impl LyricsService {
         }
 
         // 1. Check local custom lyrics
-        let file_name = format!("{artist} - {title}.lrc");
-        let custom_path = self.custom_lyrics_dir.join(&file_name);
+        let safe_title = title.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+        let safe_artist = artist.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+        let safe_path = self.custom_lyrics_dir.join(format!("{safe_artist} - {safe_title}.lrc"));
+        let raw_path = self.custom_lyrics_dir.join(format!("{artist} - {title}.lrc"));
+        let custom_path = if safe_path.is_file() { safe_path } else { raw_path };
         if custom_path.is_file() {
             if let Ok(content) = tokio::fs::read_to_string(&custom_path).await {
                 if !content.trim().is_empty() {

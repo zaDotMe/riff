@@ -23,6 +23,23 @@ export struct LyricLineData {
     time_str: string,
     text: string,
     is_active: bool,
+    is_past: bool,
+    is_gap: bool,
+}
+
+export struct SyncLineData {
+    text: string,
+    time_sec: float,
+    time_str: string,
+    is_synced: bool,
+    is_next: bool,
+    is_gap: bool,
+}
+
+export struct PlaylistData {
+    id: string,
+    name: string,
+    track_count: int,
 }
 
 export global Theme {

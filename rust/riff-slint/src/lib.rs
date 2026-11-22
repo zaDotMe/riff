@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
+use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
 
 slint::include_modules!();
 
@@ -144,6 +146,20 @@ fn to_slint_model(items: Vec<TrackItem>) -> ModelRc<TrackData> {
     ModelRc::new(VecModel::from(data))
 }
 
+fn format_lrc_tag(sec: f32) -> String {
+    let s = sec.max(0.0);
+    let m = (s / 60.0).floor() as u32;
+    let rem = s - (m as f32) * 60.0;
+    format!("[{m:02}:{rem:05.2}]")
+}
+
+fn is_gap_text(text: &str) -> bool {
+    let t = text.trim();
+    t.eq_ignore_ascii_case("[Instrumental]")
+        || t.eq_ignore_ascii_case("Instrumental")
+        || t.eq_ignore_ascii_case("[Music]")
+}
+
 /// Parse LRC formatted synchronized lyrics or fallback to line-by-line text
 fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineData> {
     let mut lines = Vec::new();
@@ -171,6 +187,8 @@ fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineData> {
                             time_str: SharedString::from(format_duration(total)),
                             text: SharedString::from(text_part),
                             is_active: false,
+                            is_past: false,
+                            is_gap: is_gap_text(text_part),
                         });
                         continue;
                     }
@@ -187,7 +205,7 @@ fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineData> {
     let raw_lines: Vec<&str> = text
         .lines()
         .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('[') && !l.starts_with('{'))
+        .filter(|l| !l.is_empty() && (!l.starts_with('[') || is_gap_text(l)) && !l.starts_with('{'))
         .collect();
 
     if raw_lines.is_empty() {
@@ -210,9 +228,52 @@ fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineData> {
                 time_str: SharedString::from(format_duration(t as f64)),
                 text: SharedString::from(l),
                 is_active: false,
+                is_past: false,
+                is_gap: is_gap_text(l),
             }
         })
         .collect()
+}
+
+fn playlists_to_slint(list: &[riff_core::models::Playlist]) -> ModelRc<PlaylistData> {
+    let data: Vec<PlaylistData> = list
+        .iter()
+        .map(|p| PlaylistData {
+            id: SharedString::from(&p.id),
+            name: SharedString::from(&p.name),
+            track_count: p.tracks.len() as i32,
+        })
+        .collect();
+    ModelRc::new(VecModel::from(data))
+}
+
+fn track_data_to_core(t: &TrackData) -> riff_core::models::Track {
+    riff_core::models::Track {
+        id: t.id.to_string(),
+        path: t.id.to_string(),
+        file: t.title.to_string(),
+        title: t.title.to_string(),
+        artist: t.artist.to_string(),
+        album: if t.album.is_empty() { None } else { Some(t.album.to_string()) },
+        duration: t.duration_sec as f64,
+        thumbnail: t.thumbnail.to_string(),
+        added_at: 0,
+        updated_at: 0,
+    }
+}
+
+fn track_data_to_item(t: &TrackData) -> TrackItem {
+    TrackItem {
+        id: t.id.to_string(),
+        title: t.title.to_string(),
+        artist: t.artist.to_string(),
+        album: t.album.to_string(),
+        duration_sec: t.duration_sec as f64,
+        platform: t.platform.to_string(),
+        thumbnail: t.thumbnail.to_string(),
+        is_favorite: t.is_favorite,
+        cover_rgba: t.cover.to_rgba8().map(|b| (b.width(), b.height(), b.as_bytes().to_vec())),
+    }
 }
 
 async fn json_tracks_to_items(
@@ -323,22 +384,31 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let active_lyrics_cache: Arc<Mutex<Vec<LyricLineData>>> = Arc::new(Mutex::new(Vec::new()));
     let playlist_cache: Arc<Mutex<Vec<TrackItem>>> = Arc::new(Mutex::new(Vec::new()));
     let current_index: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let shuffle_state = Arc::new(AtomicBool::new(false));
+    let repeat_state = Arc::new(AtomicU8::new(0)); // 0: off, 1: all, 2: one
+    let sync_lines_cache: Arc<Mutex<Vec<SyncLineData>>> = Arc::new(Mutex::new(Vec::new()));
+    let pending_playlist_track: Arc<Mutex<Option<TrackItem>>> = Arc::new(Mutex::new(None));
+    let sleep_deadline: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+    let sleep_track_end = Arc::new(AtomicBool::new(false));
+    let eof_handled = Arc::new(AtomicBool::new(false));
 
-    // 1. Initial Data Load (Library, Favorites, History, Home Feed)
+    // 1. Initial Data Load (Library, Favorites, History, Playlists, Home Feed)
     let api_init = api.clone();
     let http_init = http.clone();
     let w_init = window_weak.clone();
     let pl_init = playlist_cache.clone();
 
     rt_handle.spawn(async move {
-        let (lib_res, fav_res, hist_res) = tokio::join!(
+        let (lib_res, fav_res, hist_res, pls_res) = tokio::join!(
             api_init.list_library(),
             api_init.get_favorites(),
             api_init.get_history(),
+            api_init.get_playlists(),
         );
         let lib_tracks = lib_res.unwrap_or_default();
         let fav_tracks = fav_res.unwrap_or_default();
         let hist_tracks = hist_res.unwrap_or_default();
+        let user_playlists = pls_res.unwrap_or_default();
 
         let fav_ids: HashSet<String> = fav_tracks.iter().map(|t| t.id.clone()).collect();
 
@@ -365,12 +435,15 @@ pub fn run() -> Result<(), slint::PlatformError> {
             *pl = lib_items.clone();
         }
 
+        let queue_init = lib_items.clone();
         let w_first = w_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = w_first.upgrade() {
                 w.set_library_tracks(to_slint_model(lib_items));
                 w.set_favorite_tracks(to_slint_model(fav_items));
                 w.set_history_tracks(to_slint_model(hist_items));
+                w.set_queue_tracks(to_slint_model(queue_init));
+                w.set_playlists(playlists_to_slint(&user_playlists));
             }
         });
 
@@ -413,9 +486,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let lyr_play = active_lyrics_cache.clone();
     let pl_play = playlist_cache.clone();
     let cur_idx_play = current_index.clone();
+    let eof_play = eof_handled.clone();
     let rt_play = rt_handle.clone();
 
     main_window.on_play_track(move |track| {
+        eof_play.store(false, Ordering::SeqCst);
         let t_thumb = track.thumbnail.to_string();
         let has_cov = track.has_cover;
 
@@ -426,6 +501,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             w.set_current_album(track.album.clone());
             w.set_current_platform(track.platform.clone());
             w.set_current_is_favorite(track.is_favorite);
+            w.set_active_lyric_index(-1);
             w.set_current_has_cover(has_cov);
             if has_cov {
                 w.set_current_cover(track.cover.clone());
@@ -466,9 +542,16 @@ pub fn run() -> Result<(), slint::PlatformError> {
             });
         }
 
-        if let (Ok(pl), Ok(mut idx)) = (pl_play.lock(), cur_idx_play.lock()) {
+        if let (Ok(mut pl), Ok(mut idx)) = (pl_play.lock(), cur_idx_play.lock()) {
             if let Some(pos) = pl.iter().position(|t| t.id == track.id.as_str()) {
                 *idx = pos;
+            } else {
+                pl.insert(0, track_data_to_item(&track));
+                *idx = 0;
+            }
+            let q_clone = pl.clone();
+            if let Some(w) = w_play.upgrade() {
+                w.set_queue_tracks(to_slint_model(q_clone));
             }
         }
 
@@ -620,6 +703,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     let pl_next = playlist_cache.clone();
     let cur_idx_next = current_index.clone();
+    let shuf_next = shuffle_state.clone();
     let w_next = window_weak.clone();
 
     main_window.on_play_next(move || {
@@ -627,7 +711,19 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if pl.is_empty() {
                 None
             } else {
-                *idx = (*idx + 1) % pl.len();
+                if shuf_next.load(Ordering::SeqCst) && pl.len() > 1 {
+                    let nanos = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.subsec_nanos() as usize)
+                        .unwrap_or(1);
+                    let mut next_i = nanos % pl.len();
+                    if next_i == *idx {
+                        next_i = (*idx + 1) % pl.len();
+                    }
+                    *idx = next_i;
+                } else {
+                    *idx = (*idx + 1) % pl.len();
+                }
                 pl.get(*idx).cloned()
             }
         } else {
@@ -637,6 +733,28 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if let Some(w) = w_next.upgrade() {
                 w.invoke_play_track(item.into_slint());
             }
+        }
+    });
+
+    // 4b. Shuffle & Repeat Callbacks
+    let shuf_cb = shuffle_state.clone();
+    let w_shuf = window_weak.clone();
+    main_window.on_toggle_shuffle(move || {
+        let next = !shuf_cb.load(Ordering::SeqCst);
+        shuf_cb.store(next, Ordering::SeqCst);
+        if let Some(w) = w_shuf.upgrade() {
+            w.set_shuffle_on(next);
+        }
+    });
+
+    let rep_cb = repeat_state.clone();
+    let w_rep = window_weak.clone();
+    main_window.on_cycle_repeat(move || {
+        let cur = rep_cb.load(Ordering::SeqCst);
+        let next = (cur + 1) % 3;
+        rep_cb.store(next, Ordering::SeqCst);
+        if let Some(w) = w_rep.upgrade() {
+            w.set_repeat_mode(next as i32);
         }
     });
 
@@ -696,6 +814,47 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 }
             });
         }
+    });
+
+    // 7b. Favorite Toggle for Any Track Row
+    let api_fav_row = api.clone();
+    let w_fav_row = window_weak.clone();
+    let rt_fav_row = rt_handle.clone();
+    main_window.on_toggle_favorite_track(move |td| {
+        let core_t = track_data_to_core(&td);
+        let tid = td.id.to_string();
+        let api_f = api_fav_row.clone();
+        let w_f = w_fav_row.clone();
+        rt_fav_row.spawn(async move {
+            if let Ok(is_fav) = api_f.toggle_favorite(&core_t).await {
+                let favs = api_f.get_favorites().await.unwrap_or_default();
+                let fav_ids: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+                let fav_items: Vec<TrackItem> = favs
+                    .iter()
+                    .map(|t| TrackItem::from_core(t, "favorite", true))
+                    .collect();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_f.upgrade() {
+                        if w.get_current_id().as_str() == tid {
+                            w.set_current_is_favorite(is_fav);
+                        }
+                        w.set_favorite_tracks(to_slint_model(fav_items));
+                        let update_model = |m: ModelRc<TrackData>| {
+                            let mut vec: Vec<TrackData> = m.iter().collect();
+                            for item in &mut vec {
+                                item.is_favorite = fav_ids.contains(item.id.as_str());
+                            }
+                            ModelRc::new(VecModel::from(vec))
+                        };
+                        w.set_library_tracks(update_model(w.get_library_tracks()));
+                        w.set_search_results(update_model(w.get_search_results()));
+                        w.set_history_tracks(update_model(w.get_history_tracks()));
+                        w.set_queue_tracks(update_model(w.get_queue_tracks()));
+                        w.set_active_playlist_tracks(update_model(w.get_active_playlist_tracks()));
+                    }
+                });
+            }
+        });
     });
 
     // 8. Search Callback
@@ -833,35 +992,503 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // 10. Equalizer Control Callback
+    // 10. Equalizer, Speed & Audio FX Callbacks
     let api_eq = api.clone();
     main_window.on_set_equalizer(move |bass, mid, treble| {
         api_eq.set_eq(bass, mid, treble);
     });
 
-    // 11. Equalizer Presets Callback
+    let api_spd = api.clone();
+    main_window.on_set_audio_speed(move |spd| {
+        api_spd.set_speed(spd);
+    });
+
+    let api_fx = api.clone();
+    main_window.on_set_audio_effects(move |reverb, distortion| {
+        api_fx.set_effects(reverb, distortion);
+    });
+
+    let api_rst = api.clone();
+    let w_rst = window_weak.clone();
+    main_window.on_reset_audio_settings(move || {
+        api_rst.set_eq(0.0, 0.0, 0.0);
+        api_rst.set_speed(1.0);
+        api_rst.set_effects(0.0, 0.0);
+        api_rst.set_volume(1.0);
+        if let Some(w) = w_rst.upgrade() {
+            w.set_eq_bass(0.0);
+            w.set_eq_mid(0.0);
+            w.set_eq_treble(0.0);
+            w.set_audio_speed(1.0);
+            w.set_audio_reverb(0.0);
+            w.set_audio_distortion(0.0);
+            w.set_eq_preset_name(SharedString::from("Default"));
+        }
+    });
+
+    // 11. Audio Presets Callback (matches defaultPresets in state.js)
     let api_preset = api.clone();
     let w_preset = window_weak.clone();
 
     main_window.on_apply_eq_preset(move |preset_name| {
-        let (bass, mid, treble) = match preset_name.as_str() {
-            "p_default" | "flat" => (0.0f32, 0.0f32, 0.0f32),
-            "p_speedup" | "p_speedup_pitch" => (0.0f32, 0.0f32, 0.0f32),
-            "p_slowed" => (2.5f32, -1.0f32, -3.0f32),
-            "p_nightcore" => (1.0f32, 1.0f32, 3.0f32),
-            "p_distortion" => (5.0f32, 2.0f32, 4.0f32),
-            "bass_boost" => (6.0f32, 0.0f32, -1.0f32),
-            "vocal" => (-2.0f32, 4.0f32, 2.0f32),
-            "rock" => (4.0f32, -1.0f32, 3.0f32),
-            "treble_boost" => (-1.0f32, 1.0f32, 5.0f32),
-            _ => (0.0f32, 0.0f32, 0.0f32),
+        let (bass, mid, treble, speed, reverb, distortion, vol) = match preset_name.as_str() {
+            "p_default" | "flat" => (0.0f32, 0.0f32, 0.0f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32),
+            "p_speedup" => (0.0f32, 0.0f32, 0.0f32, 1.35f32, 0.0f32, 0.0f32, 1.0f32),
+            "p_speedup_pitch" => (0.0f32, 0.0f32, 0.0f32, 1.30f32, 0.0f32, 0.0f32, 1.0f32),
+            "p_slowed" => (2.5f32, -1.0f32, -3.0f32, 0.82f32, 65.0f32, 0.0f32, 1.0f32),
+            "p_nightcore" => (1.0f32, 1.0f32, 3.0f32, 1.25f32, 20.0f32, 0.0f32, 1.0f32),
+            "p_distortion" => (5.0f32, 2.0f32, 4.0f32, 1.0f32, 0.0f32, 75.0f32, 1.0f32),
+            "bass_boost" => (6.0f32, 0.0f32, -1.0f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32),
+            "vocal" => (-2.0f32, 4.0f32, 2.0f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32),
+            "rock" => (4.0f32, -1.0f32, 3.0f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32),
+            "treble_boost" => (-1.0f32, 1.0f32, 5.0f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32),
+            _ => (0.0f32, 0.0f32, 0.0f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32),
         };
         api_preset.set_eq(bass, mid, treble);
+        api_preset.set_speed(speed);
+        api_preset.set_effects(reverb, distortion);
+        let _ = vol;
 
         if let Some(w) = w_preset.upgrade() {
             w.set_eq_bass(bass);
             w.set_eq_mid(mid);
             w.set_eq_treble(treble);
+            w.set_audio_speed(speed);
+            w.set_audio_reverb(reverb);
+            w.set_audio_distortion(distortion);
+        }
+    });
+
+    // 11b. Sleep Timer Callbacks
+    let sd_set = sleep_deadline.clone();
+    let ste_set = sleep_track_end.clone();
+    let w_sleep = window_weak.clone();
+    main_window.on_set_sleep_minutes(move |mins| {
+        if mins == 0 {
+            if let Ok(mut d) = sd_set.lock() { *d = None; }
+            ste_set.store(false, Ordering::SeqCst);
+            if let Some(w) = w_sleep.upgrade() {
+                w.set_sleep_active(false);
+                w.set_sleep_status(SharedString::from("00:00"));
+            }
+        } else if mins < 0 {
+            if let Ok(mut d) = sd_set.lock() { *d = None; }
+            ste_set.store(true, Ordering::SeqCst);
+            if let Some(w) = w_sleep.upgrade() {
+                w.set_sleep_active(true);
+                w.set_sleep_status(SharedString::from("Track end"));
+            }
+        } else {
+            ste_set.store(false, Ordering::SeqCst);
+            if let Ok(mut d) = sd_set.lock() {
+                *d = Some(Instant::now() + Duration::from_secs((mins as u64) * 60));
+            }
+            if let Some(w) = w_sleep.upgrade() {
+                w.set_sleep_active(true);
+                w.set_sleep_status(SharedString::from(format!("{mins:02}:00")));
+            }
+        }
+    });
+
+    let sd_add = sleep_deadline.clone();
+    let w_sleep_add = window_weak.clone();
+    main_window.on_add_sleep_5m(move || {
+        if let Ok(mut d) = sd_add.lock() {
+            let base = d.unwrap_or_else(Instant::now);
+            let next = base + Duration::from_secs(300);
+            *d = Some(next);
+            let rem = next.saturating_duration_since(Instant::now()).as_secs();
+            if let Some(w) = w_sleep_add.upgrade() {
+                w.set_sleep_active(true);
+                w.set_sleep_status(SharedString::from(format!("{:02}:{:02}", rem / 60, rem % 60)));
+            }
+        }
+    });
+
+    // 11c. Custom Lyrics Editor Callbacks
+    let lyr_open_ed = active_lyrics_cache.clone();
+    let w_open_ed = window_weak.clone();
+    main_window.on_open_custom_lyrics(move || {
+        if let Some(w) = w_open_ed.upgrade() {
+            let text = if let Ok(lyr) = lyr_open_ed.lock() {
+                lyr.iter()
+                    .map(|l| if l.is_gap { "[Instrumental]".to_string() } else { l.text.to_string() })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                String::new()
+            };
+            w.set_custom_lyrics_text(SharedString::from(text));
+            w.set_custom_lyrics_open(true);
+        }
+    });
+
+    let api_save_ed = api.clone();
+    let lyr_save_ed = active_lyrics_cache.clone();
+    let w_save_ed = window_weak.clone();
+    let rt_save_ed = rt_handle.clone();
+    main_window.on_save_custom_lyrics(move |raw_text| {
+        if let Some(w) = w_save_ed.upgrade() {
+            let title = w.get_current_title().to_string();
+            let artist = w.get_current_artist().to_string();
+            let dur = w.get_current_duration() as f64;
+            if title.is_empty() || w.get_current_id().is_empty() {
+                w.set_custom_lyrics_open(false);
+                return;
+            }
+
+            let new_lines: Vec<String> = raw_text
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+
+            let text_to_save = if let Ok(old) = lyr_save_ed.lock() {
+                let has_sync = old.iter().any(|l| l.time_sec >= 0.0);
+                if has_sync && !old.is_empty() && old.len() == new_lines.len() {
+                    new_lines
+                        .iter()
+                        .enumerate()
+                        .map(|(i, line)| format!("{}{}", format_lrc_tag(old[i].time_sec), line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    raw_text.trim().to_string()
+                }
+            } else {
+                raw_text.trim().to_string()
+            };
+
+            let parsed = parse_lrc(&text_to_save, dur);
+            if let Ok(mut store) = lyr_save_ed.lock() {
+                *store = parsed.clone();
+            }
+            w.set_lyrics_lines(ModelRc::new(VecModel::from(parsed)));
+            w.set_active_lyric_index(-1);
+            w.set_custom_lyrics_open(false);
+
+            let api_s = api_save_ed.clone();
+            rt_save_ed.spawn(async move {
+                let _ = api_s.save_custom_lyrics(&title, &artist, &text_to_save).await;
+            });
+        }
+    });
+
+    // 11d. Tap-to-Sync Lyrics Callbacks
+    let lyr_sync_open = active_lyrics_cache.clone();
+    let sync_cache_open = sync_lines_cache.clone();
+    let api_sync_open = api.clone();
+    let w_sync_open = window_weak.clone();
+    main_window.on_open_sync_lyrics(move || {
+        if let Some(w) = w_sync_open.upgrade() {
+            if w.get_current_id().is_empty() {
+                return;
+            }
+            let lines: Vec<SyncLineData> = if let Ok(lyr) = lyr_sync_open.lock() {
+                lyr.iter()
+                    .enumerate()
+                    .map(|(i, l)| SyncLineData {
+                        text: l.text.clone(),
+                        time_sec: -1.0,
+                        time_str: SharedString::from(""),
+                        is_synced: false,
+                        is_next: i == 0,
+                        is_gap: l.is_gap,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if lines.is_empty() {
+                w.invoke_open_custom_lyrics();
+                return;
+            }
+            if let Ok(mut sc) = sync_cache_open.lock() {
+                *sc = lines.clone();
+            }
+            w.set_sync_lines(ModelRc::new(VecModel::from(lines)));
+            w.set_sync_synced_count(0);
+            w.set_sync_lyrics_open(true);
+            api_sync_open.seek(0.0);
+            api_sync_open.resume();
+        }
+    });
+
+    let sync_cache_tap = sync_lines_cache.clone();
+    let api_sync_tap = api.clone();
+    let w_sync_tap = window_weak.clone();
+    main_window.on_tap_sync_line(move |idx| {
+        let (_, pos_sec, _, _) = api_sync_tap.get_playback_state();
+        let t = pos_sec as f32;
+        if let Ok(mut sc) = sync_cache_tap.lock() {
+            let i = idx as usize;
+            if i < sc.len() {
+                sc[i].time_sec = t;
+                sc[i].time_str = SharedString::from(format_lrc_tag(t));
+                sc[i].is_synced = true;
+                let next_idx = ((i + 1)..sc.len()).find(|&j| !sc[j].is_synced);
+                for (j, item) in sc.iter_mut().enumerate() {
+                    item.is_next = Some(j) == next_idx;
+                }
+                let synced_cnt = sc.iter().filter(|l| l.is_synced).count() as i32;
+                let cloned = sc.clone();
+                if let Some(w) = w_sync_tap.upgrade() {
+                    w.set_sync_lines(ModelRc::new(VecModel::from(cloned)));
+                    w.set_sync_synced_count(synced_cnt);
+                }
+            }
+        }
+    });
+
+    let sync_cache_next = sync_lines_cache.clone();
+    let w_sync_next = window_weak.clone();
+    main_window.on_tap_sync_next(move || {
+        let next_idx = if let Ok(sc) = sync_cache_next.lock() {
+            sc.iter().position(|l| l.is_next).or_else(|| sc.iter().position(|l| !l.is_synced))
+        } else {
+            None
+        };
+        if let Some(i) = next_idx {
+            if let Some(w) = w_sync_next.upgrade() {
+                w.invoke_tap_sync_line(i as i32);
+            }
+        }
+    });
+
+    let sync_cache_rst = sync_lines_cache.clone();
+    let api_sync_rst = api.clone();
+    let w_sync_rst = window_weak.clone();
+    main_window.on_restart_sync_lyrics(move || {
+        api_sync_rst.seek(0.0);
+        if let Ok(mut sc) = sync_cache_rst.lock() {
+            for (i, item) in sc.iter_mut().enumerate() {
+                item.time_sec = -1.0;
+                item.time_str = SharedString::from("");
+                item.is_synced = false;
+                item.is_next = i == 0;
+            }
+            let cloned = sc.clone();
+            if let Some(w) = w_sync_rst.upgrade() {
+                w.set_sync_lines(ModelRc::new(VecModel::from(cloned)));
+                w.set_sync_synced_count(0);
+            }
+        }
+    });
+
+    let sync_cache_save = sync_lines_cache.clone();
+    let lyr_sync_save = active_lyrics_cache.clone();
+    let api_sync_save = api.clone();
+    let w_sync_save = window_weak.clone();
+    let rt_sync_save = rt_handle.clone();
+    main_window.on_save_sync_lyrics(move || {
+        if let Some(w) = w_sync_save.upgrade() {
+            let title = w.get_current_title().to_string();
+            let artist = w.get_current_artist().to_string();
+            let dur = w.get_current_duration() as f64;
+            let lrc_content = if let Ok(sc) = sync_cache_save.lock() {
+                sc.iter()
+                    .map(|l| {
+                        let txt = if l.is_gap { "[Instrumental]" } else { l.text.as_str() };
+                        if l.is_synced && l.time_sec >= 0.0 {
+                            format!("{}{}", format_lrc_tag(l.time_sec), txt)
+                        } else {
+                            txt.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                String::new()
+            };
+
+            let parsed = parse_lrc(&lrc_content, dur);
+            if let Ok(mut store) = lyr_sync_save.lock() {
+                *store = parsed.clone();
+            }
+            w.set_lyrics_lines(ModelRc::new(VecModel::from(parsed)));
+            w.set_active_lyric_index(-1);
+            w.set_sync_lyrics_open(false);
+
+            let api_s = api_sync_save.clone();
+            rt_sync_save.spawn(async move {
+                let _ = api_s.save_custom_lyrics(&title, &artist, &lrc_content).await;
+            });
+        }
+    });
+
+    // 11e. Playlists & Queue Callbacks
+    let api_cpl = api.clone();
+    let w_cpl = window_weak.clone();
+    let rt_cpl = rt_handle.clone();
+    main_window.on_create_playlist(move |name| {
+        let api_c = api_cpl.clone();
+        let w_c = w_cpl.clone();
+        let n = name.to_string();
+        rt_cpl.spawn(async move {
+            if let Ok(created) = api_c.create_playlist(&n).await {
+                let all = api_c.get_playlists().await.unwrap_or_default();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_c.upgrade() {
+                        w.set_playlists(playlists_to_slint(&all));
+                        w.set_active_playlist_id(SharedString::from(&created.id));
+                        w.set_active_playlist_name(SharedString::from(&created.name));
+                        w.set_active_playlist_tracks(ModelRc::new(VecModel::from(Vec::new())));
+                        w.set_active_tab(6);
+                    }
+                });
+            }
+        });
+    });
+
+    let api_opl = api.clone();
+    let http_opl = http.clone();
+    let w_opl = window_weak.clone();
+    let rt_opl = rt_handle.clone();
+    main_window.on_open_playlist(move |pid| {
+        let api_o = api_opl.clone();
+        let http_o = http_opl.clone();
+        let w_o = w_opl.clone();
+        let id = pid.to_string();
+        rt_opl.spawn(async move {
+            let all = api_o.get_playlists().await.unwrap_or_default();
+            let favs = api_o.get_favorites().await.unwrap_or_default();
+            let fav_ids: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+            if let Some(pl) = all.into_iter().find(|p| p.id == id) {
+                let mut items: Vec<TrackItem> = pl
+                    .tracks
+                    .iter()
+                    .map(|t| TrackItem::from_core(t, "playlist", fav_ids.contains(&t.id)))
+                    .collect();
+                for item in &mut items {
+                    if !item.thumbnail.is_empty() {
+                        item.cover_rgba = fetch_cover_rgba(&http_o, &item.thumbnail).await;
+                    }
+                }
+                let pl_id = pl.id;
+                let pl_name = pl.name;
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_o.upgrade() {
+                        w.set_active_playlist_id(SharedString::from(&pl_id));
+                        w.set_active_playlist_name(SharedString::from(&pl_name));
+                        w.set_active_playlist_tracks(to_slint_model(items));
+                        w.set_active_tab(6);
+                    }
+                });
+            }
+        });
+    });
+
+    let api_dpl = api.clone();
+    let w_dpl = window_weak.clone();
+    let rt_dpl = rt_handle.clone();
+    main_window.on_delete_playlist(move |pid| {
+        let api_d = api_dpl.clone();
+        let w_d = w_dpl.clone();
+        let id = pid.to_string();
+        rt_dpl.spawn(async move {
+            let _ = api_d.delete_playlist(&id).await;
+            let all = api_d.get_playlists().await.unwrap_or_default();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_d.upgrade() {
+                    w.set_playlists(playlists_to_slint(&all));
+                    w.set_active_tab(0);
+                }
+            });
+        });
+    });
+
+    let pl_play_all = playlist_cache.clone();
+    let cur_idx_all = current_index.clone();
+    let shuf_all = shuffle_state.clone();
+    let w_play_all = window_weak.clone();
+    main_window.on_play_playlist_all(move |shuffle| {
+        if let Some(w) = w_play_all.upgrade() {
+            let tracks: Vec<TrackData> = w.get_active_playlist_tracks().iter().collect();
+            if tracks.is_empty() {
+                return;
+            }
+            shuf_all.store(shuffle, Ordering::SeqCst);
+            w.set_shuffle_on(shuffle);
+            let items: Vec<TrackItem> = tracks.iter().map(track_data_to_item).collect();
+            if let Ok(mut pl) = pl_play_all.lock() {
+                *pl = items.clone();
+            }
+            if let Ok(mut idx) = cur_idx_all.lock() {
+                *idx = 0;
+            }
+            w.set_queue_tracks(to_slint_model(items));
+            w.invoke_play_track(tracks[0].clone());
+        }
+    });
+
+    let pend_pl = pending_playlist_track.clone();
+    let w_req_pl = window_weak.clone();
+    main_window.on_request_add_to_playlist(move |td| {
+        if let Ok(mut p) = pend_pl.lock() {
+            *p = Some(track_data_to_item(&td));
+        }
+        if let Some(w) = w_req_pl.upgrade() {
+            w.set_pending_playlist_track_title(td.title);
+            w.set_add_to_playlist_open(true);
+        }
+    });
+
+    let pend_conf = pending_playlist_track.clone();
+    let api_conf = api.clone();
+    let w_conf = window_weak.clone();
+    let rt_conf = rt_handle.clone();
+    main_window.on_confirm_add_to_playlist(move |pid| {
+        let item_opt = pend_conf.lock().ok().and_then(|mut g| g.take());
+        if let Some(item) = item_opt {
+            let core_t = riff_core::models::Track {
+                id: item.id.clone(),
+                path: item.id,
+                file: item.title.clone(),
+                title: item.title,
+                artist: item.artist,
+                album: if item.album.is_empty() { None } else { Some(item.album) },
+                duration: item.duration_sec,
+                thumbnail: item.thumbnail,
+                added_at: 0,
+                updated_at: 0,
+            };
+            let api_c = api_conf.clone();
+            let w_c = w_conf.clone();
+            let id = pid.to_string();
+            rt_conf.spawn(async move {
+                let _ = api_c.add_track_to_playlist(&id, &core_t).await;
+                let all = api_c.get_playlists().await.unwrap_or_default();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_c.upgrade() {
+                        w.set_playlists(playlists_to_slint(&all));
+                    }
+                });
+            });
+        }
+    });
+
+    let pl_clrq = playlist_cache.clone();
+    let w_clrq = window_weak.clone();
+    main_window.on_clear_queue(move || {
+        if let Ok(mut pl) = pl_clrq.lock() {
+            pl.clear();
+        }
+        if let Some(w) = w_clrq.upgrade() {
+            w.set_queue_tracks(ModelRc::new(VecModel::from(Vec::new())));
+        }
+    });
+
+    // 11f. Compact Mini Player Toggle
+    let w_mini = window_weak.clone();
+    main_window.on_toggle_mini_mode(move || {
+        if let Some(w) = w_mini.upgrade() {
+            let next = !w.get_mini_mode();
+            w.set_mini_mode(next);
+            if next {
+                w.window().set_size(slint::LogicalSize::new(420.0, 520.0));
+            } else {
+                w.window().set_size(slint::LogicalSize::new(1100.0, 720.0));
+            }
         }
     });
 
@@ -915,10 +1542,52 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let _ = slint::quit_event_loop();
     });
 
-    // 14. Subscribe to EventBus
+    // 14. Sleep Timer Background Ticker (1s)
+    let sd_tick = sleep_deadline.clone();
+    let api_sleep_tick = api.clone();
+    let w_sleep_tick = window_weak.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let mut expired = false;
+        let mut rem_secs = None;
+        if let Ok(mut d) = sd_tick.lock() {
+            if let Some(deadline) = *d {
+                let now = Instant::now();
+                if now >= deadline {
+                    *d = None;
+                    expired = true;
+                } else {
+                    rem_secs = Some(deadline.saturating_duration_since(now).as_secs());
+                }
+            }
+        }
+        if expired {
+            api_sleep_tick.pause();
+            let w_c = w_sleep_tick.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_c.upgrade() {
+                    w.set_sleep_active(false);
+                    w.set_sleep_status(SharedString::from("00:00"));
+                }
+            });
+        } else if let Some(rem) = rem_secs {
+            let w_c = w_sleep_tick.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_c.upgrade() {
+                    w.set_sleep_status(SharedString::from(format!("{:02}:{:02}", rem / 60, rem % 60)));
+                }
+            });
+        }
+    });
+
+    // 15. Subscribe to EventBus
     let mut rx = events.subscribe();
     let w_events = window_weak.clone();
     let lyrics_cache_ev = active_lyrics_cache.clone();
+    let rep_ev = repeat_state.clone();
+    let ste_ev = sleep_track_end.clone();
+    let eof_ev = eof_handled.clone();
+    let api_ev = api.clone();
 
     std::thread::spawn(move || {
         while let Ok(event) = rx.blocking_recv() {
@@ -930,6 +1599,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     duration_sec,
                 } => {
                     let lyr_cache = lyrics_cache_ev.clone();
+                    let rep_mode = rep_ev.load(Ordering::SeqCst);
+                    let is_eof = !is_playing && duration_sec > 1.0 && position_sec >= duration_sec - 0.35;
+                    let should_handle_eof = is_eof && !eof_ev.swap(true, Ordering::SeqCst);
+                    let sleep_end = should_handle_eof && ste_ev.swap(false, Ordering::SeqCst);
+                    let api_e = api_ev.clone();
+
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = w_opt.upgrade() {
                             w.set_is_playing(is_playing);
@@ -954,14 +1629,29 @@ pub fn run() -> Result<(), slint::PlatformError> {
                                     let mut changed = false;
                                     for (i, line) in lyr.iter_mut().enumerate() {
                                         let should_be_active = i == active_idx;
-                                        if line.is_active != should_be_active {
+                                        let should_be_past = i < active_idx;
+                                        if line.is_active != should_be_active || line.is_past != should_be_past {
                                             line.is_active = should_be_active;
+                                            line.is_past = should_be_past;
                                             changed = true;
                                         }
                                     }
                                     if changed {
+                                        w.set_active_lyric_index(active_idx as i32);
                                         w.set_lyrics_lines(ModelRc::new(VecModel::from(lyr.clone())));
                                     }
+                                }
+                            }
+
+                            if sleep_end {
+                                w.set_sleep_active(false);
+                                w.set_sleep_status(SharedString::from("00:00"));
+                            } else if should_handle_eof {
+                                if rep_mode == 2 {
+                                    api_e.seek(0.0);
+                                    api_e.resume();
+                                } else if rep_mode == 1 {
+                                    w.invoke_play_next();
                                 }
                             }
                         }

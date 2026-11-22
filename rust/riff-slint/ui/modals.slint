@@ -1,14 +1,16 @@
-import { Slider, ScrollView, AboutSlint } from "std-widgets.slint";
-import { Theme, LyricLineData } from "theme.slint";
-import { IconBtn, PillBtn, ToggleSwitch } from "components.slint";
+import { Slider, ScrollView, AboutSlint, TextEdit, LineEdit } from "std-widgets.slint";
+import { Theme, LyricLineData, SyncLineData, PlaylistData } from "theme.slint";
+import { IconBtn, PillBtn, ToggleSwitch, ScrubberBar } from "components.slint";
 
 export component Titlebar inherits Rectangle {
     in property <bool> revealed: false;
     in property <bool> lyrics-open: true;
     in property <bool> is-maximized: false;
+    in property <bool> mini-mode: false;
     out property <bool> any-hover: drag-ta.has-hover || btn-lyrics.has-hover || btn-mini.has-hover || btn-min.has-hover || btn-max.has-hover || btn-close.has-hover;
 
     callback toggle-lyrics();
+    callback mini-player();
     callback go-home();
     callback minimize();
     callback maximize();
@@ -125,7 +127,7 @@ export component Titlebar inherits Rectangle {
 
             btn-mini := TouchArea {
                 mouse-cursor: pointer;
-                clicked => { root.toggle-lyrics(); }
+                clicked => { root.mini-player(); }
             }
         }
 
@@ -382,13 +384,20 @@ export component RightPanel inherits Rectangle {
     in property <string> current-id: "";
     in property <string> current-title: "No track playing";
     in property <string> current-artist: "Select a track to listen";
+    in property <bool> current-is-favorite: false;
     in property <image> current-cover;
     in property <bool> current-has-cover: false;
     in property <color> accent-color: Theme.primary;
     in property <bool> has-accent: false;
     in property <bool> ambient-active: false;
     in property <[LyricLineData]> lyrics-lines: [];
+    in property <int> active-lyric-index: -1;
+    in-out property <string> lyrics-mode: "Line";
     callback seek-to(float);
+    callback edit-lyrics();
+    callback sync-lyrics();
+    callback open-fullscreen();
+    callback toggle-favorite();
     callback close();
 
     width: 350px;
@@ -414,7 +423,7 @@ export component RightPanel inherits Rectangle {
         padding: 20px;
         spacing: 14px;
 
-        // Header actions (hidden when idle like web_cdp.png, visible on hover or when playing)
+        // Header actions (Edit, Sync, Fullscreen, Line/Word, Close — persis src/renderer/index.html)
         HorizontalLayout {
             height: 32px;
             spacing: 6px;
@@ -422,28 +431,83 @@ export component RightPanel inherits Rectangle {
             opacity: (current-id != "" || lyrics-lines.length > 0 || panel-ta.has-hover) ? 1.0 : 0.0;
             animate opacity { duration: 180ms; easing: ease-out; }
 
+            // Edit lyrics
             Rectangle {
                 height: 28px;
                 border-radius: 14px;
-                background: #222226;
+                background: edit-ta.has-hover ? #ffffff28 : #ffffff1a;
+                animate background { duration: 140ms; easing: ease-out; }
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 5px;
+                    VerticalLayout {
+                        alignment: center;
+                        Image { source: @image-url("icons/ms_edit.svg"); width: 14px; height: 14px; colorize: Theme.text-primary; }
+                    }
+                    Text { text: "Edit"; color: Theme.text-primary; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+                }
+                edit-ta := TouchArea { mouse-cursor: pointer; clicked => { root.edit-lyrics(); } }
+            }
+
+            // Sync lyrics
+            Rectangle {
+                height: 28px;
+                border-radius: 14px;
+                background: sync-ta.has-hover ? #ffffff28 : #ffffff1a;
+                animate background { duration: 140ms; easing: ease-out; }
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 5px;
+                    VerticalLayout {
+                        alignment: center;
+                        Image { source: @image-url("icons/clock.svg"); width: 14px; height: 14px; colorize: Theme.text-primary; }
+                    }
+                    Text { text: "Sync"; color: Theme.text-primary; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+                }
+                sync-ta := TouchArea { mouse-cursor: pointer; clicked => { root.sync-lyrics(); } }
+            }
+
+            // Fullscreen karaoke
+            IconBtn {
+                width: 28px;
+                height: 28px;
+                base-bg: #ffffff1a;
+                icon: @image-url("icons/fullscreen.svg");
+                icon-size: 15px;
+                icon-color: Theme.text-primary;
+                clicked => { root.open-fullscreen(); }
+            }
+
+            // Line / Word mode toggle
+            Rectangle {
+                height: 28px;
+                border-radius: 14px;
+                background: mode-ta.has-hover ? #ffffff28 : #ffffff1a;
+                animate background { duration: 140ms; easing: ease-out; }
                 HorizontalLayout {
                     padding-left: 10px;
                     padding-right: 10px;
                     Text {
-                        text: "Line";
+                        text: lyrics-mode;
                         color: Theme.text-secondary;
-                        font-size: 12.5px;
+                        font-size: 12px;
                         font-weight: 500;
                         vertical-alignment: center;
                     }
                 }
+                mode-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { lyrics-mode = lyrics-mode == "Line" ? "Word" : "Line"; }
+                }
             }
 
             IconBtn {
-                width: 30px;
-                height: 30px;
+                width: 28px;
+                height: 28px;
                 icon: @image-url("icons/ms_close.svg");
-                icon-size: 18px;
+                icon-size: 16px;
                 clicked => { root.close(); }
             }
         }
@@ -486,21 +550,36 @@ export component RightPanel inherits Rectangle {
                 }
             }
 
-            VerticalLayout {
-                spacing: 2px;
-                Text {
-                    text: current-title;
-                    color: Theme.text-primary;
-                    font-size: 30px;
-                    font-weight: 800;
-                    wrap: word-wrap;
+            HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 2px;
+                    Text {
+                        text: current-title;
+                        color: Theme.text-primary;
+                        font-size: 30px;
+                        font-weight: 800;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: current-artist;
+                        color: Theme.text-secondary;
+                        font-size: 19px;
+                        font-weight: 500;
+                        wrap: word-wrap;
+                    }
                 }
-                Text {
-                    text: current-artist;
-                    color: Theme.text-secondary;
-                    font-size: 19px;
-                    font-weight: 500;
-                    wrap: word-wrap;
+                if current-id != "": VerticalLayout {
+                    alignment: center;
+                    IconBtn {
+                        width: 34px;
+                        height: 34px;
+                        icon: current-is-favorite ? @image-url("icons/heart_fill.svg") : @image-url("icons/heart_outline.svg");
+                        icon-size: 18px;
+                        icon-color: current-is-favorite ? Theme.primary : Theme.text-secondary;
+                        clicked => { root.toggle-favorite(); }
+                    }
                 }
             }
         }
@@ -538,31 +617,53 @@ export component RightPanel inherits Rectangle {
                 }
 
                 VerticalLayout {
+                    horizontal-stretch: 1;
                     alignment: center;
                     spacing: 2px;
                     Text { text: current-title; color: Theme.text-primary; font-size: 15px; font-weight: 700; overflow: elide; }
                     Text { text: current-artist; color: Theme.text-secondary; font-size: 13px; overflow: elide; }
                 }
+
+                VerticalLayout {
+                    alignment: center;
+                    IconBtn {
+                        width: 32px;
+                        height: 32px;
+                        icon: current-is-favorite ? @image-url("icons/heart_fill.svg") : @image-url("icons/heart_outline.svg");
+                        icon-size: 17px;
+                        icon-color: current-is-favorite ? Theme.primary : Theme.text-secondary;
+                        clicked => { root.toggle-favorite(); }
+                    }
+                }
             }
 
-            ScrollView {
+            rp-scroll := ScrollView {
                 vertical-stretch: 1;
+                content-y: active-lyric-index > 2 ? -min(max(0px, (active-lyric-index - 2) * 44px), max(0px, self.content-height - self.visible-height)) : 0px;
+                animate content-y { duration: 320ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
                 VerticalLayout {
                     spacing: 8px;
                     padding-top: 8px;
-                    padding-bottom: 24px;
+                    padding-bottom: 48px;
 
                     for line in lyrics-lines: Rectangle {
                         border-radius: 8px;
-                        background: lta.has-hover ? #1e1e22 : transparent;
+                        background: lta.has-hover ? #ffffff12 : transparent;
                         animate background { duration: 140ms; easing: ease-out; }
 
                         HorizontalLayout {
                             padding: 8px;
                             spacing: 8px;
+                            if line.is_gap: Image {
+                                source: @image-url("icons/music_note.svg");
+                                width: 18px;
+                                height: 18px;
+                                colorize: line.is_active ? Theme.primary : Theme.text-muted;
+                            }
                             Text {
-                                text: line.text;
-                                color: line.is_active ? Theme.text-primary : Theme.text-muted;
+                                text: line.is_gap ? "Instrumental" : line.text;
+                                color: line.is_active ? Theme.text-primary : (line.is_past ? #e2e2e988 : Theme.text-muted);
                                 font-size: line.is_active ? 18px : 15px;
                                 font-weight: line.is_active ? 700 : 500;
                                 wrap: word-wrap;
@@ -602,7 +703,6 @@ export component SettingsModal inherits Rectangle {
     opacity: open ? 1.0 : 0.0;
     visible: self.opacity > 0.01;
     background: #00000085;
-    backdrop-blur: 10px;
     animate opacity { duration: 190ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
     // Swallow clicks on backdrop
@@ -1314,6 +1414,1214 @@ export component SettingsModal inherits Rectangle {
                 font-size: 10px;
                 font-weight: 700;
                 horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// FULLSCREEN SYNC LYRICS / KARAOKE (#tv-karaoke 1:1)
+// ============================================================================
+export component FullscreenLyricsOverlay inherits Rectangle {
+    in property <bool> open: false;
+    in property <string> current-id: "";
+    in property <string> current-title: "No track playing";
+    in property <string> current-artist: "Select a track to listen";
+    in property <image> current-cover;
+    in property <bool> current-has-cover: false;
+    in property <image> current-cover-blur;
+    in property <bool> current-has-blur: false;
+    in property <color> accent-color: Theme.primary;
+    in property <bool> is-playing: false;
+    in property <float> current-pos: 0.0;
+    in property <float> current-duration: 1.0;
+    in property <string> pos-text: "0:00";
+    in property <string> dur-text: "0:00";
+    in property <bool> shuffle-on: false;
+    in property <int> repeat-mode: 0; // 0: off, 1: all, 2: one
+    in property <[LyricLineData]> lyrics-lines: [];
+    in property <int> active-lyric-index: -1;
+    in property <[float]> spectrum-bands: [];
+
+    // Customize panel state (#tvk-panel)
+    in-out property <bool> settings-panel-open: false;
+    in-out property <bool> cover-only-mode: false;
+    in-out property <int> tvk-align: 1; // 0: left, 1: center, 2: right
+    in-out property <float> tvk-size-pct: 100.0;
+    in-out property <int> tvk-weight: 700;
+    in-out property <float> tvk-gap: 16.0;
+    in-out property <bool> tvk-vis-nolyrics: true;
+    in-out property <bool> tvk-vis-lyrics: true;
+    in-out property <float> tvk-vis-opacity: 0.85;
+
+    callback toggle-play-pause();
+    callback play-prev();
+    callback play-next();
+    callback toggle-shuffle();
+    callback cycle-repeat();
+    callback seek-to(float);
+    callback edit-lyrics();
+    callback sync-lyrics();
+    callback close();
+
+    property <bool> show-lyrics-col: lyrics-lines.length > 0 && !cover-only-mode;
+    property <float> t-sec: open ? (animation-tick() / 1s) : 0.0;
+
+    opacity: open ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
+    background: #0a0a0e;
+    clip: true;
+    animate opacity { duration: 320ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
+    // Swallow clicks
+    TouchArea {}
+
+    // Ambient blurred cover + orbiting color blobs (#tvk-ambient-bg)
+    if current-has-blur: Image {
+        source: current-cover-blur;
+        width: parent.width * 1.25;
+        height: parent.height * 1.25;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        image-fit: cover;
+        opacity: 0.62;
+    }
+
+    // Orbiting ambient blobs (tvkOrbit1..3)
+    Rectangle {
+        width: parent.width * 0.72;
+        height: parent.width * 0.72;
+        border-radius: self.width / 2;
+        x: -self.width * 0.22 + Math.sin(t-sec * 0.37rad) * 60px;
+        y: -self.height * 0.24 + Math.cos(t-sec * 0.29rad) * 45px;
+        background: @radial-gradient(circle, accent-color.with-alpha(0.38) 0%, transparent 70%);
+    }
+    Rectangle {
+        width: parent.width * 0.68;
+        height: parent.width * 0.68;
+        border-radius: self.width / 2;
+        x: parent.width - self.width * 0.75 + Math.cos(t-sec * 0.45rad) * 55px;
+        y: parent.height - self.height * 0.72 + Math.sin(t-sec * 0.33rad) * 50px;
+        background: @radial-gradient(circle, Theme.primary.with-alpha(0.28) 0%, transparent 70%);
+    }
+
+    // Subtle vignette overlay
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: @linear-gradient(180deg, #00000030 0%, #00000018 50%, #00000055 100%);
+    }
+
+    // Bottom FFT Visualizer (#tvk-visualizer)
+    if (show-lyrics-col ? tvk-vis-lyrics : tvk-vis-nolyrics): HorizontalLayout {
+        x: 0px;
+        y: parent.height - 160px;
+        width: 100%;
+        height: 160px;
+        padding-left: 24px;
+        padding-right: 24px;
+        spacing: 8px;
+        opacity: tvk-vis-opacity * 0.22;
+
+        for band in spectrum-bands: VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: end;
+            Rectangle {
+                height: max(4px, min(150px, band * 150px));
+                border-radius: 4px;
+                background: #ffffff;
+                animate height { duration: 85ms; easing: ease-out; }
+            }
+        }
+    }
+
+    // Main layout (.tv-karaoke-layout)
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        padding-left: show-lyrics-col ? 64px : 40px;
+        padding-right: show-lyrics-col ? 64px : 40px;
+        padding-top: 56px;
+        padding-bottom: 48px;
+        spacing: show-lyrics-col ? 56px : 0px;
+
+        if !show-lyrics-col: Rectangle { horizontal-stretch: 1; }
+
+        // Left side (.tv-side)
+        VerticalLayout {
+            width: show-lyrics-col ? 360px : 420px;
+            alignment: center;
+            spacing: 18px;
+
+            // Large album cover (.tv-cover)
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: show-lyrics-col ? 320px : 360px;
+                    height: self.width;
+                    border-radius: 28px;
+                    background: #141418;
+                    drop-shadow-blur: 36px;
+                    drop-shadow-offset-y: 14px;
+                    drop-shadow-color: #00000088;
+                    clip: true;
+
+                    if current-has-cover: Image {
+                        source: current-cover;
+                        width: 100%;
+                        height: 100%;
+                        image-fit: cover;
+                    }
+                    if !current-has-cover: Image {
+                        source: @image-url("icons/play_circle.svg");
+                        width: 56px;
+                        height: 56px;
+                        colorize: #ffffff66;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+            }
+
+            // Title & Artist (.tv-karaoke-meta)
+            VerticalLayout {
+                spacing: 6px;
+                Text {
+                    text: current-title;
+                    color: #ffffff;
+                    font-size: show-lyrics-col ? 24px : 28px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: current-artist;
+                    color: #ffffffbf;
+                    font-size: show-lyrics-col ? 16px : 18px;
+                    font-weight: 500;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
+            // Audio output badge (.tvk-output)
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    height: 28px;
+                    border-radius: 14px;
+                    background: #ffffff14;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 6px;
+                        VerticalLayout {
+                            alignment: center;
+                            Image { source: @image-url("icons/headset.svg"); width: 14px; height: 14px; colorize: #ffffffcc; }
+                        }
+                        Text { text: "WASAPI 44.1kHz"; color: #ffffffcc; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+                    }
+                }
+            }
+
+            // Progress scrubber (.tvk-progress-row)
+            HorizontalLayout {
+                height: 28px;
+                spacing: 12px;
+                Text {
+                    width: 38px;
+                    text: pos-text;
+                    color: #ffffff99;
+                    font-size: 12px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+                ScrubberBar {
+                    horizontal-stretch: 1;
+                    active: current-id != "";
+                    value: current-pos;
+                    maximum: current-duration;
+                    seeked(pos) => { root.seek-to(pos); }
+                }
+                Text {
+                    width: 38px;
+                    text: dur-text;
+                    color: #ffffff99;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Playback controls (.tvk-controls)
+            HorizontalLayout {
+                alignment: center;
+                spacing: 14px;
+                height: 56px;
+
+                IconBtn {
+                    width: 40px;
+                    height: 40px;
+                    icon: @image-url("icons/shuffle.svg");
+                    icon-size: 18px;
+                    icon-color: shuffle-on ? Theme.primary : #ffffff8c;
+                    clicked => { root.toggle-shuffle(); }
+                }
+                IconBtn {
+                    width: 40px;
+                    height: 40px;
+                    icon: @image-url("icons/prev_fill.svg");
+                    icon-size: 20px;
+                    icon-color: #ffffffcc;
+                    clicked => { root.play-prev(); }
+                }
+                Rectangle {
+                    width: 56px;
+                    height: 56px;
+                    border-radius: 28px;
+                    background: pta.has-hover ? #ffffff44 : #ffffff33;
+                    animate background { duration: 140ms; easing: ease-out; }
+                    Image {
+                        source: is-playing ? @image-url("icons/pause_fill.svg") : @image-url("icons/play_fill.svg");
+                        width: 24px;
+                        height: 24px;
+                        colorize: #ffffff;
+                        x: 16px;
+                        y: 16px;
+                    }
+                    pta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.toggle-play-pause(); }
+                    }
+                }
+                IconBtn {
+                    width: 40px;
+                    height: 40px;
+                    icon: @image-url("icons/next_fill.svg");
+                    icon-size: 20px;
+                    icon-color: #ffffffcc;
+                    clicked => { root.play-next(); }
+                }
+                IconBtn {
+                    width: 40px;
+                    height: 40px;
+                    icon: @image-url("icons/repeat.svg");
+                    icon-size: 18px;
+                    icon-color: repeat-mode > 0 ? Theme.primary : #ffffff8c;
+                    clicked => { root.cycle-repeat(); }
+                }
+            }
+        }
+
+        // Right side: Synced Lyrics (.tv-karaoke-content)
+        if show-lyrics-col: Rectangle {
+            horizontal-stretch: 1;
+            height: 100%;
+            clip: true;
+
+            tvk-scroll := ScrollView {
+                width: 100%;
+                height: 100%;
+                content-y: active-lyric-index > 2 ? -min(max(0px, (active-lyric-index - 2) * (54px + tvk-gap * 1px)), max(0px, self.content-height - self.visible-height)) : 0px;
+                animate content-y { duration: 420ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
+                VerticalLayout {
+                    padding-top: 120px;
+                    padding-bottom: 220px;
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: tvk-gap * 1px;
+
+                    for line in lyrics-lines: Rectangle {
+                        border-radius: 14px;
+                        background: lta.has-hover ? #ffffff14 : transparent;
+                        animate background { duration: 150ms; easing: ease-out; }
+
+                        HorizontalLayout {
+                            padding-top: 8px;
+                            padding-bottom: 8px;
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 10px;
+
+                            if line.is_gap: Image {
+                                source: @image-url("icons/music_note.svg");
+                                width: 28px;
+                                height: 28px;
+                                colorize: line.is_active ? #ffffff : #ffffff66;
+                            }
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: line.is_gap ? "•••" : line.text;
+                                color: line.is_active ? #ffffff : (line.is_past ? #ffffff66 : #ffffff55);
+                                font-size: (line.is_active ? 34px : 28px) * (tvk-size-pct / 100.0);
+                                font-weight: tvk-weight;
+                                horizontal-alignment: tvk-align == 0 ? left : (tvk-align == 2 ? right : center);
+                                wrap: word-wrap;
+                                animate color { duration: 220ms; easing: ease-out; }
+                                animate font-size { duration: 240ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                            }
+                        }
+
+                        lta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.seek-to(line.time_sec); }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !show-lyrics-col: Rectangle { horizontal-stretch: 1; }
+    }
+
+    // Top-right floating glass action buttons (.tv-karaoke-close)
+    HorizontalLayout {
+        x: parent.width - 288px;
+        y: 24px;
+        width: 260px;
+        height: 44px;
+        spacing: 10px;
+
+        // Edit lyrics
+        Rectangle {
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: b-edit.has-hover ? #ffffff4d : #ffffff26;
+            border-width: 1px;
+            border-color: #ffffff33;
+            animate background { duration: 160ms; easing: ease-out; }
+            Image { source: @image-url("icons/ms_edit.svg"); width: 20px; height: 20px; colorize: #ffffff; x: 12px; y: 12px; }
+            b-edit := TouchArea { mouse-cursor: pointer; clicked => { root.edit-lyrics(); } }
+        }
+
+        // Sync lyrics
+        Rectangle {
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: b-sync.has-hover ? #ffffff4d : #ffffff26;
+            border-width: 1px;
+            border-color: #ffffff33;
+            animate background { duration: 160ms; easing: ease-out; }
+            Image { source: @image-url("icons/clock.svg"); width: 20px; height: 20px; colorize: #ffffff; x: 12px; y: 12px; }
+            b-sync := TouchArea { mouse-cursor: pointer; clicked => { root.sync-lyrics(); } }
+        }
+
+        // Customize lyrics (#btn-tvk-settings)
+        Rectangle {
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: settings-panel-open ? Theme.primary : (b-set.has-hover ? #ffffff4d : #ffffff26);
+            border-width: 1px;
+            border-color: #ffffff33;
+            animate background { duration: 160ms; easing: ease-out; }
+            Image { source: @image-url("icons/ms_settings.svg"); width: 20px; height: 20px; colorize: settings-panel-open ? Theme.on-primary : #ffffff; x: 12px; y: 12px; }
+            b-set := TouchArea { mouse-cursor: pointer; clicked => { settings-panel-open = !settings-panel-open; } }
+        }
+
+        // Toggle album cover mode (#btn-tvk-cover-mode)
+        Rectangle {
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: cover-only-mode ? Theme.primary : (b-cov.has-hover ? #ffffff4d : #ffffff26);
+            border-width: 1px;
+            border-color: #ffffff33;
+            animate background { duration: 160ms; easing: ease-out; }
+            Image { source: @image-url("icons/ms_album.svg"); width: 20px; height: 20px; colorize: cover-only-mode ? Theme.on-primary : #ffffff; x: 12px; y: 12px; }
+            b-cov := TouchArea { mouse-cursor: pointer; clicked => { cover-only-mode = !cover-only-mode; } }
+        }
+
+        // Close (#btn-close-tv-karaoke)
+        Rectangle {
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: b-cls.has-hover ? #ffffff4d : #ffffff26;
+            border-width: 1px;
+            border-color: #ffffff33;
+            animate background { duration: 160ms; easing: ease-out; }
+            Image { source: @image-url("icons/chev_down.svg"); width: 22px; height: 22px; colorize: #ffffff; x: 11px; y: 11px; }
+            b-cls := TouchArea { mouse-cursor: pointer; clicked => { settings-panel-open = false; root.close(); } }
+        }
+    }
+
+    // Top-center Customize Lyrics drop-down panel (.tvk-panel)
+    Rectangle {
+        width: min(380px, parent.width - 32px);
+        height: 380px;
+        x: (parent.width - self.width) / 2;
+        y: settings-panel-open ? 0px : -400px;
+        opacity: settings-panel-open ? 1.0 : 0.0;
+        visible: self.opacity > 0.01;
+        border-bottom-left-radius: 28px;
+        border-bottom-right-radius: 28px;
+        background: #222328eb;
+        backdrop-blur: 24px;
+        drop-shadow-blur: 32px;
+        drop-shadow-offset-y: 8px;
+        drop-shadow-color: #00000073;
+        animate y { duration: 320ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+        animate opacity { duration: 200ms; easing: ease-out; }
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+
+            // Alignment
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Alignment"; color: #ffffff; font-size: 13px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                for al in [
+                    { idx: 0, icon: @image-url("icons/align_left.svg") },
+                    { idx: 1, icon: @image-url("icons/align_center.svg") },
+                    { idx: 2, icon: @image-url("icons/align_right.svg") },
+                ]: Rectangle {
+                    width: 36px;
+                    height: 30px;
+                    border-radius: 10px;
+                    background: tvk-align == al.idx ? Theme.primary : #ffffff18;
+                    Image { source: al.icon; width: 16px; height: 16px; colorize: tvk-align == al.idx ? Theme.on-primary : #ffffff; x: 10px; y: 7px; }
+                    TouchArea { mouse-cursor: pointer; clicked => { tvk-align = al.idx; } }
+                }
+            }
+
+            // Size
+            VerticalLayout {
+                spacing: 2px;
+                HorizontalLayout {
+                    Text { text: "Size"; color: #ffffff; font-size: 13px; font-weight: 600; horizontal-stretch: 1; }
+                    Text { text: Math.round(tvk-size-pct) + "%"; color: Theme.primary; font-size: 12.5px; font-weight: 600; }
+                }
+                Slider { height: 24px; minimum: 60.0; maximum: 160.0; value <=> tvk-size-pct; }
+            }
+
+            // Line spacing
+            VerticalLayout {
+                spacing: 2px;
+                HorizontalLayout {
+                    Text { text: "Line spacing"; color: #ffffff; font-size: 13px; font-weight: 600; horizontal-stretch: 1; }
+                    Text { text: Math.round(tvk-gap) + "px"; color: Theme.primary; font-size: 12.5px; font-weight: 600; }
+                }
+                Slider { height: 24px; minimum: 4.0; maximum: 40.0; value <=> tvk-gap; }
+            }
+
+            // Visualizer toggles
+            HorizontalLayout {
+                Text { text: "No-lyrics visualizer"; color: #ffffff; font-size: 13px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                ToggleSwitch { checked <=> tvk-vis-nolyrics; }
+            }
+            HorizontalLayout {
+                Text { text: "Visualizer with lyrics"; color: #ffffff; font-size: 13px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                ToggleSwitch { checked <=> tvk-vis-lyrics; }
+            }
+
+            // Visualizer opacity
+            VerticalLayout {
+                spacing: 2px;
+                HorizontalLayout {
+                    Text { text: "Visualizer opacity"; color: #ffffff; font-size: 13px; font-weight: 600; horizontal-stretch: 1; }
+                    Text { text: Math.round(tvk-vis-opacity * 100) + "%"; color: Theme.primary; font-size: 12.5px; font-weight: 600; }
+                }
+                Slider { height: 24px; minimum: 0.1; maximum: 1.0; value <=> tvk-vis-opacity; }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                PillBtn {
+                    label: "Reset";
+                    clicked => {
+                        tvk-align = 1;
+                        tvk-size-pct = 100.0;
+                        tvk-weight = 700;
+                        tvk-gap = 16.0;
+                        tvk-vis-nolyrics = true;
+                        tvk-vis-lyrics = true;
+                        tvk-vis-opacity = 0.85;
+                    }
+                }
+                PillBtn {
+                    label: "Done";
+                    primary: true;
+                    clicked => { settings-panel-open = false; }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// CUSTOM LYRICS EDITOR MODAL (#custom-lyrics-modal 1:1)
+// ============================================================================
+export component CustomLyricsModal inherits Rectangle {
+    in property <bool> open: false;
+    in property <string> track-title: "No track selected";
+    in property <string> track-artist: "";
+    in-out property <string> lyrics-text: "";
+    callback save(string);
+    callback close();
+
+    opacity: open ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
+    background: #00000085;
+    animate opacity { duration: 180ms; easing: ease-out; }
+
+    TouchArea { clicked => { root.close(); } }
+
+    Rectangle {
+        width: min(520px, parent.width - 40px);
+        height: min(540px, parent.height - 60px);
+        x: (parent.width - self.width) / 2;
+        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 12px;
+        border-radius: 24px;
+        background: #1c1d22;
+        drop-shadow-blur: 36px;
+        drop-shadow-offset-y: 14px;
+        drop-shadow-color: #00000099;
+        animate y { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 22px;
+            spacing: 12px;
+
+            HorizontalLayout {
+                height: 32px;
+                spacing: 10px;
+                VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/ms_edit.svg"); width: 20px; height: 20px; colorize: Theme.primary; }
+                }
+                Text { text: "Custom lyrics editor"; color: Theme.text-primary; font-size: 18px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+                IconBtn { width: 32px; height: 32px; icon: @image-url("icons/ms_close.svg"); icon-size: 16px; clicked => { root.close(); } }
+            }
+
+            Text { text: "Paste or type lyrics for the current track. One line per row."; color: Theme.text-secondary; font-size: 13px; }
+
+            Rectangle {
+                border-radius: 12px;
+                background: #25262c;
+                HorizontalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+                    Text { text: track-title; color: Theme.text-primary; font-size: 13.5px; font-weight: 700; overflow: elide; }
+                    Text { text: track-artist != "" ? "• " + track-artist : ""; color: Theme.text-muted; font-size: 13px; overflow: elide; }
+                }
+            }
+
+            Rectangle {
+                border-radius: 10px;
+                background: #9f99e61a;
+                HorizontalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+                    Text { text: "Tip: Type [Instrumental] on a new line to display the music visualizer icon during breaks."; color: Theme.primary; font-size: 12px; wrap: word-wrap; }
+                }
+            }
+
+            TextEdit {
+                vertical-stretch: 1;
+                text <=> lyrics-text;
+                font-size: 13.5px;
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 10px;
+                PillBtn { label: "Cancel"; clicked => { root.close(); } }
+                PillBtn { label: "Save lyrics"; primary: true; clicked => { root.save(lyrics-text); } }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// TAP-TO-SYNC LYRICS MODAL (#sync-mode-overlay 1:1)
+// ============================================================================
+export component SyncLyricsModal inherits Rectangle {
+    in property <bool> open: false;
+    in property <string> track-title: "";
+    in property <string> track-artist: "";
+    in property <[SyncLineData]> lines: [];
+    in property <int> synced-count: 0;
+    callback tap-line(int);
+    callback restart();
+    callback save-and-exit();
+    callback close();
+
+    opacity: open ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
+    background: #00000085;
+    animate opacity { duration: 180ms; easing: ease-out; }
+
+    TouchArea { clicked => { root.close(); } }
+
+    Rectangle {
+        width: min(520px, parent.width - 40px);
+        height: min(580px, parent.height - 60px);
+        x: (parent.width - self.width) / 2;
+        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 12px;
+        border-radius: 24px;
+        background: #1c1d22;
+        drop-shadow-blur: 36px;
+        drop-shadow-offset-y: 14px;
+        drop-shadow-color: #00000099;
+        animate y { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 22px;
+            spacing: 12px;
+
+            // Header: Recording dot + badge + counter + close
+            HorizontalLayout {
+                height: 32px;
+                spacing: 8px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: #f28b82; }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        height: 22px;
+                        border-radius: 11px;
+                        background: #2a2b32;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text { text: "Recording"; color: #f28b82; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                        }
+                    }
+                }
+                Text {
+                    text: synced-count + " / " + lines.length + " lines synced";
+                    color: Theme.text-secondary;
+                    font-size: 12.5px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                IconBtn { width: 32px; height: 32px; icon: @image-url("icons/ms_close.svg"); icon-size: 16px; clicked => { root.close(); } }
+            }
+
+            // Tip banner
+            Rectangle {
+                border-radius: 12px;
+                background: #25262c;
+                HorizontalLayout {
+                    padding: 10px;
+                    alignment: center;
+                    Text { text: "Tap a line or press Space on beat (" + track-title + ")"; color: Theme.text-muted; font-size: 12px; overflow: elide; }
+                }
+            }
+
+            // Controls bar
+            HorizontalLayout {
+                spacing: 10px;
+                PillBtn { label: "Restart"; clicked => { root.restart(); } }
+                Rectangle { horizontal-stretch: 1; }
+                PillBtn { label: "Save and exit"; primary: true; clicked => { root.save-and-exit(); } }
+            }
+
+            // Lines list
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 6px;
+                    padding-top: 4px;
+                    padding-bottom: 16px;
+
+                    for line[idx] in lines: Rectangle {
+                        border-radius: 10px;
+                        background: line.is_next ? Theme.primary-dim : (sta.has-hover ? #26272e : transparent);
+                        animate background { duration: 120ms; easing: ease-out; }
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            padding-top: 9px;
+                            padding-bottom: 9px;
+                            spacing: 10px;
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: line.is_gap ? "[Instrumental]" : line.text;
+                                color: line.is_next ? Theme.text-primary : (line.is_synced ? Theme.text-muted : #e2e2e999);
+                                font-size: 14px;
+                                font-weight: line.is_next ? 700 : 500;
+                                wrap: word-wrap;
+                            }
+
+                            if line.is_synced: Rectangle {
+                                height: 22px;
+                                border-radius: 6px;
+                                background: #2c2d35;
+                                HorizontalLayout {
+                                    padding-left: 7px;
+                                    padding-right: 7px;
+                                    Text { text: line.time_str; color: Theme.primary; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                }
+                            }
+                        }
+
+                        sta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.tap-line(idx); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// AUDIO EDITOR MODAL (#audio-settings-modal 1:1)
+// ============================================================================
+export component AudioEditorModal inherits Rectangle {
+    in property <bool> open: false;
+    in-out property <int> tab: 3; // 0: Enhancer, 1: Speed & Pitch, 2: Audio FX, 3: Equalizer, 4: Sleep
+    in-out property <bool> clear-sound: false;
+    in-out property <float> speed: 1.0;
+    in-out property <float> reverb: 0.0;
+    in-out property <float> distortion: 0.0;
+    in-out property <float> eq-bass: 0.0;
+    in-out property <float> eq-mid: 0.0;
+    in-out property <float> eq-treble: 0.0;
+    in-out property <string> eq-preset-name: "Default";
+    in property <string> sleep-status: "00:00";
+    in property <bool> sleep-active: false;
+
+    callback set-speed(float);
+    callback set-effects(float, float);
+    callback set-eq(float, float, float);
+    callback apply-preset(string);
+    callback set-sleep-minutes(int); // -1: track end, 0: off, >0: minutes
+    callback add-sleep-5m();
+    callback reset-audio();
+    callback close();
+
+    opacity: open ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
+    background: #00000085;
+    animate opacity { duration: 180ms; easing: ease-out; }
+
+    TouchArea { clicked => { root.close(); } }
+
+    Rectangle {
+        width: min(660px, parent.width - 40px);
+        height: min(540px, parent.height - 60px);
+        x: (parent.width - self.width) / 2;
+        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 12px;
+        border-radius: 24px;
+        background: #1c1d22;
+        drop-shadow-blur: 36px;
+        drop-shadow-offset-y: 14px;
+        drop-shadow-color: #00000099;
+        animate y { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 22px;
+            spacing: 14px;
+
+            // Header
+            HorizontalLayout {
+                height: 32px;
+                spacing: 10px;
+                VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/ms_tune.svg"); width: 20px; height: 20px; colorize: Theme.primary; }
+                }
+                Text { text: "Audio"; color: Theme.text-primary; font-size: 18px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+                PillBtn { label: "Reset"; btn-height: 30px; clicked => { root.reset-audio(); } }
+                IconBtn { width: 32px; height: 32px; icon: @image-url("icons/ms_close.svg"); icon-size: 16px; clicked => { root.close(); } }
+            }
+
+            // EQ tab visible by default
+            if tab == 3: VerticalLayout {
+                spacing: 12px;
+                Rectangle {
+                    border-radius: 16px;
+                    background: #24252c;
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 10px;
+                        Text { text: "3-Band Equalizer"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                        Text { text: "Bass (100Hz): " + Math.round(eq-bass) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                        Slider { minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
+                        Text { text: "Mid (1kHz): " + Math.round(eq-mid) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                        Slider { minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
+                        Text { text: "Treble (10kHz): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                        Slider { minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                    }
+                }
+            }
+
+            // Tabs bar
+            HorizontalLayout {
+                spacing: 6px;
+                height: 38px;
+                Rectangle { width: 90px; height: 38px; }
+                for t in [
+                    { idx: 0, label: "Enhancer" },
+                    { idx: 1, label: "Speed & Pitch" },
+                    { idx: 2, label: "Audio FX" },
+                    { idx: 3, label: "Equalizer" },
+                    { idx: 4, label: "Sleep" },
+                ]: Rectangle {
+                    horizontal-stretch: 1;
+                    height: 36px;
+                    border-radius: 12px;
+                    background: tab == t.idx ? Theme.primary : (tta.has-hover ? #2a2b32 : #23242a);
+                    animate background { duration: 140ms; easing: ease-out; }
+                    Text {
+                        text: t.label;
+                        color: tab == t.idx ? Theme.on-primary : Theme.text-secondary;
+                        font-size: 12.5px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    tta := TouchArea { mouse-cursor: pointer; clicked => { tab = t.idx; } }
+                }
+            }
+
+            // Tab content
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 12px;
+                    alignment: start;
+
+                    // 0: Enhancer
+                    if tab == 0: VerticalLayout {
+                        spacing: 10px;
+                        Rectangle {
+                            border-radius: 16px;
+                            background: #24252c;
+                            HorizontalLayout {
+                                padding: 16px;
+                                Text { text: "Clear sound"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                                ToggleSwitch {
+                                    checked <=> clear-sound;
+                                    toggled(on) => {
+                                        if (on) {
+                                            eq-bass = 2.0; eq-mid = 2.5; eq-treble = 3.5;
+                                            root.set-eq(2.0, 2.5, 3.5);
+                                        } else {
+                                            eq-bass = 0.0; eq-mid = 0.0; eq-treble = 0.0;
+                                            root.set-eq(0.0, 0.0, 0.0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle {
+                            border-radius: 16px;
+                            background: #24252c;
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 8px;
+                                Text { text: "Vocals (Mid): " + Math.round(eq-mid) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
+                                Text { text: "Treble (Air): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                                Text { text: "Bass: " + Math.round(eq-bass) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
+                            }
+                        }
+                    }
+
+                    // 1: Speed & Pitch
+                    if tab == 1: VerticalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            border-radius: 16px;
+                            background: #24252c;
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 12px;
+                                HorizontalLayout {
+                                    Text { text: "Playback Speed"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; horizontal-stretch: 1; }
+                                    Text { text: Math.round(speed * 100) / 100 + "x"; color: Theme.primary; font-size: 14px; font-weight: 700; }
+                                }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    for sp in [0.8, 0.9, 1.0, 1.15, 1.25, 1.35, 1.5]: Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 34px;
+                                        border-radius: 10px;
+                                        background: Math.abs(speed - sp) < 0.02 ? Theme.primary : #2e3038;
+                                        Text {
+                                            text: "x" + sp;
+                                            color: Math.abs(speed - sp) < 0.02 ? Theme.on-primary : Theme.text-primary;
+                                            font-size: 12.5px;
+                                            font-weight: 600;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { speed = sp; root.set-speed(sp); }
+                                        }
+                                    }
+                                }
+                                Slider {
+                                    minimum: 0.5;
+                                    maximum: 2.0;
+                                    value <=> speed;
+                                    changed(v) => { root.set-speed(v); }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2: Audio FX
+                    if tab == 2: VerticalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            border-radius: 16px;
+                            background: #24252c;
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                HorizontalLayout {
+                                    Text { text: "Reverb"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; horizontal-stretch: 1; }
+                                    Text { text: Math.round(reverb) + "%"; color: Theme.primary; font-size: 13.5px; font-weight: 700; }
+                                }
+                                Slider { minimum: 0.0; maximum: 100.0; value <=> reverb; changed(v) => { root.set-effects(v, distortion); } }
+
+                                HorizontalLayout {
+                                    Text { text: "Distortion"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; horizontal-stretch: 1; }
+                                    Text { text: Math.round(distortion) + "%"; color: Theme.primary; font-size: 13.5px; font-weight: 700; }
+                                }
+                                Slider { minimum: 0.0; maximum: 100.0; value <=> distortion; changed(v) => { root.set-effects(reverb, v); } }
+                            }
+                        }
+                    }
+
+                    // 3: Equalizer
+                    if tab == 3: VerticalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            border-radius: 16px;
+                            background: #24252c;
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                Text { text: "3-Band Equalizer"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                Text { text: "Bass (100Hz): " + Math.round(eq-bass) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                Slider { height: 32px; minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
+                                Text { text: "Mid (1kHz): " + Math.round(eq-mid) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                Slider { height: 32px; minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
+                                Text { text: "Treble (10kHz): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
+                                Slider { height: 32px; minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                            }
+                        }
+                    }
+
+                    // 4: Sleep Timer
+                    if tab == 4: VerticalLayout {
+                        spacing: 12px;
+                        Rectangle {
+                            border-radius: 20px;
+                            background: #24252c;
+                            VerticalLayout {
+                                padding: 20px;
+                                spacing: 16px;
+
+                                Text {
+                                    text: sleep-status;
+                                    color: sleep-active ? Theme.primary : Theme.text-primary;
+                                    font-size: 36px;
+                                    font-weight: 800;
+                                    horizontal-alignment: center;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    for mins in [15, 30, 45, 60, 90]: Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 48px;
+                                        border-radius: 14px;
+                                        background: #2e3038;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Text { text: mins + ""; color: Theme.text-primary; font-size: 15px; font-weight: 700; horizontal-alignment: center; }
+                                            Text { text: "min"; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; }
+                                        }
+                                        TouchArea { mouse-cursor: pointer; clicked => { root.set-sleep-minutes(mins); } }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    alignment: center;
+                                    spacing: 10px;
+                                    PillBtn { label: "End of track"; clicked => { root.set-sleep-minutes(-1); } }
+                                    PillBtn { label: "+5m"; clicked => { root.add-sleep-5m(); } }
+                                    PillBtn { label: "Turn off"; clicked => { root.set-sleep-minutes(0); } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// CREATE PLAYLIST & ADD TO PLAYLIST MODALS
+// ============================================================================
+export component CreatePlaylistModal inherits Rectangle {
+    in property <bool> open: false;
+    in-out property <string> playlist-name: "";
+    callback create(string);
+    callback close();
+
+    opacity: open ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
+    background: #00000085;
+    animate opacity { duration: 180ms; easing: ease-out; }
+
+    TouchArea { clicked => { root.close(); } }
+
+    Rectangle {
+        width: min(400px, parent.width - 40px);
+        height: 190px;
+        x: (parent.width - self.width) / 2;
+        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 12px;
+        border-radius: 24px;
+        background: #1c1d22;
+        drop-shadow-blur: 32px;
+        drop-shadow-offset-y: 12px;
+        drop-shadow-color: #00000099;
+        animate y { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 22px;
+            spacing: 14px;
+
+            Text { text: "Create playlist"; color: Theme.text-primary; font-size: 18px; font-weight: 700; }
+
+            LineEdit {
+                text <=> playlist-name;
+                placeholder-text: "My playlist";
+                accepted => {
+                    if (playlist-name != "") {
+                        root.create(playlist-name);
+                        playlist-name = "";
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 10px;
+                PillBtn { label: "Cancel"; clicked => { root.close(); } }
+                PillBtn {
+                    label: "Create";
+                    primary: true;
+                    clicked => {
+                        if (playlist-name != "") {
+                            root.create(playlist-name);
+                            playlist-name = "";
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component AddToPlaylistModal inherits Rectangle {
+    in property <bool> open: false;
+    in property <string> track-title: "";
+    in property <[PlaylistData]> playlists: [];
+    callback select-playlist(string);
+    callback create-new();
+    callback close();
+
+    opacity: open ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
+    background: #00000085;
+    animate opacity { duration: 180ms; easing: ease-out; }
+
+    TouchArea { clicked => { root.close(); } }
+
+    Rectangle {
+        width: min(400px, parent.width - 40px);
+        height: min(420px, parent.height - 60px);
+        x: (parent.width - self.width) / 2;
+        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 12px;
+        border-radius: 24px;
+        background: #1c1d22;
+        drop-shadow-blur: 32px;
+        drop-shadow-offset-y: 12px;
+        drop-shadow-color: #00000099;
+        animate y { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 22px;
+            spacing: 12px;
+
+            HorizontalLayout {
+                Text { text: "Add to playlist"; color: Theme.text-primary; font-size: 18px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; }
+                IconBtn { width: 32px; height: 32px; icon: @image-url("icons/ms_close.svg"); icon-size: 16px; clicked => { root.close(); } }
+            }
+
+            Text { text: track-title; color: Theme.text-muted; font-size: 13px; overflow: elide; }
+
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 6px;
+                    if playlists.length == 0: Text {
+                        text: "No playlists yet. Create one below!";
+                        color: Theme.text-muted;
+                        font-size: 13.5px;
+                        horizontal-alignment: center;
+                    }
+                    for pl in playlists: Rectangle {
+                        height: 48px;
+                        border-radius: 12px;
+                        background: pta.has-hover ? #2a2b34 : #23242b;
+                        animate background { duration: 140ms; easing: ease-out; }
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 10px;
+                            VerticalLayout {
+                                alignment: center;
+                                Image { source: @image-url("icons/ms_queue_music.svg"); width: 18px; height: 18px; colorize: Theme.primary; }
+                            }
+                            Text { text: pl.name; color: Theme.text-primary; font-size: 14px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                            Text { text: pl.track_count + " tracks"; color: Theme.text-muted; font-size: 12px; vertical-alignment: center; }
+                        }
+                        pta := TouchArea { mouse-cursor: pointer; clicked => { root.select-playlist(pl.id); } }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 10px;
+                PillBtn { label: "New playlist"; primary: true; clicked => { root.create-new(); } }
             }
         }
     }

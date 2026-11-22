@@ -18,7 +18,7 @@ component TableHeader inherits Rectangle {
         if show-album: Text { horizontal-stretch: 1; text: "Album"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
         if show-extra-cols: Text { width: 64px; text: "Plays"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
         if show-extra-cols: Text { width: 90px; text: "Date added"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
-        Rectangle { width: 24px; }
+        Rectangle { width: 64px; }
         VerticalLayout {
             width: 44px;
             alignment: center;
@@ -37,6 +37,49 @@ component TableHeader inherits Rectangle {
     }
 }
 
+export component Topbar inherits Rectangle {
+    in property <string> title: "";
+    in property <string> subtitle: "";
+
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+
+        // Now on demand top bar (75px shadow + 6px divider + 48px blurred bar)
+        Rectangle {
+            height: 75px;
+            background: #0d0d0d9c;
+            backdrop-blur: 12px;
+        }
+
+        Rectangle {
+            height: 6px;
+            background: #0d0d0d;
+        }
+
+        Rectangle {
+            height: 48px;
+            background: #0d0d0d9c;
+            backdrop-blur: 12px;
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+    }
+
+    HorizontalLayout {
+        height: 48px;
+        spacing: 6px;
+        alignment: start;
+        VerticalLayout {
+            alignment: center;
+            padding-left: 36px;
+            Text { text: title; color: Theme.text-primary; font-size: 26px; font-weight: 700; }
+            Text { text: subtitle; color: Theme.text-secondary; font-size: 13px; }
+        }
+        Rectangle { horizontal-stretch: 1; }
+    }
+}
+
 export component HomeView inherits ScrollView {
     in property <[TrackData]> for-you-tracks: [];
     in property <[TrackData]> trending-tracks: [];
@@ -48,39 +91,72 @@ export component HomeView inherits ScrollView {
     callback refresh-home();
 
     VerticalLayout {
-        padding: 16px;
-        padding-top: 8px;
-        spacing: 26px;
+        spacing: 0px;
         alignment: start;
+        Topbar { title: "Home"; }
 
-        // Section: Home >
         VerticalLayout {
-            spacing: 12px;
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-bottom: 24px;
+            spacing: 14px;
+            alignment: start;
 
-            HorizontalLayout {
-                height: 36px;
-                spacing: 8px;
+            // Section: Trending now >
+            VerticalLayout {
+                spacing: 12px;
 
-                VerticalLayout {
-                    alignment: center;
-                    Image { source: @image-url("icons/home.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 8px;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Image { source: @image-url("icons/flame.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
+                    }
+                    Text {
+                        text: "Trending now";
+                        color: Theme.text-primary;
+                        font-size: 22px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    IconBtn {
+                        icon: @image-url("icons/chev_right.svg");
+                        icon-size: 18px;
+                        clicked => { root.open-tab(1); }
+                    }
                 }
-                Text {
-                    text: "Home";
-                    color: Theme.text-primary;
-                    font-size: 22px;
-                    font-weight: 700;
-                    vertical-alignment: center;
+
+                if trending-tracks.length == 0: Rectangle {
+                    height: 180px;
+                    Text {
+                        width: parent.width - 24px;
+                        x: 12px;
+                        text: "No trending songs found right now. Try again later!";
+                        color: Theme.text-muted;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
                 }
-                Rectangle { horizontal-stretch: 1; }
-                IconBtn {
-                    icon: @image-url("icons/chev_right.svg");
-                    icon-size: 18px;
-                    clicked => { root.open-tab(3); }
+
+                if trending-tracks.length > 0: ScrollView {
+                    height: 222px;
+                    HorizontalLayout {
+                        spacing: 16px;
+                        alignment: start;
+                        for t in trending-tracks: HomeCard {
+                            track: t;
+                            clicked => { root.play-track(t); }
+                        }
+                    }
                 }
             }
 
-            // Quick tiles row (sp-quick: 3-column grid, only shows populated tiles + Liked songs)
+            // Quick tiles row (3-column grid: Liked songs, My files, History)
             HorizontalLayout {
                 spacing: 8px;
                 height: 64px;
@@ -90,17 +166,18 @@ export component HomeView inherits ScrollView {
                     horizontal-stretch: 1;
                     height: 64px;
                     border-radius: 12px;
-                    background: t1.has-hover ? #2a2a30 : #1c1c20b3;
+                    background: t1.has-hover ? #2a2a30 : #1c1c20;
                     clip: true;
                     animate background { duration: 180ms; easing: ease; }
 
                     HorizontalLayout {
                         spacing: 12px;
+                        padding-left: 4px;
                         padding-right: 10px;
                         Image {
                             source: @image-url("assets/liked.png");
-                            width: 64px;
-                            height: 64px;
+                            width: 48px;
+                            height: 48px;
                             image-fit: cover;
                         }
                         VerticalLayout {
@@ -113,29 +190,30 @@ export component HomeView inherits ScrollView {
                     t1 := TouchArea { mouse-cursor: pointer; clicked => { root.open-tab(3); } }
                 }
 
-                // My files tile (only when local tracks exist, else spacer to keep 3-col grid width)
+                // My files tile (spacer when no local tracks)
                 if local-count > 0: Rectangle {
                     horizontal-stretch: 1;
                     height: 64px;
                     border-radius: 12px;
-                    background: t2.has-hover ? #2a2a30 : #1c1c20b3;
+                    background: t2.has-hover ? #2a2a30 : #1c1c20;
                     clip: true;
                     animate background { duration: 180ms; easing: ease; }
 
                     HorizontalLayout {
                         spacing: 12px;
+                        padding-left: 4px;
                         padding-right: 10px;
                         Rectangle {
-                            width: 64px;
-                            height: 64px;
+                            width: 48px;
+                            height: 48px;
                             background: #000000;
                             Image {
                                 source: @image-url("icons/cloud_off.svg");
-                                width: 26px;
-                                height: 26px;
+                                width: 16px;
+                                height: 16px;
                                 colorize: #ffffff;
-                                x: 19px;
-                                y: 19px;
+                                x: 16px;
+                                y: 16px;
                             }
                         }
                         VerticalLayout {
@@ -149,29 +227,30 @@ export component HomeView inherits ScrollView {
                 }
                 if local-count == 0: Rectangle { horizontal-stretch: 1; }
 
-                // History tile (only when history exists, else spacer)
+                // History tile (spacer when no history)
                 if hist-count > 0: Rectangle {
                     horizontal-stretch: 1;
                     height: 64px;
                     border-radius: 12px;
-                    background: t3.has-hover ? #2a2a30 : #1c1c20b3;
+                    background: t3.has-hover ? #2a2a30 : #1c1c20;
                     clip: true;
                     animate background { duration: 180ms; easing: ease; }
 
                     HorizontalLayout {
                         spacing: 12px;
+                        padding-left: 4px;
                         padding-right: 10px;
                         Rectangle {
-                            width: 64px;
-                            height: 64px;
+                            width: 48px;
+                            height: 48px;
                             background: #1e1d2b;
                             Image {
                                 source: @image-url("icons/ms_history.svg");
-                                width: 26px;
-                                height: 26px;
+                                width: 16px;
+                                height: 16px;
                                 colorize: Theme.primary;
-                                x: 19px;
-                                y: 19px;
+                                x: 16px;
+                                y: 16px;
                             }
                         }
                         VerticalLayout {
@@ -185,108 +264,71 @@ export component HomeView inherits ScrollView {
                 }
                 if hist-count == 0: Rectangle { horizontal-stretch: 1; }
             }
-        }
 
-        // Section: For you [refresh] >
-        VerticalLayout {
-            spacing: 12px;
+            // Section: For you [refresh] >
+            VerticalLayout {
+                spacing: 12px;
 
-            HorizontalLayout {
-                height: 36px;
-                spacing: 8px;
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 8px;
 
-                VerticalLayout {
-                    alignment: center;
-                    Image { source: @image-url("icons/bars_wave.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
-                }
-                Text {
-                    text: "For you";
-                    color: Theme.text-primary;
-                    font-size: 22px;
-                    font-weight: 700;
-                    vertical-alignment: center;
-                }
-                VerticalLayout {
-                    alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        Image { source: @image-url("icons/bars_wave.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
+                    }
+                    Text {
+                        text: "For you";
+                        color: Theme.text-primary;
+                        font-size: 22px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        IconBtn {
+                            width: 32px;
+                            height: 32px;
+                            base-bg: #17171a;
+                            icon: @image-url("icons/refresh.svg");
+                            icon-size: 15px;
+                            clicked => { root.refresh-home(); }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
                     IconBtn {
-                        width: 32px;
-                        height: 32px;
-                        base-bg: #17171a;
-                        icon: @image-url("icons/refresh.svg");
-                        icon-size: 15px;
-                        clicked => { root.refresh-home(); }
+                        icon: @image-url("icons/chev_right.svg");
+                        icon-size: 18px;
+                        clicked => { root.open-tab(1); }
                     }
                 }
-                Rectangle { horizontal-stretch: 1; }
-                IconBtn {
-                    icon: @image-url("icons/chev_right.svg");
-                    icon-size: 18px;
-                    clicked => { root.open-tab(1); }
-                }
-            }
 
-            if for-you-tracks.length == 0: Rectangle {
-                height: 180px;
-                width: 180px;
-                border-radius: 14px;
-                background: #17171a;
-                Image {
-                    source: @image-url("icons/play_circle.svg");
-                    width: 36px;
-                    height: 36px;
-                    colorize: Theme.text-muted;
-                    x: 72px;
-                    y: 72px;
+                if for-you-tracks.length == 0: Rectangle {
+                    height: 180px;
+                    width: 180px;
+                    border-radius: 14px;
+                    background: #17171a;
+                    Text {
+                        width: parent.width - 24px;
+                        x: 12px;
+                        text: "No songs yet for you — search or check your liked songs";
+                        color: Theme.text-muted;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
                 }
-            }
 
-            if for-you-tracks.length > 0: HorizontalLayout {
-                spacing: 16px;
-                alignment: start;
-                HomeCard {
-                    track: for-you-tracks[0];
-                    override-title: "For you";
-                    override-sub: "Based on your taste";
-                    clicked => { root.play-track(for-you-tracks[0]); }
-                }
-            }
-        }
-
-        // Section: Trending now >
-        VerticalLayout {
-            spacing: 12px;
-
-            HorizontalLayout {
-                height: 36px;
-                spacing: 8px;
-
-                VerticalLayout {
-                    alignment: center;
-                    Image { source: @image-url("icons/flame.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
-                }
-                Text {
-                    text: "Trending now";
-                    color: Theme.text-primary;
-                    font-size: 22px;
-                    font-weight: 700;
-                    vertical-alignment: center;
-                }
-                Rectangle { horizontal-stretch: 1; }
-                IconBtn {
-                    icon: @image-url("icons/chev_right.svg");
-                    icon-size: 18px;
-                    clicked => { root.open-tab(1); }
-                }
-            }
-
-            if trending-tracks.length > 0: ScrollView {
-                height: 238px;
-                HorizontalLayout {
-                    spacing: 16px;
-                    alignment: start;
-                    for t in trending-tracks: HomeCard {
-                        track: t;
-                        clicked => { root.play-track(t); }
+                if for-you-tracks.length > 0: ScrollView {
+                    height: 222px;
+                    HorizontalLayout {
+                        spacing: 16px;
+                        alignment: start;
+                        for t in for-you-tracks: HomeCard {
+                            track: t;
+                            clicked => { root.play-track(t); }
+                        }
                     }
                 }
             }
@@ -300,75 +342,88 @@ export component SearchView inherits ScrollView {
     in-out property <string> search-platform: "ytmusic";
     callback play-track(TrackData);
     callback platform-changed(string);
+    callback toggle-favorite(TrackData);
+    callback add-to-playlist(TrackData);
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 14px;
+        spacing: 0px;
         alignment: start;
+        Topbar { title: "Search"; }
 
-        // Filter chips (search-filter-chips)
-        HorizontalLayout {
-            spacing: 8px;
-            height: 34px;
-            alignment: start;
-
-            for chip in [
-                { id: "ytmusic", label: "YouTube Music" },
-                { id: "soundcloud", label: "SoundCloud" },
-                { id: "local", label: "Local" },
-            ]: Rectangle {
-                height: 32px;
-                border-radius: 16px;
-                background: search-platform == chip.id ? Theme.text-primary : (cta.has-hover ? #26262c : #1c1c20);
-                animate background { duration: 140ms; easing: ease-out; }
-
-                HorizontalLayout {
-                    padding-left: 14px;
-                    padding-right: 14px;
-                    Text {
-                        text: chip.label;
-                        color: search-platform == chip.id ? #0d0d0d : Theme.text-secondary;
-                        font-size: 13px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                        animate color { duration: 140ms; easing: ease-out; }
-                    }
-                }
-
-                cta := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => {
-                        search-platform = chip.id;
-                        root.platform-changed(chip.id);
-                    }
-                }
-            }
-        }
-
-        if tracks.length > 0: TableHeader { show-album: root.width >= 460px; }
-
-        if tracks.length == 0: Rectangle {
-            height: 180px;
-            Text {
-                width: parent.width - 32px;
-                x: 16px;
-                text: "Type in the search bar above and press Enter to search tracks.";
-                color: Theme.text-muted;
-                font-size: 14px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                wrap: word-wrap;
-            }
+        Rectangle {
+            height: 36px;
+            width: 100%;
+            border-radius: 4px;
+            background: #ffffff14;
         }
 
         VerticalLayout {
-            spacing: 2px;
+            padding: 16px;
+            spacing: 14px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 8px;
+                height: 34px;
+                alignment: start;
+
+                for chip in [
+                    { id: "ytmusic", label: "YouTube Music" },
+                    { id: "soundcloud", label: "SoundCloud" },
+                    { id: "local", label: "Local" },
+                ]: Rectangle {
+                    height: 32px;
+                    border-radius: 16px;
+                    background: search-platform == chip.id ? Theme.text-primary : (cta.has-hover ? #26262c : #1c1c20);
+                    animate background { duration: 140ms; easing: ease-out; }
+
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        Text {
+                            text: chip.label;
+                            color: search-platform == chip.id ? #0d0d0d : Theme.text-secondary;
+                            font-size: 13px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            animate color { duration: 140ms; easing: ease-out; }
+                        }
+                    }
+
+                    cta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            search-platform = chip.id;
+                            root.platform-changed(chip.id);
+                        }
+                    }
+                }
+            }
+
+            if tracks.length > 0: TableHeader { show-album: root.width >= 460px; }
+
+            if tracks.length == 0: Rectangle {
+                height: 120px;
+                Text {
+                    width: parent.width - 24px;
+                    x: 12px;
+                    text: "No songs found. Try a different search.";
+                    color: Theme.text-muted;
+                    font-size: 14.5px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
             for t[idx] in tracks: TrackRow {
                 index: idx;
                 track: t;
                 is-current: t.id == current-id && current-id != "";
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
+                toggle-favorite => { root.toggle-favorite(t); }
+                add-to-playlist => { root.add-to-playlist(t); }
             }
         }
     }
@@ -380,6 +435,8 @@ export component LocalFilesView inherits ScrollView {
     callback play-track(TrackData);
     callback add-files();
     callback scan-folder();
+    callback toggle-favorite(TrackData);
+    callback add-to-playlist(TrackData);
 
     property <bool> is-narrow: root.width < 540px;
     property <length> hero-cover: root.width < 520px ? 112px : (root.width < 680px ? 164px : 220px);
@@ -388,6 +445,7 @@ export component LocalFilesView inherits ScrollView {
     VerticalLayout {
         spacing: 0px;
         alignment: start;
+        Topbar { title: "My files"; }
 
         // Seamless hero + action bar container (persis web_local.png, zero horizontal seam)
         Rectangle {
@@ -562,6 +620,8 @@ export component LocalFilesView inherits ScrollView {
                 is-current: t.id == current-id && current-id != "";
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
+                toggle-favorite => { root.toggle-favorite(t); }
+                add-to-playlist => { root.add-to-playlist(t); }
             }
         }
     }
@@ -571,6 +631,8 @@ export component FavoritesView inherits ScrollView {
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
     callback play-track(TrackData);
+    callback toggle-favorite(TrackData);
+    callback add-to-playlist(TrackData);
 
     property <bool> is-narrow: root.width < 540px;
     property <length> hero-cover: root.width < 520px ? 112px : (root.width < 680px ? 164px : 220px);
@@ -579,6 +641,7 @@ export component FavoritesView inherits ScrollView {
     VerticalLayout {
         spacing: 0px;
         alignment: start;
+        Topbar { title: "Liked Songs"; }
 
         // Seamless hero + action bar container (persis web_fav.png, zero horizontal seam)
         Rectangle {
@@ -714,6 +777,8 @@ export component FavoritesView inherits ScrollView {
                 is-current: t.id == current-id && current-id != "";
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
+                toggle-favorite => { root.toggle-favorite(t); }
+                add-to-playlist => { root.add-to-playlist(t); }
             }
         }
     }
@@ -724,6 +789,8 @@ export component HistoryView inherits ScrollView {
     in property <string> current-id: "";
     callback play-track(TrackData);
     callback clear-history();
+    callback toggle-favorite(TrackData);
+    callback add-to-playlist(TrackData);
 
     property <bool> is-narrow: root.width < 540px;
     property <length> hero-cover: root.width < 520px ? 112px : 168px;
@@ -732,6 +799,7 @@ export component HistoryView inherits ScrollView {
     VerticalLayout {
         spacing: 0px;
         alignment: start;
+        Topbar { title: "History"; }
 
         Rectangle {
             background: @linear-gradient(180deg, #282366 0%, #16152b 52%, #0d0d0d00 100%);
@@ -839,6 +907,227 @@ export component HistoryView inherits ScrollView {
                 is-current: t.id == current-id && current-id != "";
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
+                toggle-favorite => { root.toggle-favorite(t); }
+                add-to-playlist => { root.add-to-playlist(t); }
+            }
+        }
+    }
+}
+
+export component QueueView inherits ScrollView {
+    in property <[TrackData]> tracks: [];
+    in property <string> current-id: "";
+    callback play-track(TrackData);
+    callback clear-queue();
+    callback toggle-favorite(TrackData);
+    callback add-to-playlist(TrackData);
+
+    VerticalLayout {
+        spacing: 0px;
+        alignment: start;
+        Topbar { title: "Playback queue"; }
+
+        HorizontalLayout {
+            height: 48px;
+            alignment: end;
+
+            PillBtn {
+                label: "Clear queue";
+                clicked => { root.clear-queue(); }
+            }
+        }
+
+        if tracks.length > 0: TableHeader { show-album: root.width >= 460px; }
+
+        if tracks.length == 0: Rectangle {
+            height: 160px;
+            Text {
+                width: parent.width - 24px;
+                x: 12px;
+                text: "Queue is empty. Play a track or playlist to populate the queue.";
+                color: Theme.text-muted;
+                font-size: 14.5px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            for t[idx] in tracks: TrackRow {
+                index: idx;
+                track: t;
+                is-current: t.id == current-id && current-id != "";
+                show-album: root.width >= 460px;
+                play-clicked => { root.play-track(t); }
+                toggle-favorite => { root.toggle-favorite(t); }
+                add-to-playlist => { root.add-to-playlist(t); }
+            }
+        }
+    }
+}
+
+export component PlaylistDetailView inherits ScrollView {
+    in property <string> playlist-id: "";
+    in property <string> playlist-name: "Playlist";
+    in property <[TrackData]> tracks: [];
+    in property <string> current-id: "";
+    callback play-track(TrackData);
+    callback play-all();
+    callback shuffle-play();
+    callback delete-playlist(string);
+    callback toggle-favorite(TrackData);
+    callback add-to-playlist(TrackData);
+    callback go-back();
+
+    property <bool> is-narrow: root.width < 540px;
+    property <length> hero-cover: root.width < 520px ? 112px : (root.width < 680px ? 164px : 220px);
+    property <length> hero-pad: is-narrow ? 16px : 24px;
+
+    VerticalLayout {
+        spacing: 0px;
+        alignment: start;
+        Topbar { title: "Playlist"; subtitle: playlist-name; }
+
+        // Hero header (persis web_fav.png style)
+        Rectangle {
+            background: @linear-gradient(180deg, #3b336b 0%, #1d1a33 52%, #0d0d0d00 100%);
+
+            VerticalLayout {
+                spacing: 0px;
+
+                HorizontalLayout {
+                    padding: hero-pad;
+                    spacing: is-narrow ? 16px : 24px;
+                    alignment: start;
+
+                    Rectangle {
+                        width: hero-cover;
+                        height: hero-cover;
+                        border-radius: 8px;
+                        background: #23203a;
+                        drop-shadow-blur: 24px;
+                        drop-shadow-offset-y: 8px;
+                        drop-shadow-color: #00000066;
+                        clip: true;
+
+                        if tracks.length > 0 && tracks[0].has_cover: Image {
+                            source: tracks[0].cover;
+                            width: 100%;
+                            height: 100%;
+                            image-fit: cover;
+                        }
+
+                        if tracks.length == 0 || !tracks[0].has_cover: Image {
+                            source: @image-url("icons/ms_queue_music.svg");
+                            width: hero-cover * 0.38;
+                            height: hero-cover * 0.38;
+                            colorize: Theme.primary;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: end;
+                        spacing: 6px;
+                        padding-bottom: is-narrow ? 2px : 8px;
+
+                        Text {
+                            text: "Playlist";
+                            color: Theme.text-secondary;
+                            font-size: 12px;
+                            font-weight: 600;
+                        }
+
+                        Text {
+                            text: playlist-name;
+                            color: Theme.text-primary;
+                            font-size: root.width < 520px ? 30px : (root.width < 680px ? 46px : 64px);
+                            font-weight: 800;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: tracks.length + " tracks";
+                            color: Theme.text-secondary;
+                            font-size: is-narrow ? 13px : 14px;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: is-narrow ? 14px : 24px;
+                    padding-right: is-narrow ? 14px : 24px;
+                    padding-top: 8px;
+                    padding-bottom: 14px;
+                    spacing: 10px;
+
+                    IconBtn {
+                        icon: @image-url("icons/chev_left.svg");
+                        icon-size: 18px;
+                        clicked => { root.go-back(); }
+                    }
+
+                    IconBtn {
+                        icon: @image-url("icons/play_fill.svg");
+                        icon-size: 20px;
+                        disabled: tracks.length == 0;
+                        clicked => { root.play-all(); }
+                    }
+
+                    IconBtn {
+                        icon: @image-url("icons/shuffle.svg");
+                        icon-size: 18px;
+                        disabled: tracks.length == 0;
+                        clicked => { root.shuffle-play(); }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    IconBtn {
+                        icon: @image-url("icons/trash.svg");
+                        icon-size: 18px;
+                        icon-color: #f28b82;
+                        clicked => { root.delete-playlist(playlist-id); }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-bottom: 24px;
+            spacing: 4px;
+
+            TableHeader { show-album: root.width >= 460px; }
+
+            if tracks.length == 0: Rectangle {
+                height: 100px;
+                Text {
+                    width: parent.width - 24px;
+                    x: 12px;
+                    text: "This playlist is empty. Hover any track and click + to add songs.";
+                    color: Theme.text-muted;
+                    font-size: 14.5px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
+            for t[idx] in tracks: TrackRow {
+                index: idx;
+                track: t;
+                is-current: t.id == current-id && current-id != "";
+                show-album: root.width >= 460px;
+                play-clicked => { root.play-track(t); }
+                toggle-favorite => { root.toggle-favorite(t); }
+                add-to-playlist => { root.add-to-playlist(t); }
             }
         }
     }

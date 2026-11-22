@@ -1,10 +1,10 @@
 import { ScrollView } from "std-widgets.slint";
-import { Theme, TrackData, LyricLineData } from "theme.slint";
+import { Theme, TrackData, LyricLineData, SyncLineData, PlaylistData } from "theme.slint";
 import { IconBtn, PillBtn, ScrubberBar, VolumeBar } from "components.slint";
-import { HomeView, SearchView, LocalFilesView, FavoritesView, HistoryView } from "views.slint";
-import { Titlebar, PresetsDrawer, RightPanel, SettingsModal } from "modals.slint";
+import { HomeView, SearchView, LocalFilesView, FavoritesView, HistoryView, QueueView, PlaylistDetailView } from "views.slint";
+import { Titlebar, PresetsDrawer, RightPanel, SettingsModal, FullscreenLyricsOverlay, CustomLyricsModal, SyncLyricsModal, AudioEditorModal, CreatePlaylistModal, AddToPlaylistModal } from "modals.slint";
 
-export { TrackData, LyricLineData, Theme }
+export { TrackData, LyricLineData, SyncLineData, PlaylistData, Theme }
 
 export component MainWindow inherits Window {
     title: "Riff";
@@ -23,7 +23,13 @@ export component MainWindow inherits Window {
     in-out property <[TrackData]> favorite_tracks: [];
     in-out property <[TrackData]> home_for_you: [];
     in-out property <[TrackData]> home_trending: [];
+    in-out property <[TrackData]> queue_tracks: [];
+    in-out property <[PlaylistData]> playlists: [];
+    in-out property <string> active_playlist_id: "";
+    in-out property <string> active_playlist_name: "Playlist";
+    in-out property <[TrackData]> active_playlist_tracks: [];
     in-out property <[LyricLineData]> lyrics_lines: [];
+    in-out property <int> active_lyric_index: -1;
 
     // Current Track State
     in-out property <string> current_id: "";
@@ -54,36 +60,77 @@ export component MainWindow inherits Window {
     in-out property <[float]> spectrum_bands: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
 
     // Navigation & UI State
-    in-out property <int> active_tab: 0; // 0: Home, 1: Search, 2: My files, 3: Liked Songs, 4: History
+    in-out property <int> active_tab: 0; // 0: Home, 1: Search, 2: My files, 3: Liked Songs, 4: History, 5: Queue, 6: Playlist
     in-out property <bool> lyrics_open: true;
+    in-out property <bool> fullscreen_lyrics_open: false;
+    in-out property <bool> custom_lyrics_open: false;
+    in-out property <string> custom_lyrics_text: "";
+    in-out property <bool> sync_lyrics_open: false;
+    in-out property <[SyncLineData]> sync_lines: [];
+    in-out property <int> sync_synced_count: 0;
+    in-out property <bool> audio_editor_open: false;
+    in-out property <bool> create_playlist_open: false;
+    in-out property <bool> add_to_playlist_open: false;
+    in-out property <string> pending_playlist_track_title: "";
     in-out property <bool> presets_open: false;
     in-out property <bool> settings_open: false;
+    in-out property <bool> mini_mode: false;
+    in-out property <bool> shuffle_on: false;
+    in-out property <int> repeat_mode: 0; // 0: off, 1: all, 2: one
     in-out property <string> search_platform: "ytmusic";
     in-out property <string> search_query: "";
     in-out property <string> status_message: "Audio Engine: Ready | WASAPI 44.1kHz";
 
-    // Equalizer State
+    // Equalizer & Audio FX State
     in-out property <float> eq_bass: 0.0;
     in-out property <float> eq_mid: 0.0;
     in-out property <float> eq_treble: 0.0;
+    in-out property <float> audio_speed: 1.0;
+    in-out property <float> audio_reverb: 0.0;
+    in-out property <float> audio_distortion: 0.0;
     in-out property <string> eq_preset_name: "Default";
+    in-out property <string> sleep_status: "00:00";
+    in-out property <bool> sleep_active: false;
 
     // Callbacks
     callback play_track(TrackData);
     callback toggle_play_pause();
     callback play_next();
     callback play_prev();
+    callback toggle_shuffle();
+    callback cycle_repeat();
     callback seek_to(float);
     callback set_volume(float);
     callback toggle_favorite_current();
+    callback toggle_favorite_track(TrackData);
     callback trigger_search(string, string);
     callback scan_local_folder();
     callback add_local_files();
     callback set_equalizer(float, float, float);
+    callback set_audio_speed(float);
+    callback set_audio_effects(float, float);
     callback apply_eq_preset(string);
+    callback reset_audio_settings();
+    callback set_sleep_minutes(int);
+    callback add_sleep_5m();
+    callback open_custom_lyrics();
+    callback save_custom_lyrics(string);
+    callback open_sync_lyrics();
+    callback tap_sync_line(int);
+    callback tap_sync_next();
+    callback restart_sync_lyrics();
+    callback save_sync_lyrics();
+    callback create_playlist(string);
+    callback open_playlist(string);
+    callback delete_playlist(string);
+    callback play_playlist_all(bool);
+    callback request_add_to_playlist(TrackData);
+    callback confirm_add_to_playlist(string);
+    callback clear_queue();
     callback clear_play_history();
     callback switch_ui_mode(string);
     callback refresh_home();
+    callback toggle_mini_mode();
     callback window_minimize();
     callback window_maximize();
     callback window_close();
@@ -113,11 +160,24 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Keyboard shortcut ESC to close settings
+    // Keyboard shortcuts (ESC closes modals/fullscreen, Space taps sync line, F11 toggles fullscreen lyrics)
     FocusScope {
         key-pressed(event) => {
-            if (event.text == Key.Escape && settings_open) {
-                settings_open = false;
+            if (event.text == Key.Escape) {
+                if (sync_lyrics_open) { sync_lyrics_open = false; return accept; }
+                if (custom_lyrics_open) { custom_lyrics_open = false; return accept; }
+                if (audio_editor_open) { audio_editor_open = false; return accept; }
+                if (create_playlist_open) { create_playlist_open = false; return accept; }
+                if (add_to_playlist_open) { add_to_playlist_open = false; return accept; }
+                if (settings_open) { settings_open = false; return accept; }
+                if (fullscreen_lyrics_open) { fullscreen_lyrics_open = false; return accept; }
+            }
+            if (event.text == " " && sync_lyrics_open) {
+                root.tap_sync_next();
+                return accept;
+            }
+            if (event.text == Key.F11) {
+                fullscreen_lyrics_open = !fullscreen_lyrics_open;
                 return accept;
             }
             return reject;
@@ -402,13 +462,77 @@ export component MainWindow inherits Window {
 
                             Rectangle { horizontal-stretch: 1; }
 
+                            // Mini player toggle (centers small player in titlebar area)
+                            if mini_mode: Rectangle {
+                                width: 368px;
+                                height: 44px;
+                                HorizontalLayout {
+                                    width: 368px;
+                                    height: 44px;
+                                    x: (parent.width - self.width) / 2 + 168px;
+                                    alignment: center;
+
+                                    Rectangle {
+                                        width: 368px;
+                                        height: 44px;
+                                        border-radius: 22px;
+                                        background: #1a1a1e;
+                                        animate background { duration: 140ms; easing: ease-out; }
+
+                                        Rectangle {
+                                            width: 44px;
+                                            height: 44px;
+                                            border-radius: 22px;
+                                            clip: true;
+
+                                            if current_has_cover: Image {
+                                                source: current_cover;
+                                                width: 100%;
+                                                height: 100%;
+                                                image-fit: cover;
+                                            }
+                                            if !current_has_cover: Image {
+                                                source: @image-url("icons/play_circle.svg");
+                                                width: 18px;
+                                                height: 18px;
+                                                colorize: Theme.text-muted;
+                                                x: 13px;
+                                                y: 13px;
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            x: 50px;
+                                            width: 276px;
+                                            height: 44px;
+                                            alignment: center;
+                                            spacing: 2px;
+
+                                            Text { text: current_title; color: Theme.text-primary; font-size: 15.5px; font-weight: 500; overflow: elide; }
+                                            Text { text: current_artist; color: Theme.text-secondary; font-size: 13.5px; overflow: elide; }
+                                        }
+
+                                        IconBtn {
+                                            x: 322px;
+                                            width: 36px;
+                                            height: 36px;
+                                            y: 4px;
+                                            icon: @image-url("icons/win_mini_player.svg");
+                                            icon-size: 18px;
+                                            icon-color: #e2e2e99e;
+                                            clicked => { root.toggle_mini_mode(); }
+                                        }
+                                    }
+                                }
+                            }
+
                             PillBtn {
                                 label: "Create";
                                 icon: @image-url("icons/ms_add.svg");
                                 has-icon: true;
                                 btn-height: 34px;
                                 radius: 10px;
-                                clicked => { root.scan_local_folder(); }
+                                clicked => { create_playlist_open = true; }
                             }
                         }
 
@@ -478,7 +602,7 @@ export component MainWindow inherits Window {
                                         t_files := TouchArea { mouse-cursor: pointer; clicked => { active_tab = 2; } }
                                     }
 
-                                    // History
+                                    // Queue
                                     Rectangle {
                                         width: 28px;
                                         height: 28px;
@@ -489,12 +613,12 @@ export component MainWindow inherits Window {
                                             source: @image-url("icons/ms_queue_music.svg");
                                             width: 17px;
                                             height: 17px;
-                                            colorize: active_tab == 4 ? Theme.primary : Theme.text-secondary;
+                                            colorize: active_tab == 5 ? Theme.primary : Theme.text-secondary;
                                             x: 5.5px;
                                             y: 5.5px;
                                             animate colorize { duration: 140ms; easing: ease-out; }
                                         }
-                                        t_hist := TouchArea { mouse-cursor: pointer; clicked => { active_tab = 4; } }
+                                        t_hist := TouchArea { mouse-cursor: pointer; clicked => { active_tab = 5; } }
                                     }
                                 }
                             }
@@ -677,6 +801,56 @@ export component MainWindow inherits Window {
 
                                     sb3 := TouchArea { mouse-cursor: pointer; clicked => { active_tab = 4; } }
                                 }
+
+                                // User Playlists
+                                for pl in playlists: Rectangle {
+                                    height: 72px;
+                                    border-radius: 10px;
+                                    background: (active_tab == 6 && active_playlist_id == pl.id) ? Theme.surface-active : (pl-ta.has-hover ? #17171a : transparent);
+                                    animate background { duration: 140ms; easing: ease-out; }
+
+                                    HorizontalLayout {
+                                        padding: 10px;
+                                        spacing: 14px;
+
+                                        Rectangle {
+                                            width: 52px;
+                                            height: 52px;
+                                            border-radius: 8px;
+                                            background: #23203a;
+                                            Image {
+                                                source: @image-url("icons/ms_queue_music.svg");
+                                                width: 22px;
+                                                height: 22px;
+                                                colorize: Theme.primary;
+                                                x: 15px;
+                                                y: 15px;
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            spacing: 3px;
+                                            Text {
+                                                text: pl.name;
+                                                color: Theme.text-primary;
+                                                font-size: 15px;
+                                                font-weight: 600;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: "Playlist • " + pl.track_count + " tracks";
+                                                color: Theme.text-secondary;
+                                                font-size: 12.5px;
+                                            }
+                                        }
+                                    }
+
+                                    pl-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.open_playlist(pl.id); }
+                                    }
+                                }
                             }
                         }
 
@@ -738,7 +912,7 @@ export component MainWindow inherits Window {
                                     x: (parent.width - self.width) / 2;
                                     y: 9px;
                                 }
-                                b3 := TouchArea { mouse-cursor: pointer; clicked => { root.scan_local_folder(); } }
+                                b3 := TouchArea { mouse-cursor: pointer; clicked => { create_playlist_open = true; } }
                             }
                         }
                     }
@@ -776,6 +950,8 @@ export component MainWindow inherits Window {
                         current-id: root.current_id;
                         search-platform <=> root.search_platform;
                         play-track(t) => { root.play_track(t); }
+                        toggle-favorite(t) => { root.toggle_favorite_track(t); }
+                        add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         platform-changed(p) => {
                             if (search_query != "") {
                                 root.trigger_search(search_query, p);
@@ -789,6 +965,8 @@ export component MainWindow inherits Window {
                         tracks: root.library_tracks;
                         current-id: root.current_id;
                         play-track(t) => { root.play_track(t); }
+                        toggle-favorite(t) => { root.toggle_favorite_track(t); }
+                        add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         add-files => { root.add_local_files(); }
                         scan-folder => { root.scan_local_folder(); }
                     }
@@ -799,6 +977,8 @@ export component MainWindow inherits Window {
                         tracks: root.favorite_tracks;
                         current-id: root.current_id;
                         play-track(t) => { root.play_track(t); }
+                        toggle-favorite(t) => { root.toggle_favorite_track(t); }
+                        add-to-playlist(t) => { root.request_add_to_playlist(t); }
                     }
 
                     if active_tab == 4: HistoryView {
@@ -807,7 +987,36 @@ export component MainWindow inherits Window {
                         tracks: root.history_tracks;
                         current-id: root.current_id;
                         play-track(t) => { root.play_track(t); }
+                        toggle-favorite(t) => { root.toggle_favorite_track(t); }
+                        add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         clear-history => { root.clear_play_history(); }
+                    }
+
+                    if active_tab == 5: QueueView {
+                        width: 100%;
+                        height: 100%;
+                        tracks: root.queue_tracks;
+                        current-id: root.current_id;
+                        play-track(t) => { root.play_track(t); }
+                        toggle-favorite(t) => { root.toggle_favorite_track(t); }
+                        add-to-playlist(t) => { root.request_add_to_playlist(t); }
+                        clear-queue => { root.clear_queue(); }
+                    }
+
+                    if active_tab == 6: PlaylistDetailView {
+                        width: 100%;
+                        height: 100%;
+                        playlist-id: root.active_playlist_id;
+                        playlist-name: root.active_playlist_name;
+                        tracks: root.active_playlist_tracks;
+                        current-id: root.current_id;
+                        play-track(t) => { root.play_track(t); }
+                        play-all => { root.play_playlist_all(false); }
+                        shuffle-play => { root.play_playlist_all(true); }
+                        delete-playlist(id) => { root.delete_playlist(id); }
+                        toggle-favorite(t) => { root.toggle_favorite_track(t); }
+                        add-to-playlist(t) => { root.request_add_to_playlist(t); }
+                        go-back => { active_tab = 0; }
                     }
                 }
 
@@ -826,13 +1035,19 @@ export component MainWindow inherits Window {
                         current-id: root.current_id;
                         current-title: root.current_title;
                         current-artist: root.current_artist;
+                        current-is-favorite: root.current_is_favorite;
                         current-cover: root.current_cover;
                         current-has-cover: root.current_has_cover;
                         accent-color: root.current_accent;
                         has-accent: root.current_has_blur;
                         ambient-active: root.current_has_blur;
                         lyrics-lines: root.lyrics_lines;
+                        active-lyric-index: root.active_lyric_index;
                         seek-to(pos) => { root.seek_to(pos); }
+                        edit-lyrics => { root.open_custom_lyrics(); }
+                        sync-lyrics => { root.open_sync_lyrics(); }
+                        open-fullscreen => { fullscreen_lyrics_open = true; }
+                        toggle-favorite => { root.toggle_favorite_current(); }
                         close => { lyrics_open = false; }
                     }
                 }
@@ -945,7 +1160,7 @@ export component MainWindow inherits Window {
                                 icon: @image-url("icons/ms_more_horiz.svg");
                                 icon-size: 20px;
                                 icon-color: #e2e2e99e;
-                                clicked => { settings_open = true; }
+                                clicked => { audio_editor_open = true; }
                             }
                         }
                     }
@@ -966,7 +1181,8 @@ export component MainWindow inherits Window {
                                 height: 36px;
                                 icon: @image-url("icons/shuffle.svg");
                                 icon-size: 18px;
-                                icon-color: #e2e2e98c;
+                                icon-color: shuffle_on ? Theme.primary : #e2e2e98c;
+                                clicked => { root.toggle_shuffle(); }
                             }
                             IconBtn {
                                 width: 36px;
@@ -997,7 +1213,8 @@ export component MainWindow inherits Window {
                                 height: 36px;
                                 icon: @image-url("icons/repeat.svg");
                                 icon-size: 18px;
-                                icon-color: Theme.primary;
+                                icon-color: repeat_mode > 0 ? Theme.primary : #e2e2e98c;
+                                clicked => { root.cycle_repeat(); }
                             }
                         }
 
@@ -1053,8 +1270,8 @@ export component MainWindow inherits Window {
                                 icon-color: #e2e2e99e;
                                 active-bg: transparent;
                                 active-icon-color: Theme.primary;
-                                active: active_tab == 4;
-                                clicked => { active_tab = 4; }
+                                active: active_tab == 5;
+                                clicked => { active_tab = active_tab == 5 ? 0 : 5; }
                             }
                         }
                         VerticalLayout {
@@ -1066,9 +1283,9 @@ export component MainWindow inherits Window {
                                 icon-size: 18px;
                                 icon-color: #e2e2e99e;
                                 active-bg: transparent;
-                                active-icon-color: #e2e2e99e;
-                                active: lyrics_open;
-                                clicked => { lyrics_open = !lyrics_open; }
+                                active-icon-color: Theme.primary;
+                                active: fullscreen_lyrics_open;
+                                clicked => { fullscreen_lyrics_open = !fullscreen_lyrics_open; }
                             }
                         }
                         VerticalLayout {
@@ -1080,7 +1297,7 @@ export component MainWindow inherits Window {
                                 icon-size: 20px;
                                 icon-color: #e2e2e99e;
                                 active-bg: transparent;
-                                active-icon-color: #e2e2e99e;
+                                active-icon-color: Theme.primary;
                                 active: lyrics_open;
                                 clicked => { lyrics_open = !lyrics_open; }
                             }
@@ -1095,8 +1312,8 @@ export component MainWindow inherits Window {
                                 icon-color: #e2e2e99e;
                                 active-bg: transparent;
                                 active-icon-color: Theme.primary;
-                                active: presets_open;
-                                clicked => { presets_open = !presets_open; }
+                                active: audio_editor_open;
+                                clicked => { audio_editor_open = !audio_editor_open; }
                             }
                         }
                         VerticalLayout {
@@ -1146,7 +1363,121 @@ export component MainWindow inherits Window {
         animate opacity { duration: 180ms; easing: ease-out; }
     }
 
-    // 4. SETTINGS MODAL OVERLAY (smooth fade/slide, persis web_settings.png)
+    // 4. FULLSCREEN SYNC LYRICS / KARAOKE OVERLAY (#tv-karaoke 1:1)
+    FullscreenLyricsOverlay {
+        width: 100%;
+        height: 100%;
+        open: fullscreen_lyrics_open;
+        current-id: root.current_id;
+        current-title: root.current_title;
+        current-artist: root.current_artist;
+        current-cover: root.current_cover;
+        current-has-cover: root.current_has_cover;
+        current-cover-blur: root.current_cover_blur;
+        current-has-blur: root.current_has_blur;
+        accent-color: root.current_accent;
+        is-playing: root.is_playing;
+        current-pos: root.current_pos;
+        current-duration: root.current_duration;
+        pos-text: root.pos_text;
+        dur-text: root.dur_text;
+        shuffle-on: root.shuffle_on;
+        repeat-mode: root.repeat_mode;
+        lyrics-lines: root.lyrics_lines;
+        active-lyric-index: root.active_lyric_index;
+        spectrum-bands: root.spectrum_bands;
+        toggle-play-pause => { root.toggle_play_pause(); }
+        play-prev => { root.play_prev(); }
+        play-next => { root.play_next(); }
+        toggle-shuffle => { root.toggle_shuffle(); }
+        cycle-repeat => { root.cycle_repeat(); }
+        seek-to(pos) => { root.seek_to(pos); }
+        edit-lyrics => { root.open_custom_lyrics(); }
+        sync-lyrics => { root.open_sync_lyrics(); }
+        close => { fullscreen_lyrics_open = false; }
+    }
+
+    // 4b. AUDIO EDITOR MODAL (#audio-settings-modal 1:1)
+    AudioEditorModal {
+        width: 100%;
+        height: 100%;
+        open: audio_editor_open;
+        speed <=> root.audio_speed;
+        reverb <=> root.audio_reverb;
+        distortion <=> root.audio_distortion;
+        eq-bass <=> root.eq_bass;
+        eq-mid <=> root.eq_mid;
+        eq-treble <=> root.eq_treble;
+        eq-preset-name <=> root.eq_preset_name;
+        sleep-status: root.sleep_status;
+        sleep-active: root.sleep_active;
+        set-speed(s) => { root.set_audio_speed(s); }
+        set-effects(r, d) => { root.set_audio_effects(r, d); }
+        set-eq(b, m, t) => { root.set_equalizer(b, m, t); }
+        apply-preset(p) => { root.apply_eq_preset(p); }
+        set-sleep-minutes(m) => { root.set_sleep_minutes(m); }
+        add-sleep-5m => { root.add_sleep_5m(); }
+        reset-audio => { root.reset_audio_settings(); }
+        close => { audio_editor_open = false; }
+    }
+
+    // 4c. CUSTOM LYRICS EDITOR MODAL (#custom-lyrics-modal 1:1)
+    CustomLyricsModal {
+        width: 100%;
+        height: 100%;
+        open: custom_lyrics_open;
+        track-title: root.current_title;
+        track-artist: root.current_artist;
+        lyrics-text <=> root.custom_lyrics_text;
+        save(txt) => { root.save_custom_lyrics(txt); }
+        close => { custom_lyrics_open = false; }
+    }
+
+    // 4d. TAP-TO-SYNC LYRICS MODAL (#sync-mode-overlay 1:1)
+    SyncLyricsModal {
+        width: 100%;
+        height: 100%;
+        open: sync_lyrics_open;
+        track-title: root.current_title;
+        track-artist: root.current_artist;
+        lines: root.sync_lines;
+        synced-count: root.sync_synced_count;
+        tap-line(idx) => { root.tap_sync_line(idx); }
+        restart => { root.restart_sync_lyrics(); }
+        save-and-exit => { root.save_sync_lyrics(); }
+        close => { sync_lyrics_open = false; }
+    }
+
+    // 4e. CREATE PLAYLIST & ADD TO PLAYLIST MODALS
+    CreatePlaylistModal {
+        width: 100%;
+        height: 100%;
+        open: create_playlist_open;
+        create(name) => {
+            create_playlist_open = false;
+            root.create_playlist(name);
+        }
+        close => { create_playlist_open = false; }
+    }
+
+    AddToPlaylistModal {
+        width: 100%;
+        height: 100%;
+        open: add_to_playlist_open;
+        track-title: root.pending_playlist_track_title;
+        playlists: root.playlists;
+        select-playlist(pid) => {
+            add_to_playlist_open = false;
+            root.confirm_add_to_playlist(pid);
+        }
+        create-new => {
+            add_to_playlist_open = false;
+            create_playlist_open = true;
+        }
+        close => { add_to_playlist_open = false; }
+    }
+
+    // 4f. SETTINGS MODAL OVERLAY (smooth fade/slide, persis web_settings.png)
     SettingsModal {
         width: 100%;
         height: 100%;
@@ -1196,7 +1527,9 @@ export component MainWindow inherits Window {
         revealed: titlebar_revealed;
         lyrics-open: root.lyrics_open;
         is-maximized: root.is_maximized;
-        toggle-lyrics => { lyrics_open = !lyrics_open; }
+        mini-mode: root.mini_mode;
+        toggle-lyrics => { fullscreen_lyrics_open = !fullscreen_lyrics_open; }
+        mini-player => { root.toggle_mini_mode(); }
         go-home => { active_tab = 0; }
         minimize => { root.window_minimize(); }
         maximize => { root.window_maximize(); }

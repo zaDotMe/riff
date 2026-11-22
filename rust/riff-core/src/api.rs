@@ -82,6 +82,14 @@ impl RiffApi {
         self.player.set_eq(bass, mid, treble);
     }
 
+    pub fn set_speed(&self, speed: f32) {
+        self.player.set_speed(speed);
+    }
+
+    pub fn set_effects(&self, reverb: f32, distortion: f32) {
+        self.player.set_effects(reverb, distortion);
+    }
+
     pub fn get_playback_state(&self) -> (bool, f64, f64, f32) {
         (
             self.player.is_playing(),
@@ -562,6 +570,11 @@ impl RiffApi {
         self.lyrics.fetch_lyrics(query).await.0
     }
 
+    /// Save custom or synced LRC lyrics for a track
+    pub async fn save_custom_lyrics(&self, title: &str, artist: &str, content: &str) -> Result<()> {
+        self.lyrics.save_custom_lyrics(title, artist, content).await
+    }
+
     /// Get favorite tracks from SQLite kv_store
     pub async fn get_favorites(&self) -> Result<Vec<Track>> {
         if let Some(json_str) = self.get_setting("riff_favorites").await? {
@@ -618,5 +631,74 @@ impl RiffApi {
     /// Clear play history
     pub async fn clear_history(&self) -> Result<()> {
         self.set_setting("riff_history", "[]").await
+    }
+
+    /// Get user playlists from SQLite kv_store
+    pub async fn get_playlists(&self) -> Result<Vec<crate::models::Playlist>> {
+        if let Some(json_str) = self.get_setting("riff_playlists").await? {
+            if let Ok(list) = serde_json::from_str::<Vec<crate::models::Playlist>>(&json_str) {
+                return Ok(list);
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// Save user playlists into SQLite kv_store
+    pub async fn save_playlists(&self, playlists: &[crate::models::Playlist]) -> Result<()> {
+        let json_str = serde_json::to_string(playlists)?;
+        self.set_setting("riff_playlists", &json_str).await
+    }
+
+    /// Create a new playlist
+    pub async fn create_playlist(&self, name: &str) -> Result<crate::models::Playlist> {
+        let mut list = self.get_playlists().await?;
+        let id = format!("pl_{}", db::now_millis());
+        let pl = crate::models::Playlist {
+            id,
+            name: name.trim().to_string(),
+            tracks: Vec::new(),
+        };
+        list.push(pl.clone());
+        self.save_playlists(&list).await?;
+        Ok(pl)
+    }
+
+    /// Rename a playlist
+    pub async fn rename_playlist(&self, id: &str, new_name: &str) -> Result<()> {
+        let mut list = self.get_playlists().await?;
+        if let Some(pl) = list.iter_mut().find(|p| p.id == id) {
+            pl.name = new_name.trim().to_string();
+            self.save_playlists(&list).await?;
+        }
+        Ok(())
+    }
+
+    /// Delete a playlist
+    pub async fn delete_playlist(&self, id: &str) -> Result<()> {
+        let mut list = self.get_playlists().await?;
+        list.retain(|p| p.id != id);
+        self.save_playlists(&list).await
+    }
+
+    /// Add a track to a playlist
+    pub async fn add_track_to_playlist(&self, playlist_id: &str, track: &Track) -> Result<()> {
+        let mut list = self.get_playlists().await?;
+        if let Some(pl) = list.iter_mut().find(|p| p.id == playlist_id) {
+            if !pl.tracks.iter().any(|t| t.id == track.id) {
+                pl.tracks.push(track.clone());
+                self.save_playlists(&list).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove a track from a playlist
+    pub async fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> Result<()> {
+        let mut list = self.get_playlists().await?;
+        if let Some(pl) = list.iter_mut().find(|p| p.id == playlist_id) {
+            pl.tracks.retain(|t| t.id != track_id);
+            self.save_playlists(&list).await?;
+        }
+        Ok(())
     }
 }
