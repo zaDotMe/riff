@@ -561,4 +561,62 @@ impl RiffApi {
     pub async fn fetch_lyrics(&self, query: LyricsQuery) -> Value {
         self.lyrics.fetch_lyrics(query).await.0
     }
+
+    /// Get favorite tracks from SQLite kv_store
+    pub async fn get_favorites(&self) -> Result<Vec<Track>> {
+        if let Some(json_str) = self.get_setting("riff_favorites").await? {
+            if let Ok(tracks) = serde_json::from_str::<Vec<Track>>(&json_str) {
+                return Ok(tracks);
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// Save favorite tracks into SQLite kv_store
+    pub async fn save_favorites(&self, tracks: &[Track]) -> Result<()> {
+        let json_str = serde_json::to_string(tracks)?;
+        self.set_setting("riff_favorites", &json_str).await
+    }
+
+    /// Toggle favorite status of a track
+    pub async fn toggle_favorite(&self, track: &Track) -> Result<bool> {
+        let mut list = self.get_favorites().await?;
+        let exists_idx = list.iter().position(|t| t.id == track.id || t.path == track.path);
+        let is_now_fav = if let Some(idx) = exists_idx {
+            list.remove(idx);
+            false
+        } else {
+            list.insert(0, track.clone());
+            true
+        };
+        self.save_favorites(&list).await?;
+        Ok(is_now_fav)
+    }
+
+    /// Get play history from SQLite kv_store
+    pub async fn get_history(&self) -> Result<Vec<Track>> {
+        if let Some(json_str) = self.get_setting("riff_history").await? {
+            if let Ok(tracks) = serde_json::from_str::<Vec<Track>>(&json_str) {
+                return Ok(tracks);
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// Record a track to play history
+    pub async fn push_history(&self, track: &Track) -> Result<()> {
+        let mut list = self.get_history().await?;
+        list.retain(|t| t.id != track.id && t.path != track.path);
+        list.insert(0, track.clone());
+        if list.len() > 100 {
+            list.truncate(100);
+        }
+        let json_str = serde_json::to_string(&list)?;
+        self.set_setting("riff_history", &json_str).await
+    }
+
+    /// Clear play history
+    pub async fn clear_history(&self) -> Result<()> {
+        self.set_setting("riff_history", "[]").await
+    }
 }
