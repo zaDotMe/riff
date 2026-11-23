@@ -586,6 +586,71 @@ impl LyricsService {
         if plain.is_empty() { None } else { Some(plain) }
     }
 
+    async fn fetch_genius(&self, title: &str, artist: &str) -> Option<String> {
+        let clean_title = clean_track_title(title);
+        let clean_artist = clean_artist_name(artist);
+        let q = format!("{clean_title} {clean_artist}").trim().to_string();
+        if q.is_empty() {
+            return None;
+        }
+        let search_url = format!("https://genius.com/api/search/multi?q={}", url_encode(&q));
+        let resp = self
+            .client
+            .get(&search_url)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .timeout(std::time::Duration::from_secs(6))
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let json: Value = resp.json().await.ok()?;
+        let sections = json.pointer("/response/sections")?.as_array()?;
+        let mut song_url: Option<String> = None;
+        for sec in sections {
+            if let Some(hits) = sec.get("hits").and_then(|v| v.as_array()) {
+                for h in hits {
+                    let Some(res) = h.get("result") else { continue };
+                    let url = res.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                    if !url.ends_with("-lyrics") {
+                        continue;
+                    }
+                    if res.get("instrumental").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        continue;
+                    }
+                    let cand_t = res.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                    let cand_a = res
+                        .get("artist_names")
+                        .or_else(|| res.pointer("/primary_artist/name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if is_strict_lyric_match(title, artist, cand_t, cand_a) {
+                        song_url = Some(url.to_string());
+                        break;
+                    }
+                }
+            }
+            if song_url.is_some() {
+                break;
+            }
+        }
+        let page_url = song_url?;
+        let page_resp = self
+            .client
+            .get(&page_url)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .timeout(std::time::Duration::from_secs(7))
+            .send()
+            .await
+            .ok()?;
+        if !page_resp.status().is_success() {
+            return None;
+        }
+        let html = page_resp.text().await.ok()?;
+        extract_genius_lyrics(&html)
+    }
+
     pub async fn fetch_lyrics(&self, query: LyricsQuery) -> Json<Value> {
         let title = query.title.unwrap_or_default().trim().to_string();
         let artist = query.artist.unwrap_or_default().trim().to_string();
@@ -683,8 +748,14 @@ impl LyricsService {
                     chosen_source = "musixmatch".to_string();
                 }
             }
+            "genius" => {
+                if let Some(text) = self.fetch_genius(&title, &artist).await {
+                    chosen_text = text;
+                    chosen_source = "genius".to_string();
+                }
+            }
             _ => {
-                // Auto cascade: LRCLIB -> Musixmatch -> Kugou -> NetEase (strict match + preferring synced)
+                // Auto cascade: LRCLIB -> Musixmatch -> Kugou -> NetEase -> Genius (strict match + preferring synced)
                 if let Some((text, inst)) = self.fetch_lrclib(&title, &artist, duration_sec).await {
                     if inst {
                         return Json(json!({ "success": true, "lyrics": "", "source": "lrclib", "isSynced": false, "isCustom": false, "instrumental": true }));
@@ -726,6 +797,11 @@ impl LyricsService {
                         }
                     }
                 }
+                if chosen_text.is_empty() && plain_fallback.is_none() {
+                    if let Some(text) = self.fetch_genius(&title, &artist).await {
+                        plain_fallback = Some((text, "genius".to_string()));
+                    }
+                }
                 if chosen_text.is_empty() {
                     if let Some((text, src)) = plain_fallback {
                         chosen_text = text;
@@ -757,6 +833,81 @@ impl LyricsService {
             "instrumental": false
         }))
     }
+}
+
+fn extract_genius_lyrics(html: &str) -> Option<String> {
+    let marker = "data-lyrics-container=\"true\"";
+    let mut pos = 0usize;
+    let mut blocks = Vec::new();
+    while let Some(idx) = html[pos..].find(marker) {
+        let abs_idx = pos + idx;
+        let Some(gt_rel) = html[abs_idx..].find('>') else { break };
+        let content_start = abs_idx + gt_rel + 1;
+        let mut depth = 1i32;
+        let mut cur = content_start;
+        while depth > 0 && cur < html.len() {
+            let next_open = html[cur..].find("<div").map(|p| cur + p);
+            let next_close = html[cur..].find("</div>").map(|p| cur + p);
+            let Some(nc) = next_close else { break };
+            if let Some(no) = next_open {
+                if no < nc {
+                    depth += 1;
+                    cur = no + 4;
+                    continue;
+                }
+            }
+            depth -= 1;
+            if depth == 0 {
+                blocks.push(&html[content_start..nc]);
+                pos = nc + 6;
+                break;
+            }
+            cur = nc + 6;
+        }
+        if depth > 0 {
+            break;
+        }
+    }
+    if blocks.is_empty() {
+        return None;
+    }
+    let joined = blocks.join("\n");
+    let with_breaks = joined
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+        .replace("<br>", "\n");
+    let mut stripped = String::with_capacity(with_breaks.len());
+    let mut in_tag = false;
+    for ch in with_breaks.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => stripped.push(ch),
+            _ => {}
+        }
+    }
+    let decoded = stripped
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#039;", "'")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ");
+    let lines: Vec<&str> = decoded
+        .lines()
+        .map(str::trim)
+        .filter(|l| {
+            let low = l.to_ascii_lowercase();
+            !low.contains("contributors")
+                && !low.ends_with("lyrics")
+                && low != "you might also like"
+                && !low.ends_with("embed")
+        })
+        .collect();
+    let out = lines.join("\n").trim().to_string();
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn base64_decode(input: &str) -> Option<Vec<u8>> {

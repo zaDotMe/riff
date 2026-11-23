@@ -405,12 +405,15 @@ export component RightPanel inherits Rectangle {
     in-out property <string> lyrics-word-style: "gradient";
     in property <float> lyrics-speed: 1.0;
     in property <bool> lyrics-fullscreen-only: false;
+    in-out property <float> lyrics-offset-ms: 0.0;
     callback seek-to(float);
     callback edit-lyrics();
     callback sync-lyrics();
     callback open-fullscreen();
     callback toggle-favorite();
     callback change-lyrics-source(string);
+    callback set-lyrics-offset(float);
+    callback clear-custom-lyrics();
     callback save-setting(string, string);
     callback close();
 
@@ -622,38 +625,93 @@ export component RightPanel inherits Rectangle {
                 }
             }
 
-            if source-picker-open: HorizontalLayout {
-                spacing: 4px;
-                alignment: start;
-                for src in [
-                    { id: "auto", label: "Auto" },
-                    { id: "lrclib", label: "LRCLIB" },
-                    { id: "musixmatch", label: "Musixmatch" },
-                    { id: "kugou", label: "Kugou" },
-                    { id: "netease", label: "NetEase" },
-                ]: Rectangle {
-                    height: 24px;
-                    border-radius: 12px;
-                    background: lyrics-source == src.id ? Theme.primary : (sp-ta.has-hover ? #ffffff24 : #ffffff12);
-                    animate background { duration: 120ms; easing: ease-out; }
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        padding-right: 8px;
-                        Text {
-                            text: src.label;
-                            color: lyrics-source == src.id ? Theme.on-primary : Theme.text-secondary;
-                            font-size: 11px;
-                            font-weight: 600;
-                            vertical-alignment: center;
+            if source-picker-open: VerticalLayout {
+                spacing: 6px;
+
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: start;
+                    for src in [
+                        { id: "auto", label: "Auto" },
+                        { id: "lrclib", label: "LRCLIB" },
+                        { id: "musixmatch", label: "Musixmatch" },
+                        { id: "kugou", label: "Kugou" },
+                        { id: "netease", label: "NetEase" },
+                        { id: "genius", label: "Genius" },
+                    ]: Rectangle {
+                        height: 24px;
+                        border-radius: 12px;
+                        background: lyrics-source == src.id ? Theme.primary : (sp-ta.has-hover ? #ffffff24 : #ffffff12);
+                        animate background { duration: 120ms; easing: ease-out; }
+                        HorizontalLayout {
+                            padding-left: 7px;
+                            padding-right: 7px;
+                            Text {
+                                text: src.label;
+                                color: lyrics-source == src.id ? Theme.on-primary : Theme.text-secondary;
+                                font-size: 10.5px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                        sp-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                lyrics-source = src.id;
+                                source-picker-open = false;
+                                root.change-lyrics-source(src.id);
+                            }
                         }
                     }
-                    sp-ta := TouchArea {
-                        mouse-cursor: pointer;
+                }
+
+                // Quick Sync Offset & Reset Custom controls
+                HorizontalLayout {
+                    spacing: 5px;
+                    alignment: start;
+                    Text {
+                        text: "Sync: " + (lyrics-offset-ms >= 0 ? "+" : "") + Math.round(lyrics-offset-ms) + "ms";
+                        color: Theme.text-muted;
+                        font-size: 11px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    PillBtn {
+                        label: "-250ms";
+                        btn-height: 22px;
+                        h-pad: 7px;
+                        radius: 8px;
                         clicked => {
-                            lyrics-source = src.id;
-                            source-picker-open = false;
-                            root.change-lyrics-source(src.id);
+                            lyrics-offset-ms = clamp(lyrics-offset-ms - 250.0, -5000.0, 5000.0);
+                            root.set-lyrics-offset(lyrics-offset-ms);
                         }
+                    }
+                    PillBtn {
+                        label: "0";
+                        btn-height: 22px;
+                        h-pad: 7px;
+                        radius: 8px;
+                        clicked => {
+                            lyrics-offset-ms = 0.0;
+                            root.set-lyrics-offset(0.0);
+                        }
+                    }
+                    PillBtn {
+                        label: "+250ms";
+                        btn-height: 22px;
+                        h-pad: 7px;
+                        radius: 8px;
+                        clicked => {
+                            lyrics-offset-ms = clamp(lyrics-offset-ms + 250.0, -5000.0, 5000.0);
+                            root.set-lyrics-offset(lyrics-offset-ms);
+                        }
+                    }
+                    if lyrics-source-label == "Custom": PillBtn {
+                        label: "Reset";
+                        btn-height: 22px;
+                        h-pad: 7px;
+                        radius: 8px;
+                        clicked => { root.clear-custom-lyrics(); }
                     }
                 }
             }
@@ -919,6 +977,8 @@ export component SettingsModal inherits Rectangle {
     in-out property <bool> lyrics-fullscreen-only: false;
     in-out property <float> lyrics-speed: 1.0;
     in-out property <float> lyrics-tightness: 2.0;
+    in-out property <string> lyrics-ease: "inout";
+    in-out property <float> lyrics-offset-ms: 0.0;
 
     in property <int> local-count: 0;
     in property <int> fav-count: 0;
@@ -935,6 +995,7 @@ export component SettingsModal inherits Rectangle {
     callback reset-audio();
     callback change-lyrics-source(string);
     callback change-word-source(string);
+    callback set-lyrics-offset(float);
     callback clear-history();
     callback clear-queue();
     callback refresh-home();
@@ -1683,6 +1744,7 @@ export component SettingsModal inherits Rectangle {
                                                 { id: "musixmatch", label: "Musixmatch" },
                                                 { id: "kugou", label: "Kugou LRC" },
                                                 { id: "netease", label: "NetEase" },
+                                                { id: "genius", label: "Genius" },
                                             ]: PillBtn {
                                                 label: src.label;
                                                 btn-height: 30px;
@@ -1804,6 +1866,46 @@ export component SettingsModal inherits Rectangle {
                                             checked <=> lyrics-fullscreen-only;
                                             toggled(on) => { root.save-setting("slint_lyrics_fullscreen_only", on ? "1" : "0"); }
                                         }
+                                    }
+
+                                    // Lyrics animation easing (matches origin lyrics-ease-dropdown)
+                                    VerticalLayout {
+                                        spacing: 6px;
+                                        Text { text: "Lyrics animation"; color: Theme.text-primary; font-size: 13.5px; font-weight: 600; }
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
+                                            for ez in [
+                                                { id: "inout", label: "Ease in-out" },
+                                                { id: "quad", label: "Smooth" },
+                                                { id: "sine", label: "Gentle" },
+                                                { id: "out", label: "Ease out" },
+                                                { id: "expo", label: "Snappy" },
+                                                { id: "linear", label: "Linear" },
+                                            ]: PillBtn {
+                                                label: ez.label;
+                                                btn-height: 28px;
+                                                h-pad: 10px;
+                                                primary: lyrics-ease == ez.id;
+                                                clicked => {
+                                                    lyrics-ease = ez.id;
+                                                    root.save-setting("slint_lyrics_ease", ez.id);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Sync timing offset
+                                    HorizontalLayout {
+                                        Text { text: "Lyrics sync offset"; color: Theme.text-secondary; font-size: 13px; horizontal-stretch: 1; }
+                                        Text { text: (lyrics-offset-ms >= 0 ? "+" : "") + Math.round(lyrics-offset-ms) + " ms"; color: Theme.primary; font-size: 13px; font-weight: 700; }
+                                    }
+                                    Slider {
+                                        height: 28px;
+                                        minimum: -3000.0;
+                                        maximum: 3000.0;
+                                        value <=> lyrics-offset-ms;
+                                        changed(v) => { root.set-lyrics-offset(v); }
                                     }
 
                                     // Lyrics animation speed
@@ -2300,6 +2402,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
     in property <bool> lyrics-is-synced: false;
     in property <bool> lyrics-autoscroll: true;
     in property <float> lyrics-speed: 1.0;
+    in-out property <float> lyrics-offset-ms: 0.0;
 
     // Customize panel state (#tvk-panel)
     in-out property <bool> settings-panel-open: false;
@@ -2321,6 +2424,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
     callback edit-lyrics();
     callback sync-lyrics();
     callback change-lyrics-source(string);
+    callback set-lyrics-offset(float);
     callback save-setting(string, string);
     callback close();
 
@@ -2851,17 +2955,18 @@ export component FullscreenLyricsOverlay inherits Rectangle {
                 spacing: 4px;
                 Text { text: "Lyrics source (" + lyrics-source-label + ")"; color: #ffffff; font-size: 13px; font-weight: 600; }
                 HorizontalLayout {
-                    spacing: 5px;
+                    spacing: 4px;
                     for src in [
                         { id: "auto", label: "Auto" },
                         { id: "lrclib", label: "LRCLIB" },
                         { id: "musixmatch", label: "Musixmatch" },
                         { id: "kugou", label: "Kugou" },
                         { id: "netease", label: "NetEase" },
+                        { id: "genius", label: "Genius" },
                     ]: PillBtn {
                         label: src.label;
                         btn-height: 26px;
-                        h-pad: 9px;
+                        h-pad: 8px;
                         primary: lyrics-source == src.id;
                         clicked => {
                             lyrics-source = src.id;
@@ -2869,6 +2974,15 @@ export component FullscreenLyricsOverlay inherits Rectangle {
                         }
                     }
                 }
+            }
+
+            // Sync Offset
+            HorizontalLayout {
+                spacing: 6px;
+                Text { text: "Sync offset: " + (lyrics-offset-ms >= 0 ? "+" : "") + Math.round(lyrics-offset-ms) + "ms"; color: #ffffff; font-size: 12.5px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                PillBtn { label: "-250ms"; btn-height: 24px; h-pad: 8px; clicked => { lyrics-offset-ms = clamp(lyrics-offset-ms - 250.0, -5000.0, 5000.0); root.set-lyrics-offset(lyrics-offset-ms); } }
+                PillBtn { label: "0"; btn-height: 24px; h-pad: 8px; clicked => { lyrics-offset-ms = 0.0; root.set-lyrics-offset(0.0); } }
+                PillBtn { label: "+250ms"; btn-height: 24px; h-pad: 8px; clicked => { lyrics-offset-ms = clamp(lyrics-offset-ms + 250.0, -5000.0, 5000.0); root.set-lyrics-offset(lyrics-offset-ms); } }
             }
 
             // Alignment
@@ -3050,9 +3164,11 @@ export component SyncLyricsModal inherits Rectangle {
     in property <bool> open: false;
     in property <string> track-title: "";
     in property <string> track-artist: "";
+    in property <bool> is-playing: false;
     in property <[SyncLineData]> lines: [];
     in property <int> synced-count: 0;
     callback tap-line(int);
+    callback toggle-play-pause();
     callback restart();
     callback save-and-exit();
     callback close();
@@ -3130,7 +3246,8 @@ export component SyncLyricsModal inherits Rectangle {
 
             // Controls bar
             HorizontalLayout {
-                spacing: 10px;
+                spacing: 8px;
+                PillBtn { label: is-playing ? "Pause" : "Play"; clicked => { root.toggle-play-pause(); } }
                 PillBtn { label: "Restart"; clicked => { root.restart(); } }
                 Rectangle { horizontal-stretch: 1; }
                 PillBtn { label: "Save and exit"; primary: true; clicked => { root.save-and-exit(); } }

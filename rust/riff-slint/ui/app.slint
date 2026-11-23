@@ -105,6 +105,8 @@ export component MainWindow inherits Window {
     in-out property <bool> lyrics_fullscreen_only: false;
     in-out property <float> lyrics_speed: 1.0;
     in-out property <float> lyrics_tightness: 2.0;
+    in-out property <string> lyrics_ease: "inout";
+    in-out property <float> lyrics_offset_ms: 0.0;
 
     // Equalizer & Audio FX State
     in-out property <float> eq_bass: 0.0;
@@ -158,6 +160,8 @@ export component MainWindow inherits Window {
     callback toggle_mini_mode();
     callback change_lyrics_source(string);
     callback change_word_source(string);
+    callback set_lyrics_offset(float);
+    callback clear_custom_lyrics();
     callback save_setting(string, string);
     callback window_minimize();
     callback window_maximize();
@@ -1105,12 +1109,15 @@ export component MainWindow inherits Window {
                         lyrics-word-style <=> root.lyrics_word_style;
                         lyrics-speed: root.lyrics_speed;
                         lyrics-fullscreen-only: root.lyrics_fullscreen_only;
+                        lyrics-offset-ms <=> root.lyrics_offset_ms;
                         seek-to(pos) => { root.seek_to(pos); }
                         edit-lyrics => { root.open_custom_lyrics(); }
                         sync-lyrics => { root.open_sync_lyrics(); }
                         open-fullscreen => { fullscreen_lyrics_open = true; }
                         toggle-favorite => { root.toggle_favorite_current(); }
                         change-lyrics-source(s) => { root.change_lyrics_source(s); }
+                        set-lyrics-offset(ms) => { root.set_lyrics_offset(ms); }
+                        clear-custom-lyrics => { root.clear_custom_lyrics(); }
                         save-setting(k, v) => { root.save_setting(k, v); }
                         close => { lyrics_open = false; }
                     }
@@ -1458,6 +1465,7 @@ export component MainWindow inherits Window {
         lyrics-is-synced: root.lyrics_is_synced;
         lyrics-autoscroll: root.lyrics_autoscroll;
         lyrics-speed: root.lyrics_speed;
+        lyrics-offset-ms <=> root.lyrics_offset_ms;
         toggle-play-pause => { root.toggle_play_pause(); }
         play-prev => { root.play_prev(); }
         play-next => { root.play_next(); }
@@ -1467,6 +1475,7 @@ export component MainWindow inherits Window {
         edit-lyrics => { root.open_custom_lyrics(); }
         sync-lyrics => { root.open_sync_lyrics(); }
         change-lyrics-source(s) => { root.change_lyrics_source(s); }
+        set-lyrics-offset(ms) => { root.set_lyrics_offset(ms); }
         save-setting(k, v) => { root.save_setting(k, v); }
         close => { fullscreen_lyrics_open = false; }
     }
@@ -1514,9 +1523,11 @@ export component MainWindow inherits Window {
         open: sync_lyrics_open;
         track-title: root.current_title;
         track-artist: root.current_artist;
+        is-playing: root.is_playing;
         lines: root.sync_lines;
         synced-count: root.sync_synced_count;
         tap-line(idx) => { root.tap_sync_line(idx); }
+        toggle-play-pause => { root.toggle_play_pause(); }
         restart => { root.restart_sync_lyrics(); }
         save-and-exit => { root.save_sync_lyrics(); }
         close => { sync_lyrics_open = false; }
@@ -1581,6 +1592,8 @@ export component MainWindow inherits Window {
         lyrics-fullscreen-only <=> root.lyrics_fullscreen_only;
         lyrics-speed <=> root.lyrics_speed;
         lyrics-tightness <=> root.lyrics_tightness;
+        lyrics-ease <=> root.lyrics_ease;
+        lyrics-offset-ms <=> root.lyrics_offset_ms;
         local-count: root.library_tracks.length;
         fav-count: root.favorite_tracks.length;
         hist-count: root.history_tracks.length;
@@ -1601,6 +1614,7 @@ export component MainWindow inherits Window {
         toggle-mini-mode => { root.toggle_mini_mode(); }
         change-lyrics-source(s) => { root.change_lyrics_source(s); }
         change-word-source(s) => { root.change_word_source(s); }
+        set-lyrics-offset(ms) => { root.set_lyrics_offset(ms); }
         save-setting(k, v) => { root.save_setting(k, v); }
         close => { settings_open = false; }
     }

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -167,6 +167,7 @@ fn format_source_label(src: &str) -> &'static str {
         "musixmatch" => "Musixmatch",
         "kugou" => "Kugou",
         "netease" => "NetEase",
+        "genius" => "Genius",
         "auto" => "Auto",
         _ => "None",
     }
@@ -1121,12 +1122,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let sleep_track_end = Arc::new(AtomicBool::new(false));
     let eof_handled = Arc::new(AtomicBool::new(false));
     let play_generation = Arc::new(AtomicU64::new(0));
+    let lyrics_offset_ms = Arc::new(AtomicI32::new(0));
 
     // 1. Initial Data Load (Library, Favorites, History, Playlists, Home Feed)
     let api_init = api.clone();
     let http_init = http.clone();
     let w_init = window_weak.clone();
     let pl_init = playlist_cache.clone();
+    let off_init = lyrics_offset_ms.clone();
 
     rt_handle.spawn(async move {
         let (lib_res, fav_res, hist_res, pls_res, kv_res) = tokio::join!(
@@ -1223,6 +1226,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 }
                 if let Some(v) = kv_map.get("slint_lyrics_tightness").and_then(|s| s.parse::<f32>().ok()) {
                     w.set_lyrics_tightness(v.clamp(2.0, 24.0));
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_ease") {
+                    w.set_lyrics_ease(SharedString::from(v.as_str()));
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_offset_ms").and_then(|s| s.parse::<i32>().ok()) {
+                    let clamped = v.clamp(-5000, 5000);
+                    off_init.store(clamped, Ordering::SeqCst);
+                    w.set_lyrics_offset_ms(clamped as f32);
                 }
                 if let Some(v) = kv_map.get("slint_ambient_blur") {
                     theme.set_ambient_blur_enabled(v != "0");
@@ -2497,6 +2508,57 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
+    let off_set = lyrics_offset_ms.clone();
+    let api_off = api.clone();
+    let lyr_off = active_lyrics_cache.clone();
+    let w_off = window_weak.clone();
+    let rt_off = rt_handle.clone();
+    main_window.on_set_lyrics_offset(move |ms| {
+        let ms_i = (ms.round() as i32).clamp(-5000, 5000);
+        off_set.store(ms_i, Ordering::SeqCst);
+        let api_s = api_off.clone();
+        let val_str = ms_i.to_string();
+        rt_off.spawn(async move {
+            let _ = api_s.set_setting("slint_lyrics_offset_ms", &val_str).await;
+        });
+        let (_, pos_sec, _, _) = api_off.get_playback_state();
+        let eff_pos = (pos_sec as f32) + (ms_i as f32 / 1000.0);
+        if let Ok(mut lyr) = lyr_off.lock() {
+            if !lyr.is_empty() {
+                let (active_idx, _) = update_lyrics_progress(&mut lyr, eff_pos);
+                if let Some(w) = w_off.upgrade() {
+                    w.set_active_lyric_index(active_idx);
+                    w.set_lyrics_lines(to_slint_lyrics(&lyr));
+                }
+            }
+        }
+    });
+
+    let api_clrcust = api.clone();
+    let lyr_clrcust = active_lyrics_cache.clone();
+    let w_clrcust = window_weak.clone();
+    let rt_clrcust = rt_handle.clone();
+    main_window.on_clear_custom_lyrics(move || {
+        if let Some(w) = w_clrcust.upgrade() {
+            let title = w.get_current_title().to_string();
+            let artist = w.get_current_artist().to_string();
+            let dur = w.get_current_duration() as f64;
+            let src_pref = w.get_lyrics_source().to_string();
+            let word_src = w.get_lyrics_word_source().to_string();
+            if w.get_current_id().is_empty() {
+                return;
+            }
+            let api_c = api_clrcust.clone();
+            let lyr_c = lyr_clrcust.clone();
+            let w_c = w_clrcust.clone();
+            let rt_c = rt_clrcust.clone();
+            rt_clrcust.spawn(async move {
+                let _ = api_c.save_custom_lyrics(&title, &artist, "").await;
+                spawn_fetch_lyrics(api_c, lyr_c, w_c, &rt_c, title, artist, dur, src_pref, word_src);
+            });
+        }
+    });
+
     // 13b. Frameless Window Controls
     let w_min = window_weak.clone();
     main_window.on_window_minimize(move || {
@@ -2564,6 +2626,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let ste_ev = sleep_track_end.clone();
     let eof_ev = eof_handled.clone();
     let api_ev = api.clone();
+    let off_ev = lyrics_offset_ms.clone();
 
     std::thread::spawn(move || {
         while let Ok(event) = rx.blocking_recv() {
@@ -2576,6 +2639,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 } => {
                     let lyr_cache = lyrics_cache_ev.clone();
                     let rep_mode = rep_ev.load(Ordering::SeqCst);
+                    let off_sec = off_ev.load(Ordering::SeqCst) as f32 / 1000.0;
                     let is_eof = !is_playing && duration_sec > 1.0 && position_sec >= duration_sec - 0.35;
                     let should_handle_eof = is_eof && !eof_ev.swap(true, Ordering::SeqCst);
                     let sleep_end = should_handle_eof && ste_ev.swap(false, Ordering::SeqCst);
@@ -2593,7 +2657,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
                             if let Ok(mut lyr) = lyr_cache.lock() {
                                 if !lyr.is_empty() {
-                                    let (active_idx, changed) = update_lyrics_progress(&mut lyr, position_sec as f32);
+                                    let (active_idx, changed) = update_lyrics_progress(&mut lyr, (position_sec as f32) + off_sec);
                                     if changed {
                                         w.set_active_lyric_index(active_idx);
                                         w.set_lyrics_lines(to_slint_lyrics(&lyr));
@@ -2645,12 +2709,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let api_karaoke = api.clone();
     let lyr_karaoke = active_lyrics_cache.clone();
     let w_karaoke = window_weak.clone();
+    let off_karaoke = lyrics_offset_ms.clone();
     std::thread::spawn(move || loop {
         let (playing, pos_sec, _, _) = api_karaoke.get_playback_state();
         if playing {
+            let off_sec = off_karaoke.load(Ordering::SeqCst) as f32 / 1000.0;
             let updated = if let Ok(mut lyr) = lyr_karaoke.lock() {
                 if !lyr.is_empty() {
-                    let (active_idx, changed) = update_lyrics_progress(&mut lyr, pos_sec as f32);
+                    let (active_idx, changed) = update_lyrics_progress(&mut lyr, (pos_sec as f32) + off_sec);
                     if changed {
                         Some((active_idx, lyr.clone()))
                     } else {
