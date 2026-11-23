@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -330,6 +330,276 @@ async fn json_tracks_to_items(
     items
 }
 
+fn detect_audio_hint(content_type: Option<&str>, url: &str) -> Option<String> {
+    if let Some(ct) = content_type {
+        let ct_low = ct.to_ascii_lowercase();
+        if ct_low.contains("audio/mp4") || ct_low.contains("video/mp4") || ct_low.contains("mp4a") {
+            return Some("m4a".to_string());
+        }
+        if ct_low.contains("audio/mpeg") || ct_low.contains("audio/mp3") {
+            return Some("mp3".to_string());
+        }
+        if ct_low.contains("audio/aac") {
+            return Some("aac".to_string());
+        }
+        if ct_low.contains("audio/ogg") || ct_low.contains("application/ogg") {
+            return Some("ogg".to_string());
+        }
+        if ct_low.contains("audio/flac") {
+            return Some("flac".to_string());
+        }
+        if ct_low.contains("audio/wav") || ct_low.contains("audio/x-wav") {
+            return Some("wav".to_string());
+        }
+    }
+    let url_low = url.to_ascii_lowercase();
+    if url_low.contains("mime=audio%2fmp4") || url_low.contains("mime=audio/mp4") || url_low.contains(".m4a") || url_low.contains(".mp4") {
+        return Some("m4a".to_string());
+    }
+    if url_low.contains(".mp3") {
+        return Some("mp3".to_string());
+    }
+    if url_low.contains(".aac") {
+        return Some("aac".to_string());
+    }
+    if url_low.contains(".ogg") {
+        return Some("ogg".to_string());
+    }
+    if url_low.contains(".flac") {
+        return Some("flac".to_string());
+    }
+    if url_low.contains(".wav") {
+        return Some("wav".to_string());
+    }
+    None
+}
+
+fn googlevideo_user_agent(raw_url: &str) -> &'static str {
+    if let Ok(parsed) = reqwest::Url::parse(raw_url) {
+        for (k, v) in parsed.query_pairs() {
+            if k == "c" {
+                if v == "ANDROID_MUSIC" {
+                    return "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip";
+                } else if v == "IOS" {
+                    return "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+                } else if v == "VISIONOS" || v == "WEB" || v == "WEB_REMIX" || v == "MWEB" {
+                    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+                }
+            }
+        }
+    }
+    "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"
+}
+
+async fn download_hls_bytes(http: &reqwest::Client, playlist_url: &str) -> Result<(Vec<u8>, Option<String>), String> {
+    let base_url = reqwest::Url::parse(playlist_url).map_err(|e| format!("Invalid HLS URL: {e}"))?;
+    let resp = http
+        .get(playlist_url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("HLS fetch failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HLS HTTP {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| format!("HLS read failed: {e}"))?;
+
+    // If master playlist, pick first variant playlist
+    if text.contains("#EXT-X-STREAM-INF") {
+        for line in text.lines() {
+            let t = line.trim();
+            if !t.is_empty() && !t.starts_with('#') {
+                if let Ok(sub_url) = base_url.join(t) {
+                    return Box::pin(download_hls_bytes(http, sub_url.as_str())).await;
+                }
+            }
+        }
+    }
+
+    let mut segment_urls: Vec<String> = Vec::new();
+    let mut is_fmp4 = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with("#EXT-X-MAP:") {
+            if let Some(uri_pos) = t.find("URI=\"") {
+                let rest = &t[uri_pos + 5..];
+                if let Some(end_q) = rest.find('"') {
+                    let map_uri = &rest[..end_q];
+                    if let Ok(joined) = base_url.join(map_uri) {
+                        segment_urls.push(joined.to_string());
+                        is_fmp4 = true;
+                    }
+                }
+            }
+        } else if !t.is_empty() && !t.starts_with('#') {
+            if let Ok(joined) = base_url.join(t) {
+                segment_urls.push(joined.to_string());
+            }
+        }
+    }
+
+    if segment_urls.is_empty() {
+        return Err("HLS playlist contained no segments".to_string());
+    }
+
+    let mut out = Vec::new();
+    for chunk in segment_urls.chunks(6) {
+        let mut futs = Vec::with_capacity(chunk.len());
+        for seg_url in chunk {
+            let client = http.clone();
+            let u = seg_url.clone();
+            futs.push(tokio::spawn(async move {
+                let r = client
+                    .get(&u)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .timeout(Duration::from_secs(15))
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if !r.status().is_success() {
+                    return Err(format!("Segment HTTP {}", r.status()));
+                }
+                r.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string())
+            }));
+        }
+        for f in futs {
+            let bytes = f.await.map_err(|e| e.to_string())??;
+            out.extend_from_slice(&bytes);
+        }
+    }
+
+    let hint = if is_fmp4 || segment_urls.iter().any(|u| u.contains(".m4s") || u.contains(".mp4")) {
+        Some("m4a".to_string())
+    } else if segment_urls.iter().any(|u| u.contains(".aac")) {
+        Some("aac".to_string())
+    } else if segment_urls.iter().any(|u| u.contains(".mp3")) {
+        Some("mp3".to_string())
+    } else {
+        None
+    };
+
+    Ok((out, hint))
+}
+
+async fn download_stream_bytes(
+    http: &reqwest::Client,
+    raw_url: &str,
+    is_hls: bool,
+) -> Result<(Vec<u8>, Option<String>), String> {
+    if is_hls || raw_url.contains(".m3u8") {
+        return download_hls_bytes(http, raw_url).await;
+    }
+
+    let is_googlevideo = reqwest::Url::parse(raw_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.ends_with("googlevideo.com")))
+        .unwrap_or(false);
+
+    if is_googlevideo {
+        const CHUNK_SIZE: u64 = 1_048_576;
+        let ua = googlevideo_user_agent(raw_url);
+        let mut out = Vec::new();
+        let mut start = 0u64;
+        let mut detected_hint = detect_audio_hint(None, raw_url);
+
+        loop {
+            let end = start + CHUNK_SIZE - 1;
+            let resp = http
+                .get(raw_url)
+                .header("User-Agent", ua)
+                .header("Range", format!("bytes={start}-{end}"))
+                .timeout(Duration::from_secs(20))
+                .send()
+                .await
+                .map_err(|e| format!("Stream chunk failed: {e}"))?;
+
+            let status = resp.status();
+            if !status.is_success() && status.as_u16() != 206 {
+                return Err(format!("Stream HTTP {status}"));
+            }
+
+            if detected_hint.is_none() {
+                let ct = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok());
+                detected_hint = detect_audio_hint(ct, raw_url);
+            }
+
+            let total_len = resp
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|cr| cr.rsplit('/').next())
+                .and_then(|s| s.parse::<u64>().ok());
+
+            let chunk = resp.bytes().await.map_err(|e| format!("Chunk read failed: {e}"))?;
+            if chunk.is_empty() {
+                break;
+            }
+            let chunk_len = chunk.len() as u64;
+            out.extend_from_slice(&chunk);
+            start += chunk_len;
+
+            if let Some(total) = total_len {
+                if start >= total {
+                    break;
+                }
+            } else if status.as_u16() == 200 || chunk_len < CHUNK_SIZE {
+                break;
+            }
+        }
+
+        if out.is_empty() {
+            return Err("Empty audio stream".to_string());
+        }
+        return Ok((out, detected_hint));
+    }
+
+    let resp = http
+        .get(raw_url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("Stream request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Stream HTTP {}", resp.status()));
+    }
+
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let hint = detect_audio_hint(ct.as_deref(), raw_url);
+    let bytes = resp.bytes().await.map_err(|e| format!("Stream read failed: {e}"))?;
+    if bytes.is_empty() {
+        return Err("Empty audio stream".to_string());
+    }
+    Ok((bytes.to_vec(), hint))
+}
+
+fn show_toast(w_weak: &slint::Weak<MainWindow>, rt: &tokio::runtime::Handle, msg: impl Into<String>) {
+    let text = msg.into();
+    let w_show = w_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(w) = w_show.upgrade() {
+            w.set_toast_text(SharedString::from(&text));
+            w.set_toast_open(true);
+            w.set_status_message(SharedString::from(&text));
+        }
+    });
+    let w_hide = w_weak.clone();
+    rt.spawn(async move {
+        tokio::time::sleep(Duration::from_millis(2600)).await;
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = w_hide.upgrade() {
+                w.set_toast_open(false);
+            }
+        });
+    });
+}
+
 async fn load_home_sections(
     api: &riff_core::api::RiffApi,
     http: &reqwest::Client,
@@ -391,6 +661,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let sleep_deadline: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let sleep_track_end = Arc::new(AtomicBool::new(false));
     let eof_handled = Arc::new(AtomicBool::new(false));
+    let play_generation = Arc::new(AtomicU64::new(0));
 
     // 1. Initial Data Load (Library, Favorites, History, Playlists, Home Feed)
     let api_init = api.clone();
@@ -487,10 +758,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let pl_play = playlist_cache.clone();
     let cur_idx_play = current_index.clone();
     let eof_play = eof_handled.clone();
+    let gen_play = play_generation.clone();
     let rt_play = rt_handle.clone();
 
     main_window.on_play_track(move |track| {
         eof_play.store(false, Ordering::SeqCst);
+        let my_gen = gen_play.fetch_add(1, Ordering::SeqCst) + 1;
         let t_thumb = track.thumbnail.to_string();
         let has_cov = track.has_cover;
 
@@ -502,6 +775,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
             w.set_current_platform(track.platform.clone());
             w.set_current_is_favorite(track.is_favorite);
             w.set_active_lyric_index(-1);
+            w.set_current_pos(0.0);
+            w.set_pos_text(SharedString::from("0:00"));
+            if track.duration_sec > 0.0 {
+                w.set_current_duration(track.duration_sec);
+                w.set_dur_text(SharedString::from(format_duration(track.duration_sec as f64)));
+            }
+            w.set_status_message(SharedString::from(format!("Loading: {}...", track.title)));
             w.set_current_has_cover(has_cov);
             if has_cov {
                 w.set_current_cover(track.cover.clone());
@@ -626,9 +906,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let path = PathBuf::from(track.id.as_str());
         if path.is_file() {
             api_play.play_file(path, Some(core_track));
+            show_toast(&w_play, &rt_play, format!("Playing: {}", track.title));
         } else {
             let api_str = api_play.clone();
             let http_str = http_play.clone();
+            let w_str = w_play.clone();
+            let rt_str = rt_play.clone();
+            let gen_str = gen_play.clone();
             let s_id = track.id.to_string();
             let s_title = track.title.to_string();
             let s_artist = track.artist.to_string();
@@ -636,27 +920,75 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let s_dur = track.duration_sec as f64;
             let ct_clone = core_track.clone();
 
+            show_toast(&w_play, &rt_play, format!("Loading: {}...", track.title));
+
             rt_play.spawn(async move {
+                // Handle local_* IDs stored in favorites/history/playlists
+                if s_id.starts_with("local_") {
+                    if let Ok(lib) = api_str.list_library().await {
+                        if let Some(found) = lib.into_iter().find(|t| t.id == s_id) {
+                            let p = PathBuf::from(&found.path);
+                            if p.is_file() {
+                                if gen_str.load(Ordering::SeqCst) == my_gen {
+                                    api_str.play_file(p, Some(ct_clone));
+                                    show_toast(&w_str, &rt_str, format!("Playing: {s_title}"));
+                                }
+                                return;
+                            }
+                        }
+                    }
+                }
+
                 let q = riff_core::models::StreamQuery {
                     id: Some(s_id),
-                    title: Some(s_title),
+                    title: Some(s_title.clone()),
                     artist: Some(s_artist),
                     platform: Some(s_platform),
                     duration: Some(s_dur),
                     url: None,
                     thumbnail: None,
-                    timeout: Some(15),
+                    timeout: Some(20),
                     quality: Some("medium".to_string()),
                     q: None,
                 };
 
-                if let Ok(resolved) = api_str.resolve_stream(&q, 0).await {
-                    if let Some(stream_url) = resolved.get("streamUrl").and_then(|v| v.as_str()) {
-                        if let Ok(resp) = http_str.get(stream_url).send().await {
-                            if let Ok(bytes) = resp.bytes().await {
-                                api_str.play_bytes(bytes.to_vec(), Some("mp3".to_string()), Some(ct_clone));
-                            }
+                match api_str.resolve_stream(&q, 0).await {
+                    Ok(resolved) => {
+                        if gen_str.load(Ordering::SeqCst) != my_gen {
+                            return;
                         }
+                        let is_hls = resolved.get("isHls").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let raw_url = resolved
+                            .get("rawStreamUrl")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| {
+                                resolved
+                                    .get("streamUrl")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|u| !u.starts_with("http://127.0.0.1:0"))
+                            });
+
+                        if let Some(url) = raw_url {
+                            match download_stream_bytes(&http_str, url, is_hls).await {
+                                Ok((bytes, hint)) => {
+                                    if gen_str.load(Ordering::SeqCst) == my_gen {
+                                        api_str.play_bytes(bytes, hint, Some(ct_clone));
+                                        show_toast(&w_str, &rt_str, format!("Playing: {s_title}"));
+                                    }
+                                }
+                                Err(err) => {
+                                    tracing::warn!("Stream download failed for '{}': {}", s_title, err);
+                                    show_toast(&w_str, &rt_str, format!("Playback error: {err}"));
+                                }
+                            }
+                        } else {
+                            tracing::warn!("No playable stream URL resolved for '{}'", s_title);
+                            show_toast(&w_str, &rt_str, "Playback error: No stream URL found");
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!("resolve_stream failed for '{}': {}", s_title, err);
+                        show_toast(&w_str, &rt_str, format!("Stream error: {err}"));
                     }
                 }
             });
@@ -665,10 +997,27 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     // 3. Play / Pause Toggle Callback
     let api_toggle = api.clone();
+    let w_toggle = window_weak.clone();
     main_window.on_toggle_play_pause(move || {
         let (playing, _, _, _) = api_toggle.get_playback_state();
         if playing {
             api_toggle.pause();
+        } else if let Some(w) = w_toggle.upgrade() {
+            if w.get_current_id().is_empty() {
+                let first = w
+                    .get_queue_tracks()
+                    .iter()
+                    .next()
+                    .or_else(|| w.get_home_trending().iter().next())
+                    .or_else(|| w.get_home_for_you().iter().next())
+                    .or_else(|| w.get_history_tracks().iter().next())
+                    .or_else(|| w.get_library_tracks().iter().next());
+                if let Some(t) = first {
+                    w.invoke_play_track(t);
+                }
+            } else {
+                api_toggle.resume();
+            }
         } else {
             api_toggle.resume();
         }
@@ -1713,5 +2062,57 @@ mod tests {
         assert_eq!(lines.len(), 4);
         assert_eq!(lines[0].text, "Line 1");
         assert_eq!(lines[3].text, "Line 4");
+    }
+
+    #[test]
+    fn test_detect_audio_hint() {
+        assert_eq!(detect_audio_hint(Some("audio/mp4; codecs=\"mp4a.40.2\""), "https://example.com/x"), Some("m4a".to_string()));
+        assert_eq!(detect_audio_hint(Some("audio/mpeg"), "https://example.com/x"), Some("mp3".to_string()));
+        assert_eq!(detect_audio_hint(None, "https://rr1.googlevideo.com/videoplayback?mime=audio%2Fmp4"), Some("m4a".to_string()));
+        assert_eq!(detect_audio_hint(None, "https://cf-media.sndcdn.com/track.mp3"), Some("mp3".to_string()));
+    }
+
+    #[test]
+    #[ignore]
+    fn test_live_stream_resolve_and_decode() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let config = Arc::new(riff_core::config::Config::default());
+            let db = riff_core::db::open(&config.db_path).unwrap();
+            let http = reqwest::Client::builder()
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Riff/0.7.6")
+                .build()
+                .unwrap();
+            let soundcloud = riff_core::soundcloud::SoundCloudClient::new(http.clone());
+            let youtube = Arc::new(riff_core::youtube::YouTubeClient::new(http.clone()));
+            let lyrics = Arc::new(riff_core::lyrics::LyricsService::new(http.clone(), config.data_dir.clone()));
+            let events = Arc::new(riff_core::events::EventBus::default());
+            let player = Arc::new(riff_core::player::AudioPlayer::new(events.clone()));
+            let api = riff_core::api::RiffApi::new(db, config, soundcloud, youtube, lyrics, events, player);
+
+            let (tracks, _) = api.search("lofi hip hop", "ytmusic", 3, 0).await.unwrap();
+            assert!(!tracks.is_empty(), "search returned no tracks");
+            let first = &tracks[0];
+            let q = riff_core::models::StreamQuery {
+                id: first.get("id").and_then(|v| v.as_str()).map(String::from),
+                title: first.get("title").and_then(|v| v.as_str()).map(String::from),
+                artist: first.get("artist").and_then(|v| v.as_str()).map(String::from),
+                platform: Some("ytmusic".to_string()),
+                duration: first.get("duration").and_then(|v| v.as_f64()),
+                url: None,
+                thumbnail: None,
+                timeout: Some(20),
+                quality: Some("medium".to_string()),
+                q: None,
+            };
+            let resolved = api.resolve_stream(&q, 0).await.expect("resolve_stream failed");
+            let is_hls = resolved.get("isHls").and_then(|v| v.as_bool()).unwrap_or(false);
+            let raw_url = resolved.get("rawStreamUrl").and_then(|v| v.as_str()).expect("missing rawStreamUrl");
+            let (bytes, hint) = download_stream_bytes(&http, raw_url, is_hls).await.expect("download_stream_bytes failed");
+            assert!(bytes.len() > 10_000, "downloaded audio too small: {}", bytes.len());
+            let dec = riff_core::player::decoder::AudioDecoder::new(std::io::Cursor::new(bytes), hint.as_deref())
+                .expect("AudioDecoder failed to decode stream");
+            assert!(dec.sample_rate() > 0);
+        });
     }
 }

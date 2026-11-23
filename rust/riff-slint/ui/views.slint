@@ -37,49 +37,6 @@ component TableHeader inherits Rectangle {
     }
 }
 
-export component Topbar inherits Rectangle {
-    in property <string> title: "";
-    in property <string> subtitle: "";
-
-    VerticalLayout {
-        width: 100%;
-        height: 100%;
-
-        // Now on demand top bar (75px shadow + 6px divider + 48px blurred bar)
-        Rectangle {
-            height: 75px;
-            background: #0d0d0d9c;
-            backdrop-blur: 12px;
-        }
-
-        Rectangle {
-            height: 6px;
-            background: #0d0d0d;
-        }
-
-        Rectangle {
-            height: 48px;
-            background: #0d0d0d9c;
-            backdrop-blur: 12px;
-        }
-
-        Rectangle { horizontal-stretch: 1; }
-    }
-
-    HorizontalLayout {
-        height: 48px;
-        spacing: 6px;
-        alignment: start;
-        VerticalLayout {
-            alignment: center;
-            padding-left: 36px;
-            Text { text: title; color: Theme.text-primary; font-size: 26px; font-weight: 700; }
-            Text { text: subtitle; color: Theme.text-secondary; font-size: 13px; }
-        }
-        Rectangle { horizontal-stretch: 1; }
-    }
-}
-
 export component HomeView inherits ScrollView {
     in property <[TrackData]> for-you-tracks: [];
     in property <[TrackData]> trending-tracks: [];
@@ -91,72 +48,39 @@ export component HomeView inherits ScrollView {
     callback refresh-home();
 
     VerticalLayout {
-        spacing: 0px;
+        padding: 16px;
+        padding-top: 12px;
+        padding-bottom: 28px;
+        spacing: 26px;
         alignment: start;
-        Topbar { title: "Home"; }
 
+        // Section: Home > (Quick tiles row: 3-column grid matching .sp-quick)
         VerticalLayout {
-            padding-left: 16px;
-            padding-right: 16px;
-            padding-bottom: 24px;
-            spacing: 14px;
-            alignment: start;
+            spacing: 12px;
 
-            // Section: Trending now >
-            VerticalLayout {
-                spacing: 12px;
+            HorizontalLayout {
+                height: 36px;
+                spacing: 8px;
 
-                HorizontalLayout {
-                    height: 36px;
-                    spacing: 8px;
-
-                    VerticalLayout {
-                        alignment: center;
-                        Image { source: @image-url("icons/flame.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
-                    }
-                    Text {
-                        text: "Trending now";
-                        color: Theme.text-primary;
-                        font-size: 22px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    IconBtn {
-                        icon: @image-url("icons/chev_right.svg");
-                        icon-size: 18px;
-                        clicked => { root.open-tab(1); }
-                    }
+                VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/home.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
                 }
-
-                if trending-tracks.length == 0: Rectangle {
-                    height: 180px;
-                    Text {
-                        width: parent.width - 24px;
-                        x: 12px;
-                        text: "No trending songs found right now. Try again later!";
-                        color: Theme.text-muted;
-                        font-size: 14px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        wrap: word-wrap;
-                    }
+                Text {
+                    text: "Home";
+                    color: Theme.text-primary;
+                    font-size: 22px;
+                    font-weight: 700;
+                    vertical-alignment: center;
                 }
-
-                if trending-tracks.length > 0: ScrollView {
-                    height: 222px;
-                    HorizontalLayout {
-                        spacing: 16px;
-                        alignment: start;
-                        for t in trending-tracks: HomeCard {
-                            track: t;
-                            clicked => { root.play-track(t); }
-                        }
-                    }
+                Rectangle { horizontal-stretch: 1; }
+                IconBtn {
+                    icon: @image-url("icons/chev_right.svg");
+                    icon-size: 18px;
+                    clicked => { root.open-tab(3); }
                 }
             }
 
-            // Quick tiles row (3-column grid: Liked songs, My files, History)
             HorizontalLayout {
                 spacing: 8px;
                 height: 64px;
@@ -166,18 +90,17 @@ export component HomeView inherits ScrollView {
                     horizontal-stretch: 1;
                     height: 64px;
                     border-radius: 12px;
-                    background: t1.has-hover ? #2a2a30 : #1c1c20;
+                    background: t1.has-hover ? #2a2a30 : #1c1c20b3;
                     clip: true;
                     animate background { duration: 180ms; easing: ease; }
 
                     HorizontalLayout {
                         spacing: 12px;
-                        padding-left: 4px;
                         padding-right: 10px;
                         Image {
                             source: @image-url("assets/liked.png");
-                            width: 48px;
-                            height: 48px;
+                            width: 64px;
+                            height: 64px;
                             image-fit: cover;
                         }
                         VerticalLayout {
@@ -195,25 +118,24 @@ export component HomeView inherits ScrollView {
                     horizontal-stretch: 1;
                     height: 64px;
                     border-radius: 12px;
-                    background: t2.has-hover ? #2a2a30 : #1c1c20;
+                    background: t2.has-hover ? #2a2a30 : #1c1c20b3;
                     clip: true;
                     animate background { duration: 180ms; easing: ease; }
 
                     HorizontalLayout {
                         spacing: 12px;
-                        padding-left: 4px;
                         padding-right: 10px;
                         Rectangle {
-                            width: 48px;
-                            height: 48px;
+                            width: 64px;
+                            height: 64px;
                             background: #000000;
                             Image {
                                 source: @image-url("icons/cloud_off.svg");
-                                width: 16px;
-                                height: 16px;
+                                width: 26px;
+                                height: 26px;
                                 colorize: #ffffff;
-                                x: 16px;
-                                y: 16px;
+                                x: 19px;
+                                y: 19px;
                             }
                         }
                         VerticalLayout {
@@ -232,25 +154,24 @@ export component HomeView inherits ScrollView {
                     horizontal-stretch: 1;
                     height: 64px;
                     border-radius: 12px;
-                    background: t3.has-hover ? #2a2a30 : #1c1c20;
+                    background: t3.has-hover ? #2a2a30 : #1c1c20b3;
                     clip: true;
                     animate background { duration: 180ms; easing: ease; }
 
                     HorizontalLayout {
                         spacing: 12px;
-                        padding-left: 4px;
                         padding-right: 10px;
                         Rectangle {
-                            width: 48px;
-                            height: 48px;
+                            width: 64px;
+                            height: 64px;
                             background: #1e1d2b;
                             Image {
                                 source: @image-url("icons/ms_history.svg");
-                                width: 16px;
-                                height: 16px;
+                                width: 26px;
+                                height: 26px;
                                 colorize: Theme.primary;
-                                x: 16px;
-                                y: 16px;
+                                x: 19px;
+                                y: 19px;
                             }
                         }
                         VerticalLayout {
@@ -264,71 +185,125 @@ export component HomeView inherits ScrollView {
                 }
                 if hist-count == 0: Rectangle { horizontal-stretch: 1; }
             }
+        }
 
-            // Section: For you [refresh] >
-            VerticalLayout {
-                spacing: 12px;
+        // Section: For you [refresh] >
+        VerticalLayout {
+            spacing: 12px;
 
-                HorizontalLayout {
-                    height: 36px;
-                    spacing: 8px;
+            HorizontalLayout {
+                height: 36px;
+                spacing: 8px;
 
-                    VerticalLayout {
-                        alignment: center;
-                        Image { source: @image-url("icons/bars_wave.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
-                    }
-                    Text {
-                        text: "For you";
-                        color: Theme.text-primary;
-                        font-size: 22px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-                    VerticalLayout {
-                        alignment: center;
-                        IconBtn {
-                            width: 32px;
-                            height: 32px;
-                            base-bg: #17171a;
-                            icon: @image-url("icons/refresh.svg");
-                            icon-size: 15px;
-                            clicked => { root.refresh-home(); }
-                        }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
+                VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/bars_wave.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
+                }
+                Text {
+                    text: "For you";
+                    color: Theme.text-primary;
+                    font-size: 22px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                VerticalLayout {
+                    alignment: center;
                     IconBtn {
-                        icon: @image-url("icons/chev_right.svg");
-                        icon-size: 18px;
-                        clicked => { root.open-tab(1); }
+                        width: 32px;
+                        height: 32px;
+                        base-bg: #17171a;
+                        icon: @image-url("icons/refresh.svg");
+                        icon-size: 15px;
+                        clicked => { root.refresh-home(); }
                     }
                 }
+                Rectangle { horizontal-stretch: 1; }
+                IconBtn {
+                    icon: @image-url("icons/chev_right.svg");
+                    icon-size: 18px;
+                    clicked => { root.open-tab(1); }
+                }
+            }
 
-                if for-you-tracks.length == 0: Rectangle {
-                    height: 180px;
-                    width: 180px;
-                    border-radius: 14px;
-                    background: #17171a;
-                    Text {
-                        width: parent.width - 24px;
-                        x: 12px;
-                        text: "No songs yet for you — search or check your liked songs";
-                        color: Theme.text-muted;
-                        font-size: 14px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        wrap: word-wrap;
+            if for-you-tracks.length == 0: Rectangle {
+                height: 180px;
+                width: 180px;
+                border-radius: 14px;
+                background: #17171a;
+                Text {
+                    width: parent.width - 24px;
+                    x: 12px;
+                    text: "No songs yet for you — search or check your liked songs";
+                    color: Theme.text-muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
+            if for-you-tracks.length > 0: ScrollView {
+                height: 244px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    alignment: start;
+                    for t in for-you-tracks: HomeCard {
+                        track: t;
+                        clicked => { root.play-track(t); }
                     }
                 }
+            }
+        }
 
-                if for-you-tracks.length > 0: ScrollView {
-                    height: 222px;
-                    HorizontalLayout {
-                        spacing: 16px;
-                        alignment: start;
-                        for t in for-you-tracks: HomeCard {
-                            track: t;
-                            clicked => { root.play-track(t); }
-                        }
+        // Section: Trending now >
+        VerticalLayout {
+            spacing: 12px;
+
+            HorizontalLayout {
+                height: 36px;
+                spacing: 8px;
+
+                VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/flame.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
+                }
+                Text {
+                    text: "Trending now";
+                    color: Theme.text-primary;
+                    font-size: 22px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                IconBtn {
+                    icon: @image-url("icons/chev_right.svg");
+                    icon-size: 18px;
+                    clicked => { root.open-tab(1); }
+                }
+            }
+
+            if trending-tracks.length == 0: Rectangle {
+                height: 180px;
+                Text {
+                    width: parent.width - 24px;
+                    x: 12px;
+                    text: "No trending songs found right now. Try again later!";
+                    color: Theme.text-muted;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
+            if trending-tracks.length > 0: ScrollView {
+                height: 244px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    alignment: start;
+                    for t in trending-tracks: HomeCard {
+                        track: t;
+                        clicked => { root.play-track(t); }
                     }
                 }
             }
@@ -346,76 +321,67 @@ export component SearchView inherits ScrollView {
     callback add-to-playlist(TrackData);
 
     VerticalLayout {
-        spacing: 0px;
+        padding: 16px;
+        spacing: 14px;
         alignment: start;
-        Topbar { title: "Search"; }
 
-        Rectangle {
-            height: 36px;
-            width: 100%;
-            border-radius: 4px;
-            background: #ffffff14;
+        // Filter chips (search-filter-chips)
+        HorizontalLayout {
+            spacing: 8px;
+            height: 34px;
+            alignment: start;
+
+            for chip in [
+                { id: "ytmusic", label: "YouTube Music" },
+                { id: "soundcloud", label: "SoundCloud" },
+                { id: "local", label: "Local" },
+            ]: Rectangle {
+                height: 32px;
+                border-radius: 16px;
+                background: search-platform == chip.id ? Theme.text-primary : (cta.has-hover ? #26262c : #1c1c20);
+                animate background { duration: 140ms; easing: ease-out; }
+
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    Text {
+                        text: chip.label;
+                        color: search-platform == chip.id ? #0d0d0d : Theme.text-secondary;
+                        font-size: 13px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        animate color { duration: 140ms; easing: ease-out; }
+                    }
+                }
+
+                cta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        search-platform = chip.id;
+                        root.platform-changed(chip.id);
+                    }
+                }
+            }
+        }
+
+        if tracks.length > 0: TableHeader { show-album: root.width >= 460px; }
+
+        if tracks.length == 0: Rectangle {
+            height: 180px;
+            Text {
+                width: parent.width - 32px;
+                x: 16px;
+                text: "Type in the search bar above and press Enter to search tracks.";
+                color: Theme.text-muted;
+                font-size: 14px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
         }
 
         VerticalLayout {
-            padding: 16px;
-            spacing: 14px;
-            alignment: start;
-
-            HorizontalLayout {
-                spacing: 8px;
-                height: 34px;
-                alignment: start;
-
-                for chip in [
-                    { id: "ytmusic", label: "YouTube Music" },
-                    { id: "soundcloud", label: "SoundCloud" },
-                    { id: "local", label: "Local" },
-                ]: Rectangle {
-                    height: 32px;
-                    border-radius: 16px;
-                    background: search-platform == chip.id ? Theme.text-primary : (cta.has-hover ? #26262c : #1c1c20);
-                    animate background { duration: 140ms; easing: ease-out; }
-
-                    HorizontalLayout {
-                        padding-left: 14px;
-                        padding-right: 14px;
-                        Text {
-                            text: chip.label;
-                            color: search-platform == chip.id ? #0d0d0d : Theme.text-secondary;
-                            font-size: 13px;
-                            font-weight: 600;
-                            vertical-alignment: center;
-                            animate color { duration: 140ms; easing: ease-out; }
-                        }
-                    }
-
-                    cta := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            search-platform = chip.id;
-                            root.platform-changed(chip.id);
-                        }
-                    }
-                }
-            }
-
-            if tracks.length > 0: TableHeader { show-album: root.width >= 460px; }
-
-            if tracks.length == 0: Rectangle {
-                height: 120px;
-                Text {
-                    width: parent.width - 24px;
-                    x: 12px;
-                    text: "No songs found. Try a different search.";
-                    color: Theme.text-muted;
-                    font-size: 14.5px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    wrap: word-wrap;
-                }
-            }
-
+            spacing: 2px;
             for t[idx] in tracks: TrackRow {
                 index: idx;
                 track: t;
@@ -445,7 +411,6 @@ export component LocalFilesView inherits ScrollView {
     VerticalLayout {
         spacing: 0px;
         alignment: start;
-        Topbar { title: "My files"; }
 
         // Seamless hero + action bar container (persis web_local.png, zero horizontal seam)
         Rectangle {
@@ -641,7 +606,6 @@ export component FavoritesView inherits ScrollView {
     VerticalLayout {
         spacing: 0px;
         alignment: start;
-        Topbar { title: "Liked Songs"; }
 
         // Seamless hero + action bar container (persis web_fav.png, zero horizontal seam)
         Rectangle {
@@ -799,7 +763,6 @@ export component HistoryView inherits ScrollView {
     VerticalLayout {
         spacing: 0px;
         alignment: start;
-        Topbar { title: "History"; }
 
         Rectangle {
             background: @linear-gradient(180deg, #282366 0%, #16152b 52%, #0d0d0d00 100%);
@@ -923,13 +886,23 @@ export component QueueView inherits ScrollView {
     callback add-to-playlist(TrackData);
 
     VerticalLayout {
-        spacing: 0px;
+        padding: 24px;
+        spacing: 16px;
         alignment: start;
-        Topbar { title: "Playback queue"; }
 
         HorizontalLayout {
-            height: 48px;
-            alignment: end;
+            height: 40px;
+            spacing: 12px;
+
+            Text {
+                text: "Playback queue";
+                color: Theme.text-primary;
+                font-size: 24px;
+                font-weight: 800;
+                vertical-alignment: center;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
 
             PillBtn {
                 label: "Clear queue";
@@ -988,7 +961,6 @@ export component PlaylistDetailView inherits ScrollView {
     VerticalLayout {
         spacing: 0px;
         alignment: start;
-        Topbar { title: "Playlist"; subtitle: playlist-name; }
 
         // Hero header (persis web_fav.png style)
         Rectangle {

@@ -128,7 +128,7 @@ export component HomeCard inherits Rectangle {
     callback clicked();
 
     width: 180px;
-    height: 232px;
+    height: 236px;
     background: transparent;
 
     VerticalLayout {
@@ -145,9 +145,9 @@ export component HomeCard inherits Rectangle {
                 height: 180px;
                 y: ta.has-hover ? 0px : 2px;
                 border-radius: 14px;
-                background: #17171a;
+                background: #1e1f22;
                 clip: true;
-                animate y { duration: 180ms; easing: ease; }
+                animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
                 if track.has_cover: Image {
                     source: track.cover;
@@ -165,10 +165,18 @@ export component HomeCard inherits Rectangle {
                     y: (parent.height - self.height) / 2;
                 }
 
+                // Subtle hover scrim
                 Rectangle {
-                    width: 42px;
-                    height: 42px;
-                    border-radius: 21px;
+                    width: 100%;
+                    height: 100%;
+                    background: ta.has-hover ? #00000024 : transparent;
+                    animate background { duration: 160ms; easing: ease-out; }
+                }
+
+                Rectangle {
+                    width: ta.has-hover ? 42px : 36px;
+                    height: ta.has-hover ? 42px : 36px;
+                    border-radius: self.width / 2;
                     background: Theme.primary;
                     x: parent.width - self.width - 10px;
                     y: ta.has-hover ? parent.height - self.height - 10px : parent.height - self.height - 2px;
@@ -178,14 +186,16 @@ export component HomeCard inherits Rectangle {
                     drop-shadow-color: #00000070;
                     animate opacity { duration: 160ms; easing: ease-out; }
                     animate y { duration: 180ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                    animate width { duration: 180ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                    animate height { duration: 180ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
 
                     Image {
                         source: @image-url("icons/play_fill.svg");
                         width: 18px;
                         height: 18px;
                         colorize: Theme.on-primary;
-                        x: 13px;
-                        y: 12px;
+                        x: (parent.width - self.width) / 2 + 1px;
+                        y: (parent.height - self.height) / 2;
                     }
                 }
             }
@@ -247,8 +257,8 @@ export component TrackRow inherits Rectangle {
         // #
         Text {
             width: 24px;
-            text: is-current ? "▶" : (index + 1);
-            color: is-current ? Theme.primary : Theme.text-muted;
+            text: (is-current || ta.has-hover) ? "▶" : (index + 1);
+            color: is-current ? Theme.primary : (ta.has-hover ? Theme.text-primary : Theme.text-muted);
             font-size: 13px;
             font-weight: is-current ? 700 : 500;
             horizontal-alignment: center;

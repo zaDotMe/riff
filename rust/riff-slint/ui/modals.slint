@@ -2248,31 +2248,10 @@ export component AudioEditorModal inherits Rectangle {
                 IconBtn { width: 32px; height: 32px; icon: @image-url("icons/ms_close.svg"); icon-size: 16px; clicked => { root.close(); } }
             }
 
-            // EQ tab visible by default
-            if tab == 3: VerticalLayout {
-                spacing: 12px;
-                Rectangle {
-                    border-radius: 16px;
-                    background: #24252c;
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 10px;
-                        Text { text: "3-Band Equalizer"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                        Text { text: "Bass (100Hz): " + Math.round(eq-bass) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                        Slider { minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
-                        Text { text: "Mid (1kHz): " + Math.round(eq-mid) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                        Slider { minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
-                        Text { text: "Treble (10kHz): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                        Slider { minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
-                    }
-                }
-            }
-
             // Tabs bar
             HorizontalLayout {
                 spacing: 6px;
                 height: 38px;
-                Rectangle { width: 90px; height: 38px; }
                 for t in [
                     { idx: 0, label: "Enhancer" },
                     { idx: 1, label: "Speed & Pitch" },
@@ -2334,11 +2313,11 @@ export component AudioEditorModal inherits Rectangle {
                                 padding: 16px;
                                 spacing: 8px;
                                 Text { text: "Vocals (Mid): " + Math.round(eq-mid) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
+                                Slider { height: 32px; minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
                                 Text { text: "Treble (Air): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                                Slider { height: 32px; minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
                                 Text { text: "Bass: " + Math.round(eq-bass) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                                Slider { minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
+                                Slider { height: 32px; minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
                             }
                         }
                     }
@@ -2378,6 +2357,7 @@ export component AudioEditorModal inherits Rectangle {
                                     }
                                 }
                                 Slider {
+                                    height: 32px;
                                     minimum: 0.5;
                                     maximum: 2.0;
                                     value <=> speed;
@@ -2400,13 +2380,13 @@ export component AudioEditorModal inherits Rectangle {
                                     Text { text: "Reverb"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; horizontal-stretch: 1; }
                                     Text { text: Math.round(reverb) + "%"; color: Theme.primary; font-size: 13.5px; font-weight: 700; }
                                 }
-                                Slider { minimum: 0.0; maximum: 100.0; value <=> reverb; changed(v) => { root.set-effects(v, distortion); } }
+                                Slider { height: 32px; minimum: 0.0; maximum: 100.0; value <=> reverb; changed(v) => { root.set-effects(v, distortion); } }
 
                                 HorizontalLayout {
                                     Text { text: "Distortion"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; horizontal-stretch: 1; }
                                     Text { text: Math.round(distortion) + "%"; color: Theme.primary; font-size: 13.5px; font-weight: 700; }
                                 }
-                                Slider { minimum: 0.0; maximum: 100.0; value <=> distortion; changed(v) => { root.set-effects(reverb, v); } }
+                                Slider { height: 32px; minimum: 0.0; maximum: 100.0; value <=> distortion; changed(v) => { root.set-effects(reverb, v); } }
                             }
                         }
                     }

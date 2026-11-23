@@ -11,8 +11,8 @@ export component MainWindow inherits Window {
     no-frame: true;
     preferred-width: 1100px;
     preferred-height: 720px;
-    min-width: 800px;
-    min-height: 540px;
+    min-width: mini_mode ? 360px : 800px;
+    min-height: mini_mode ? 420px : 540px;
     background: Theme.window-bg;
     default-font-family: "Inter";
 
@@ -80,6 +80,8 @@ export component MainWindow inherits Window {
     in-out property <string> search_platform: "ytmusic";
     in-out property <string> search_query: "";
     in-out property <string> status_message: "Audio Engine: Ready | WASAPI 44.1kHz";
+    in-out property <bool> toast_open: false;
+    in-out property <string> toast_text: "";
 
     // Equalizer & Audio FX State
     in-out property <float> eq_bass: 0.0;
@@ -423,10 +425,15 @@ export component MainWindow inherits Window {
 
                 // LEFT SIDEBAR (width: 330px, #0d0d0d, radius 10px)
                 Rectangle {
-                    width: 330px;
+                    width: mini_mode ? 0px : 330px;
+                    opacity: mini_mode ? 0.0 : 1.0;
+                    visible: self.width > 1px;
+                    clip: true;
                     background: current_has_blur ? #0d0d0dd9 : Theme.panel-bg;
                     backdrop-blur: current_has_blur ? 24px : 0px;
                     border-radius: 10px;
+                    animate width { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                    animate opacity { duration: 160ms; easing: ease-out; }
                     animate background { duration: 400ms; easing: ease; }
 
                     VerticalLayout {
@@ -461,70 +468,6 @@ export component MainWindow inherits Window {
                             }
 
                             Rectangle { horizontal-stretch: 1; }
-
-                            // Mini player toggle (centers small player in titlebar area)
-                            if mini_mode: Rectangle {
-                                width: 368px;
-                                height: 44px;
-                                HorizontalLayout {
-                                    width: 368px;
-                                    height: 44px;
-                                    x: (parent.width - self.width) / 2 + 168px;
-                                    alignment: center;
-
-                                    Rectangle {
-                                        width: 368px;
-                                        height: 44px;
-                                        border-radius: 22px;
-                                        background: #1a1a1e;
-                                        animate background { duration: 140ms; easing: ease-out; }
-
-                                        Rectangle {
-                                            width: 44px;
-                                            height: 44px;
-                                            border-radius: 22px;
-                                            clip: true;
-
-                                            if current_has_cover: Image {
-                                                source: current_cover;
-                                                width: 100%;
-                                                height: 100%;
-                                                image-fit: cover;
-                                            }
-                                            if !current_has_cover: Image {
-                                                source: @image-url("icons/play_circle.svg");
-                                                width: 18px;
-                                                height: 18px;
-                                                colorize: Theme.text-muted;
-                                                x: 13px;
-                                                y: 13px;
-                                            }
-                                        }
-
-                                        VerticalLayout {
-                                            x: 50px;
-                                            width: 276px;
-                                            height: 44px;
-                                            alignment: center;
-                                            spacing: 2px;
-
-                                            Text { text: current_title; color: Theme.text-primary; font-size: 15.5px; font-weight: 500; overflow: elide; }
-                                            Text { text: current_artist; color: Theme.text-secondary; font-size: 13.5px; overflow: elide; }
-                                        }
-
-                                        IconBtn {
-                                            x: 322px;
-                                            width: 36px;
-                                            height: 36px;
-                                            y: 4px;
-                                            icon: @image-url("icons/win_mini_player.svg");
-                                            icon-size: 18px;
-                                            icon-color: #e2e2e99e;
-                                            clicked => { root.toggle_mini_mode(); }
-                                        }
-                                    }
-                                }
-                            }
 
                             PillBtn {
                                 label: "Create";
@@ -919,7 +862,7 @@ export component MainWindow inherits Window {
                 }
 
                 // Gap after Sidebar
-                Rectangle { width: 8px; }
+                Rectangle { width: mini_mode ? 0px : 8px; }
 
                 // MAIN CONTENT (#0d0d0d, radius 12px)
                 Rectangle {
@@ -930,9 +873,14 @@ export component MainWindow inherits Window {
                     clip: true;
                     animate background { duration: 400ms; easing: ease; }
 
-                    if active_tab == 0: HomeView {
+                    HomeView {
                         width: 100%;
                         height: 100%;
+                        y: active_tab == 0 ? 0px : 6px;
+                        opacity: active_tab == 0 ? 1.0 : 0.0;
+                        visible: self.opacity > 0.01;
+                        animate opacity { duration: 140ms; easing: ease-out; }
+                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         for-you-tracks: root.home_for_you;
                         trending-tracks: root.home_trending;
                         fav-count: root.favorite_tracks.length;
@@ -943,9 +891,14 @@ export component MainWindow inherits Window {
                         refresh-home => { root.refresh_home(); }
                     }
 
-                    if active_tab == 1: SearchView {
+                    SearchView {
                         width: 100%;
                         height: 100%;
+                        y: active_tab == 1 ? 0px : 6px;
+                        opacity: active_tab == 1 ? 1.0 : 0.0;
+                        visible: self.opacity > 0.01;
+                        animate opacity { duration: 140ms; easing: ease-out; }
+                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.search_results;
                         current-id: root.current_id;
                         search-platform <=> root.search_platform;
@@ -959,9 +912,14 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    if active_tab == 2: LocalFilesView {
+                    LocalFilesView {
                         width: 100%;
                         height: 100%;
+                        y: active_tab == 2 ? 0px : 6px;
+                        opacity: active_tab == 2 ? 1.0 : 0.0;
+                        visible: self.opacity > 0.01;
+                        animate opacity { duration: 140ms; easing: ease-out; }
+                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.library_tracks;
                         current-id: root.current_id;
                         play-track(t) => { root.play_track(t); }
@@ -971,9 +929,14 @@ export component MainWindow inherits Window {
                         scan-folder => { root.scan_local_folder(); }
                     }
 
-                    if active_tab == 3: FavoritesView {
+                    FavoritesView {
                         width: 100%;
                         height: 100%;
+                        y: active_tab == 3 ? 0px : 6px;
+                        opacity: active_tab == 3 ? 1.0 : 0.0;
+                        visible: self.opacity > 0.01;
+                        animate opacity { duration: 140ms; easing: ease-out; }
+                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.favorite_tracks;
                         current-id: root.current_id;
                         play-track(t) => { root.play_track(t); }
@@ -981,9 +944,14 @@ export component MainWindow inherits Window {
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
                     }
 
-                    if active_tab == 4: HistoryView {
+                    HistoryView {
                         width: 100%;
                         height: 100%;
+                        y: active_tab == 4 ? 0px : 6px;
+                        opacity: active_tab == 4 ? 1.0 : 0.0;
+                        visible: self.opacity > 0.01;
+                        animate opacity { duration: 140ms; easing: ease-out; }
+                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.history_tracks;
                         current-id: root.current_id;
                         play-track(t) => { root.play_track(t); }
@@ -992,9 +960,14 @@ export component MainWindow inherits Window {
                         clear-history => { root.clear_play_history(); }
                     }
 
-                    if active_tab == 5: QueueView {
+                    QueueView {
                         width: 100%;
                         height: 100%;
+                        y: active_tab == 5 ? 0px : 6px;
+                        opacity: active_tab == 5 ? 1.0 : 0.0;
+                        visible: self.opacity > 0.01;
+                        animate opacity { duration: 140ms; easing: ease-out; }
+                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.queue_tracks;
                         current-id: root.current_id;
                         play-track(t) => { root.play_track(t); }
@@ -1003,9 +976,14 @@ export component MainWindow inherits Window {
                         clear-queue => { root.clear_queue(); }
                     }
 
-                    if active_tab == 6: PlaylistDetailView {
+                    PlaylistDetailView {
                         width: 100%;
                         height: 100%;
+                        y: active_tab == 6 ? 0px : 6px;
+                        opacity: active_tab == 6 ? 1.0 : 0.0;
+                        visible: self.opacity > 0.01;
+                        animate opacity { duration: 140ms; easing: ease-out; }
+                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         playlist-id: root.active_playlist_id;
                         playlist-name: root.active_playlist_name;
                         tracks: root.active_playlist_tracks;
@@ -1018,12 +996,46 @@ export component MainWindow inherits Window {
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         go-back => { active_tab = 0; }
                     }
+
+                    // Floating droplet toast notification (dropletToastIn)
+                    Rectangle {
+                        height: 36px;
+                        width: min(380px, parent.width - 32px);
+                        x: (parent.width - self.width) / 2;
+                        y: toast_open ? 14px : -44px;
+                        opacity: toast_open ? 1.0 : 0.0;
+                        visible: self.opacity > 0.01;
+                        border-radius: 18px;
+                        background: #23242be8;
+                        backdrop-blur: 16px;
+                        border-width: 1px;
+                        border-color: #ffffff1a;
+                        drop-shadow-blur: 18px;
+                        drop-shadow-offset-y: 6px;
+                        drop-shadow-color: #00000080;
+                        animate y { duration: 260ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                        animate opacity { duration: 180ms; easing: ease-out; }
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            alignment: center;
+                            Text {
+                                text: toast_text;
+                                color: Theme.text-primary;
+                                font-size: 12.5px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
                 }
 
                 // RIGHT PANEL (Now Playing / Lyrics, smooth slide/fade, persis web_cdp.png)
                 Rectangle {
-                    width: lyrics_open ? 358px : 0px;
-                    opacity: lyrics_open ? 1.0 : 0.0;
+                    width: (!mini_mode && lyrics_open) ? 358px : 0px;
+                    opacity: (!mini_mode && lyrics_open) ? 1.0 : 0.0;
                     visible: self.width > 1px;
                     clip: true;
                     animate width { duration: 240ms; easing: cubic-bezier(0.2, 0, 0, 1); }

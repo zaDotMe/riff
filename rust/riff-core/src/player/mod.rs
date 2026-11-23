@@ -94,7 +94,12 @@ impl AudioPlayer {
                                         .map(str::to_ascii_lowercase);
                                     match AudioDecoder::new(f, ext.as_deref()) {
                                         Ok(dec) => {
-                                            current_duration = dec.duration_secs();
+                                            let dec_dur = dec.duration_secs();
+                                            current_duration = if dec_dur > 0.0 {
+                                                dec_dur
+                                            } else {
+                                                track.as_ref().map(|t| t.duration).unwrap_or(0.0)
+                                            };
                                             t_dur.store(current_duration.to_bits(), Ordering::SeqCst);
                                             current_position = 0.0;
                                             t_pos.store(0.0f64.to_bits(), Ordering::SeqCst);
@@ -130,7 +135,12 @@ impl AudioPlayer {
                             let cur = std::io::Cursor::new(data);
                             match AudioDecoder::new(cur, hint.as_deref()) {
                                 Ok(dec) => {
-                                    current_duration = dec.duration_secs();
+                                    let dec_dur = dec.duration_secs();
+                                    current_duration = if dec_dur > 0.0 {
+                                        dec_dur
+                                    } else {
+                                        track.as_ref().map(|t| t.duration).unwrap_or(0.0)
+                                    };
                                     t_dur.store(current_duration.to_bits(), Ordering::SeqCst);
                                     current_position = 0.0;
                                     t_pos.store(0.0f64.to_bits(), Ordering::SeqCst);
@@ -250,8 +260,9 @@ impl AudioPlayer {
                             let mut processed = Vec::with_capacity(raw_samples.len() * 2);
                             let step = dec_channels.max(1);
                             let frames = raw_samples.len() / step;
+                            let resample_ratio = speed_factor * (dec_sr as f32 / sink_sample_rate.max(1.0));
 
-                            if (speed_factor - 1.0).abs() < 0.01 || frames < 2 {
+                            if (resample_ratio - 1.0).abs() < 0.005 || frames < 2 {
                                 // Process samples through EQ, FX & Volume at 1.0x
                                 for chunk in raw_samples.chunks(step) {
                                     let left = chunk.get(0).copied().unwrap_or(0.0);
@@ -271,7 +282,7 @@ impl AudioPlayer {
                                     spectrum_samples_acc.push((out_l + out_r) * 0.5);
                                 }
                             } else {
-                                // Linear resampling for speed/pitch adjustment (0.5x .. 2.0x)
+                                // Linear resampling for sample-rate conversion & speed/pitch adjustment
                                 let mut pos = 0.0f32;
                                 while (pos as usize) + 1 < frames {
                                     let i0 = pos as usize;
@@ -298,7 +309,7 @@ impl AudioPlayer {
                                     }
 
                                     spectrum_samples_acc.push((out_l + out_r) * 0.5);
-                                    pos += speed_factor;
+                                    pos += resample_ratio;
                                 }
                             }
 

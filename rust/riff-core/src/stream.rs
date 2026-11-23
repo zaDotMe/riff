@@ -77,7 +77,7 @@ pub async fn resolve_with_ytdlp(
         .args([
             "-g",
             "-f",
-            "bestaudio/best",
+            "bestaudio[ext=m4a]/bestaudio/best",
             "--no-playlist",
             "--no-warnings",
             track_url,

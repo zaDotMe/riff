@@ -268,12 +268,22 @@ impl YouTubeClient {
             anyhow::bail!("No direct unenciphered audio formats found in player response");
         }
 
-        // Sort formats by bitrate depending on requested quality
+        // Sort formats by bitrate depending on requested quality, preferring audio/mp4 (AAC)
+        // so both WebView2 and native Symphonia decoder can play without Opus dependency.
         if quality == "low" {
-            audio_formats.sort_by_key(|f| f.get("bitrate").and_then(|b| b.as_i64()).unwrap_or(0));
+            audio_formats.sort_by_key(|f| {
+                let mime = f.get("mimeType").and_then(|s| s.as_str()).unwrap_or_default();
+                let is_mp4 = if mime.starts_with("audio/mp4") { 0i64 } else { 1i64 };
+                let br = f.get("bitrate").and_then(|b| b.as_i64()).unwrap_or(0);
+                (is_mp4, br)
+            });
         } else {
-            // High / medium: prefer highest bitrate (m4a or webm/opus)
-            audio_formats.sort_by_key(|f| std::cmp::Reverse(f.get("bitrate").and_then(|b| b.as_i64()).unwrap_or(0)));
+            audio_formats.sort_by_key(|f| {
+                let mime = f.get("mimeType").and_then(|s| s.as_str()).unwrap_or_default();
+                let is_mp4 = if mime.starts_with("audio/mp4") { 0i64 } else { 1i64 };
+                let br = f.get("bitrate").and_then(|b| b.as_i64()).unwrap_or(0);
+                (is_mp4, std::cmp::Reverse(br))
+            });
         }
 
         if let Some(best) = audio_formats.first() {
