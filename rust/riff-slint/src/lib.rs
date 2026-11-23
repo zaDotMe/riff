@@ -136,7 +136,7 @@ fn compute_ambient_blur_and_accent(w: u32, h: u32, raw: &[u8]) -> Option<(u32, u
         (0x9f, 0x99, 0xe6)
     };
 
-    let blurred = image::imageops::blur(&small, 14.0);
+    let blurred = image::imageops::blur(&small, 22.0);
     let (bw, bh) = blurred.dimensions();
     Some((bw, bh, blurred.into_raw(), accent))
 }
@@ -670,16 +670,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let pl_init = playlist_cache.clone();
 
     rt_handle.spawn(async move {
-        let (lib_res, fav_res, hist_res, pls_res) = tokio::join!(
+        let (lib_res, fav_res, hist_res, pls_res, kv_res) = tokio::join!(
             api_init.list_library(),
             api_init.get_favorites(),
             api_init.get_history(),
             api_init.get_playlists(),
+            api_init.get_all_settings(),
         );
         let lib_tracks = lib_res.unwrap_or_default();
         let fav_tracks = fav_res.unwrap_or_default();
         let hist_tracks = hist_res.unwrap_or_default();
         let user_playlists = pls_res.unwrap_or_default();
+        let kv_map = kv_res.unwrap_or_default();
 
         let fav_ids: HashSet<String> = fav_tracks.iter().map(|t| t.id.clone()).collect();
 
@@ -710,6 +712,60 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let w_first = w_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = w_first.upgrade() {
+                let theme = w.global::<Theme>();
+                if let Some(v) = kv_map.get("slint_show_visualizer") {
+                    w.set_show_visualizer(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_visualizer_opacity").and_then(|s| s.parse::<f32>().ok()) {
+                    w.set_visualizer_opacity((v / 100.0).clamp(0.02, 0.30));
+                }
+                if let Some(v) = kv_map.get("slint_auto_hide_titlebar") {
+                    w.set_auto_hide_titlebar(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_show_timestamps") {
+                    w.set_show_timestamps(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_rp_banner") {
+                    w.set_rp_banner_enabled(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_rp_gradient") {
+                    w.set_rp_gradient_enabled(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_tvk_blobs") {
+                    w.set_tvk_blobs_enabled(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_search_platform") {
+                    w.set_search_platform(SharedString::from(v.as_str()));
+                }
+                if let Some(v) = kv_map.get("slint_ambient_blur") {
+                    theme.set_ambient_blur_enabled(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_dynamic_accent") {
+                    theme.set_dynamic_accent_enabled(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_reduced_motion") {
+                    theme.set_reduced_motion(v == "1");
+                }
+                if let Some(v) = kv_map.get("slint_panel_opacity").and_then(|s| s.parse::<f32>().ok()) {
+                    theme.set_panel_opacity((v / 100.0).clamp(0.50, 1.0));
+                }
+                if let Some(acc) = kv_map.get("slint_accent") {
+                    let (col, on) = match acc.as_str() {
+                        "indigo" => (slint::Color::from_rgb_u8(0x7c, 0x8c, 0xff), slint::Color::from_rgb_u8(0x12, 0x18, 0x4a)),
+                        "blue" => (slint::Color::from_rgb_u8(0x64, 0xb5, 0xf6), slint::Color::from_rgb_u8(0x0d, 0x2b, 0x45)),
+                        "teal" => (slint::Color::from_rgb_u8(0x4d, 0xb6, 0xac), slint::Color::from_rgb_u8(0x0b, 0x33, 0x2f)),
+                        "green" => (slint::Color::from_rgb_u8(0x81, 0xc7, 0x84), slint::Color::from_rgb_u8(0x12, 0x38, 0x15)),
+                        "amber" => (slint::Color::from_rgb_u8(0xff, 0xb7, 0x4d), slint::Color::from_rgb_u8(0x3d, 0x26, 0x00)),
+                        "rose" => (slint::Color::from_rgb_u8(0xf0, 0x62, 0x92), slint::Color::from_rgb_u8(0x4a, 0x0d, 0x24)),
+                        "mono" => (slint::Color::from_rgb_u8(0xe2, 0xe2, 0xe9), slint::Color::from_rgb_u8(0x12, 0x12, 0x14)),
+                        _ => (slint::Color::from_rgb_u8(0x9f, 0x99, 0xe6), slint::Color::from_rgb_u8(0x1e, 0x1a, 0x4d)),
+                    };
+                    theme.set_custom_accent(col);
+                    theme.set_custom_on_accent(on);
+                    theme.set_primary(col);
+                    theme.set_on_primary(on);
+                }
+
                 w.set_library_tracks(to_slint_model(lib_items));
                 w.set_favorite_tracks(to_slint_model(fav_items));
                 w.set_history_tracks(to_slint_model(hist_items));
@@ -791,12 +847,20 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     {
                         w.set_current_cover_blur(rgba_to_slint_image(bw, bh, braw));
                         w.set_current_has_blur(true);
-                        w.set_current_accent(slint::Color::from_rgb_u8(ar, ag, ab));
+                        let theme = w.global::<Theme>();
+                        if theme.get_dynamic_accent_enabled() {
+                            let col = slint::Color::from_rgb_u8(ar, ag, ab);
+                            w.set_current_accent(col);
+                            theme.set_primary(col);
+                        } else {
+                            w.set_current_accent(theme.get_custom_accent());
+                        }
                     }
                 }
             } else {
                 w.set_current_has_blur(false);
-                w.set_current_accent(slint::Color::from_rgb_u8(0x9f, 0x99, 0xe6));
+                let theme = w.global::<Theme>();
+                w.set_current_accent(theme.get_custom_accent());
             }
         }
 
@@ -814,7 +878,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             if let Some((bw, bh, braw, (ar, ag, ab))) = blur_data {
                                 w.set_current_cover_blur(rgba_to_slint_image(bw, bh, braw));
                                 w.set_current_has_blur(true);
-                                w.set_current_accent(slint::Color::from_rgb_u8(ar, ag, ab));
+                                let theme = w.global::<Theme>();
+                                if theme.get_dynamic_accent_enabled() {
+                                    let col = slint::Color::from_rgb_u8(ar, ag, ab);
+                                    w.set_current_accent(col);
+                                    theme.set_primary(col);
+                                } else {
+                                    w.set_current_accent(theme.get_custom_accent());
+                                }
                             }
                         }
                     });
@@ -1859,7 +1930,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     });
 
-    // 13. Switch UI Mode Callback
+    // 13. Switch UI Mode & Save Setting Callbacks
     let api_mode = api.clone();
     let rt_mode = rt_handle.clone();
     main_window.on_switch_ui_mode(move |target_mode| {
@@ -1867,6 +1938,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let mode_str = target_mode.to_string();
         rt_mode.spawn(async move {
             let _ = api_m.set_ui_mode(&mode_str).await;
+        });
+    });
+
+    let api_set = api.clone();
+    let rt_set = rt_handle.clone();
+    main_window.on_save_setting(move |key, val| {
+        let api_s = api_set.clone();
+        let k = key.to_string();
+        let v = val.to_string();
+        rt_set.spawn(async move {
+            let _ = api_s.set_setting(&k, &v).await;
         });
     });
 

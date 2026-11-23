@@ -387,9 +387,13 @@ export component RightPanel inherits Rectangle {
     in property <bool> current-is-favorite: false;
     in property <image> current-cover;
     in property <bool> current-has-cover: false;
+    in property <image> current-cover-blur;
+    in property <bool> current-has-blur: false;
     in property <color> accent-color: Theme.primary;
     in property <bool> has-accent: false;
     in property <bool> ambient-active: false;
+    in property <bool> banner-enabled: true;
+    in property <bool> gradient-enabled: true;
     in property <[LyricLineData]> lyrics-lines: [];
     in property <int> active-lyric-index: -1;
     in-out property <string> lyrics-mode: "Line";
@@ -401,20 +405,46 @@ export component RightPanel inherits Rectangle {
     callback close();
 
     width: 350px;
-    background: ambient-active ? #161618d9 : Theme.right-panel-bg;
-    backdrop-blur: ambient-active ? 24px : 0px;
+    background: (ambient-active && Theme.ambient-blur-enabled)
+        ? Theme.right-panel-bg.with-alpha(Theme.panel-opacity)
+        : Theme.right-panel-bg;
+    backdrop-blur: (ambient-active && Theme.ambient-blur-enabled) ? 28px : 0px;
     border-radius: 10px;
     clip: true;
-    animate background { duration: 400ms; easing: ease; }
+    animate background { duration: Theme.reduced-motion ? 0ms : 400ms; easing: ease; }
+
+    // Blurred cover banner (.right-panel-banner equivalent)
+    if banner-enabled && current-has-blur: Rectangle {
+        width: 100%;
+        height: 320px;
+        y: 0px;
+        clip: true;
+
+        Image {
+            source: current-cover-blur;
+            width: parent.width * 1.15;
+            height: parent.height * 1.15;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            image-fit: cover;
+            opacity: 0.55;
+        }
+
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: @linear-gradient(180deg, #16161822 0%, #16161899 55%, #161618 100%);
+        }
+    }
 
     // Top ambient accent gradient (#right-panel::before equivalent)
-    Rectangle {
+    if gradient-enabled: Rectangle {
         width: 100%;
         height: 100%;
         background: has-accent
-            ? @linear-gradient(180deg, accent-color.with-alpha(0.24) 0%, accent-color.with-alpha(0.09) 45%, #ffffff03 75%, transparent 100%)
-            : @linear-gradient(180deg, #ffffff22 0%, #ffffff0d 45%, #ffffff03 75%, transparent 100%);
-        animate background { duration: 400ms; easing: ease; }
+            ? @linear-gradient(180deg, accent-color.with-alpha(0.28) 0%, accent-color.with-alpha(0.10) 45%, #ffffff03 75%, transparent 100%)
+            : @linear-gradient(180deg, #ffffff1e 0%, #ffffff0a 45%, #ffffff03 75%, transparent 100%);
+        animate background { duration: Theme.reduced-motion ? 0ms : 400ms; easing: ease; }
     }
 
     panel-ta := TouchArea {}
@@ -653,8 +683,12 @@ export component RightPanel inherits Rectangle {
                         animate background { duration: 140ms; easing: ease-out; }
 
                         HorizontalLayout {
-                            padding: 8px;
+                            padding-top: 8px;
+                            padding-bottom: 8px;
+                            padding-right: 8px;
+                            padding-left: line.is_active ? 12px : 8px;
                             spacing: 8px;
+                            animate padding-left { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                             if line.is_gap: Image {
                                 source: @image-url("icons/music_note.svg");
                                 width: 18px;
@@ -664,11 +698,11 @@ export component RightPanel inherits Rectangle {
                             Text {
                                 text: line.is_gap ? "Instrumental" : line.text;
                                 color: line.is_active ? Theme.text-primary : (line.is_past ? #e2e2e988 : Theme.text-muted);
-                                font-size: line.is_active ? 18px : 15px;
+                                font-size: line.is_active ? 18.5px : 15px;
                                 font-weight: line.is_active ? 700 : 500;
                                 wrap: word-wrap;
-                                animate color { duration: 180ms; easing: ease-out; }
-                                animate font-size { duration: 180ms; easing: ease-out; }
+                                animate color { duration: Theme.reduced-motion ? 0ms : 200ms; easing: ease-out; }
+                                animate font-size { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                             }
                         }
 
@@ -690,20 +724,49 @@ export component SettingsModal inherits Rectangle {
     in-out property <float> eq-bass: 0.0;
     in-out property <float> eq-mid: 0.0;
     in-out property <float> eq-treble: 0.0;
+    in-out property <float> audio-speed: 1.0;
+    in-out property <float> audio-reverb: 0.0;
+    in-out property <float> audio-distortion: 0.0;
     in property <string> status-message: "";
+
+    // Live UI & Visual Settings
+    in-out property <bool> show-visualizer: true;
+    in-out property <float> visualizer-opacity: 0.08;
+    in-out property <bool> auto-hide-titlebar: true;
+    in-out property <bool> show-timestamps: true;
+    in-out property <bool> rp-banner-enabled: true;
+    in-out property <bool> rp-gradient-enabled: true;
+    in-out property <bool> tvk-blobs-enabled: true;
+    in-out property <string> search-platform: "ytmusic";
+    in property <int> local-count: 0;
+    in property <int> fav-count: 0;
+    in property <int> hist-count: 0;
+    in property <int> playlist-count: 0;
+
     callback switch-ui-mode(string);
     callback scan-folder();
     callback add-files();
     callback apply-preset(string);
     callback set-eq(float, float, float);
+    callback set-speed(float);
+    callback set-effects(float, float);
+    callback reset-audio();
+    callback clear-history();
+    callback clear-queue();
+    callback refresh-home();
+    callback open-audio-editor();
+    callback open-fullscreen-lyrics();
+    callback toggle-mini-mode();
+    callback save-setting(string, string);
     callback close();
 
     property <bool> native-ui-enabled: true;
+    property <string> settings-search: "";
 
     opacity: open ? 1.0 : 0.0;
     visible: self.opacity > 0.01;
     background: #00000085;
-    animate opacity { duration: 190ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+    animate opacity { duration: Theme.reduced-motion ? 0ms : 190ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
     // Swallow clicks on backdrop
     TouchArea {
@@ -715,15 +778,17 @@ export component SettingsModal inherits Rectangle {
         width: min(1060px, parent.width * 0.94);
         height: min(750px, parent.height * 0.88);
         x: (parent.width - self.width) / 2;
-        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 10px;
+        y: open ? (parent.height - self.height) / 2 : (parent.height - self.height) / 2 + 12px;
         border-radius: 28px;
-        background: #18191cbf;
-        backdrop-blur: 24px;
+        background: #18191cb8;
+        backdrop-blur: Theme.ambient-blur-enabled ? 28px : 0px;
+        border-width: 1px;
+        border-color: #ffffff14;
         drop-shadow-blur: 40px;
         drop-shadow-offset-y: 16px;
         drop-shadow-color: #00000099;
         clip: true;
-        animate y { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate y { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
 
         // Prevent backdrop click inside modal
         TouchArea {}
@@ -732,7 +797,7 @@ export component SettingsModal inherits Rectangle {
             // Left settings nav (256px, persis web_settings.png)
             Rectangle {
                 width: 256px;
-                background: #121316cc;
+                background: #121316c4;
 
                 VerticalLayout {
                     padding-left: 12px;
@@ -741,11 +806,12 @@ export component SettingsModal inherits Rectangle {
                     padding-bottom: 14px;
                     spacing: 8px;
 
-                    // Search settings pill
+                    // Search settings pill (interactive)
                     Rectangle {
                         height: 40px;
                         border-radius: 20px;
-                        background: #1e1f24;
+                        background: s-input.has-focus ? #282930 : #1e1f24;
+                        animate background { duration: 140ms; easing: ease-out; }
                         HorizontalLayout {
                             padding-left: 14px;
                             padding-right: 14px;
@@ -754,7 +820,37 @@ export component SettingsModal inherits Rectangle {
                                 alignment: center;
                                 Image { source: @image-url("icons/search_stroke.svg"); width: 16px; height: 16px; colorize: Theme.text-secondary; }
                             }
-                            Text { text: "Search settings..."; color: Theme.text-muted; font-size: 13.5px; font-weight: 500; vertical-alignment: center; }
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                clip: true;
+                                if settings-search == "": Text {
+                                    text: "Search settings...";
+                                    color: Theme.text-muted;
+                                    font-size: 13.5px;
+                                    font-weight: 500;
+                                    vertical-alignment: center;
+                                    width: 100%;
+                                    height: 100%;
+                                }
+                                s-input := TextInput {
+                                    text <=> settings-search;
+                                    color: Theme.text-primary;
+                                    font-size: 13.5px;
+                                    vertical-alignment: center;
+                                    single-line: true;
+                                    edited => {
+                                        if (settings-search == "theme" || settings-search == "color" || settings-search == "blur" || settings-search == "accent") { section = 1; }
+                                        else if (settings-search == "banner" || settings-search == "gradient") { section = 2; }
+                                        else if (settings-search == "eq" || settings-search == "audio" || settings-search == "speed" || settings-search == "reverb") { section = 3; }
+                                        else if (settings-search == "youtube" || settings-search == "soundcloud" || settings-search == "search") { section = 4; }
+                                        else if (settings-search == "storage" || settings-search == "folder" || settings-search == "files" || settings-search == "history") { section = 5; }
+                                        else if (settings-search == "motion" || settings-search == "advanced") { section = 6; }
+                                        else if (settings-search == "about" || settings-search == "version") { section = 7; }
+                                        else if (settings-search == "plugin") { section = 9; }
+                                        else if (settings-search == "account") { section = 10; }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -896,7 +992,7 @@ export component SettingsModal inherits Rectangle {
                             VerticalLayout {
                                 spacing: 6px;
 
-                                // Top card (outer top 20px, inner bottom 6px)
+                                // Top card
                                 Rectangle {
                                     border-top-left-radius: 20px;
                                     border-top-right-radius: 20px;
@@ -932,9 +1028,125 @@ export component SettingsModal inherits Rectangle {
                                     }
                                 }
 
-                                // Middle card (6px corners)
+                                // Show bottom wave visualizer
                                 Rectangle {
                                     border-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Show wave visualizer in bottom bar"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Real-time 16-band FFT spectrum behind the playbar"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> show-visualizer;
+                                                toggled(on) => { root.save-setting("slint_show_visualizer", on ? "1" : "0"); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Visualizer opacity
+                                if show-visualizer: Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 6px;
+                                        HorizontalLayout {
+                                            Text { text: "Playbar visualizer opacity"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; horizontal-stretch: 1; }
+                                            Text { text: Math.round(visualizer-opacity * 100) + "%"; color: Theme.primary; font-size: 13px; font-weight: 700; }
+                                        }
+                                        Slider {
+                                            height: 30px;
+                                            minimum: 0.02;
+                                            maximum: 0.30;
+                                            value <=> visualizer-opacity;
+                                            changed(v) => { root.save-setting("slint_visualizer_opacity", Math.round(v * 100) + ""); }
+                                        }
+                                    }
+                                }
+
+                                // Auto-hide top titlebar
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Auto-hide top titlebar"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Reveal floating window controls when hovering the top edge"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> auto-hide-titlebar;
+                                                toggled(on) => { root.save-setting("slint_auto_hide_titlebar", on ? "1" : "0"); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Show timestamps
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Show timeline timestamps"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Display elapsed and total duration beside the scrubber"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> show-timestamps;
+                                                toggled(on) => { root.save-setting("slint_show_timestamps", on ? "1" : "0"); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Compact mini player
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Compact mini player"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Switch between full desktop layout and compact mini window"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn {
+                                                label: "Toggle mini";
+                                                clicked => { root.close(); root.toggle-mini-mode(); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Bottom card
+                                Rectangle {
+                                    border-top-left-radius: 6px;
+                                    border-top-right-radius: 6px;
+                                    border-bottom-left-radius: 20px;
+                                    border-bottom-right-radius: 20px;
                                     background: #202126b8;
 
                                     HorizontalLayout {
@@ -958,34 +1170,6 @@ export component SettingsModal inherits Rectangle {
                                         }
                                     }
                                 }
-
-                                // Bottom card (inner top 6px, outer bottom 20px)
-                                Rectangle {
-                                    border-top-left-radius: 6px;
-                                    border-top-right-radius: 6px;
-                                    border-bottom-left-radius: 20px;
-                                    border-bottom-right-radius: 20px;
-                                    background: #202126b8;
-
-                                    HorizontalLayout {
-                                        padding: 16px;
-                                        spacing: 16px;
-                                        VerticalLayout {
-                                            horizontal-stretch: 1;
-                                            spacing: 3px;
-                                            Text { text: "Local Music Library"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                            Text { text: "Scan a folder on your computer for MP3, FLAC, WAV, OGG, M4A"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
-                                        }
-                                        VerticalLayout {
-                                            alignment: center;
-                                            PillBtn {
-                                                label: "Add folder";
-                                                primary: true;
-                                                clicked => { root.scan-folder(); }
-                                            }
-                                        }
-                                    }
-                                }
                             }
                         }
 
@@ -993,6 +1177,137 @@ export component SettingsModal inherits Rectangle {
                         if section == 1: VerticalLayout {
                             spacing: 14px;
                             Text { text: "Theme"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+
+                            VerticalLayout {
+                                spacing: 6px;
+
+                                // Accent color swatches
+                                Rectangle {
+                                    border-top-left-radius: 20px;
+                                    border-top-right-radius: 20px;
+                                    border-bottom-left-radius: 6px;
+                                    border-bottom-right-radius: 6px;
+                                    background: #202126b8;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 12px;
+                                        Text { text: "Accent color"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            alignment: start;
+                                            for sw in [
+                                                { id: "purple", col: #9f99e6, on: #1e1a4d },
+                                                { id: "indigo", col: #7c8cff, on: #12184a },
+                                                { id: "blue", col: #64b5f6, on: #0d2b45 },
+                                                { id: "teal", col: #4db6ac, on: #0b332f },
+                                                { id: "green", col: #81c784, on: #123815 },
+                                                { id: "amber", col: #ffb74d, on: #3d2600 },
+                                                { id: "rose", col: #f06292, on: #4a0d24 },
+                                                { id: "mono", col: #e2e2e9, on: #121214 },
+                                            ]: Rectangle {
+                                                width: 32px;
+                                                height: 32px;
+                                                border-radius: 16px;
+                                                background: sw.col;
+                                                border-width: Theme.custom-accent == sw.col ? 3px : 0px;
+                                                border-color: #ffffff;
+                                                TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => {
+                                                        Theme.custom-accent = sw.col;
+                                                        Theme.custom-on-accent = sw.on;
+                                                        Theme.primary = sw.col;
+                                                        Theme.on-primary = sw.on;
+                                                        root.save-setting("slint_accent", sw.id);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Dynamic cover accent
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Dynamic cover accent"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Extract dominant accent color from the currently playing track cover"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> Theme.dynamic-accent-enabled;
+                                                toggled(on) => {
+                                                    if (!on) {
+                                                        Theme.primary = Theme.custom-accent;
+                                                        Theme.on-primary = Theme.custom-on-accent;
+                                                    }
+                                                    root.save-setting("slint_dynamic_accent", on ? "1" : "0");
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Ambient cover blur
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Ambient cover blur"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Soft blurred album artwork backdrop behind translucent glass panels"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> Theme.ambient-blur-enabled;
+                                                toggled(on) => { root.save-setting("slint_ambient_blur", on ? "1" : "0"); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Panel glass opacity
+                                Rectangle {
+                                    border-top-left-radius: 6px;
+                                    border-top-right-radius: 6px;
+                                    border-bottom-left-radius: 20px;
+                                    border-bottom-right-radius: 20px;
+                                    background: #202126b8;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 6px;
+                                        HorizontalLayout {
+                                            Text { text: "Panel glass opacity"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; horizontal-stretch: 1; }
+                                            Text { text: Math.round(Theme.panel-opacity * 100) + "%"; color: Theme.primary; font-size: 13px; font-weight: 700; }
+                                        }
+                                        Slider {
+                                            height: 30px;
+                                            minimum: 0.50;
+                                            maximum: 1.0;
+                                            value <=> Theme.panel-opacity;
+                                            changed(v) => { root.save-setting("slint_panel_opacity", Math.round(v * 100) + ""); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 2: Banners
+                        if section == 2: VerticalLayout {
+                            spacing: 14px;
+                            Text { text: "Banners"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
 
                             VerticalLayout {
                                 spacing: 6px;
@@ -1008,14 +1323,36 @@ export component SettingsModal inherits Rectangle {
                                         VerticalLayout {
                                             horizontal-stretch: 1;
                                             spacing: 3px;
-                                            Text { text: "Material You Dark"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                            Text { text: "Dynamic accent color extracted from the currently playing track cover"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                            Text { text: "Now Playing cover banner"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Show blurred track artwork fading across the top of the right panel"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
                                         }
-                                        Rectangle {
-                                            width: 28px;
-                                            height: 28px;
-                                            border-radius: 14px;
-                                            background: Theme.primary;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> rp-banner-enabled;
+                                                toggled(on) => { root.save-setting("slint_rp_banner", on ? "1" : "0"); }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Now Playing ambient gradient"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Automatically tints the right panel header from track artwork"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> rp-gradient-enabled;
+                                                toggled(on) => { root.save-setting("slint_rp_gradient", on ? "1" : "0"); }
+                                            }
                                         }
                                     }
                                 }
@@ -1031,42 +1368,29 @@ export component SettingsModal inherits Rectangle {
                                         VerticalLayout {
                                             horizontal-stretch: 1;
                                             spacing: 3px;
-                                            Text { text: "Ambient cover blur"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                            Text { text: "Soft blurred album artwork backdrop behind translucent panels"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                            Text { text: "Fullscreen karaoke orbiting blobs"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Animated ambient color blobs behind fullscreen synced lyrics"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
                                         }
-                                        Text { text: "Active"; color: Theme.primary; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> tvk-blobs-enabled;
+                                                toggled(on) => { root.save-setting("slint_tvk_blobs", on ? "1" : "0"); }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        // 2: Banners
-                        if section == 2: VerticalLayout {
-                            spacing: 14px;
-                            Text { text: "Banners"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
-
-                            Rectangle {
-                                border-radius: 20px;
-                                background: #202126b8;
-                                HorizontalLayout {
-                                    padding: 16px;
-                                    spacing: 16px;
-                                    VerticalLayout {
-                                        horizontal-stretch: 1;
-                                        spacing: 3px;
-                                        Text { text: "Now Playing ambient gradient"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                        Text { text: "Automatically tints the right panel header from track artwork"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
-                                    }
-                                    Text { text: "Enabled"; color: Theme.primary; font-size: 13px; font-weight: 600; vertical-alignment: center; }
-                                }
-                            }
-                        }
-
-                        // 3: Tracks (Audio & EQ)
+                        // 3: Tracks (Audio, Speed, FX & EQ)
                         if section == 3: VerticalLayout {
                             spacing: 14px;
 
-                            Text { text: "Tracks"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+                            HorizontalLayout {
+                                Text { text: "Tracks & Audio"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; }
+                                PillBtn { label: "Reset audio"; btn-height: 28px; clicked => { root.reset-audio(); } }
+                            }
 
                             Rectangle {
                                 border-top-left-radius: 20px;
@@ -1085,8 +1409,7 @@ export component SettingsModal inherits Rectangle {
                                         alignment: start;
                                         for p in [
                                             { id: "p_default", label: "Default" },
-                                            { id: "p_speedup", label: "Speed up (orig pitch)" },
-                                            { id: "p_speedup_pitch", label: "Speed up" },
+                                            { id: "p_speedup", label: "Speed up" },
                                             { id: "p_slowed", label: "Slowed + reverb" },
                                             { id: "p_nightcore", label: "Nightcore" },
                                             { id: "p_distortion", label: "Distortion" },
@@ -1103,6 +1426,32 @@ export component SettingsModal inherits Rectangle {
                             }
 
                             Rectangle {
+                                border-radius: 6px;
+                                background: #202126b8;
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 8px;
+                                    HorizontalLayout {
+                                        Text { text: "Playback Speed"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; horizontal-stretch: 1; }
+                                        Text { text: Math.round(audio-speed * 100) / 100 + "x"; color: Theme.primary; font-size: 13px; font-weight: 700; }
+                                    }
+                                    Slider { height: 30px; minimum: 0.5; maximum: 2.0; value <=> audio-speed; changed(v) => { root.set-speed(v); } }
+
+                                    HorizontalLayout {
+                                        Text { text: "Reverb"; color: Theme.text-secondary; font-size: 13px; horizontal-stretch: 1; }
+                                        Text { text: Math.round(audio-reverb) + "%"; color: Theme.primary; font-size: 13px; font-weight: 700; }
+                                    }
+                                    Slider { height: 30px; minimum: 0.0; maximum: 100.0; value <=> audio-reverb; changed(v) => { root.set-effects(v, audio-distortion); } }
+
+                                    HorizontalLayout {
+                                        Text { text: "Distortion"; color: Theme.text-secondary; font-size: 13px; horizontal-stretch: 1; }
+                                        Text { text: Math.round(audio-distortion) + "%"; color: Theme.primary; font-size: 13px; font-weight: 700; }
+                                    }
+                                    Slider { height: 30px; minimum: 0.0; maximum: 100.0; value <=> audio-distortion; changed(v) => { root.set-effects(audio-reverb, v); } }
+                                }
+                            }
+
+                            Rectangle {
                                 border-top-left-radius: 6px;
                                 border-top-right-radius: 6px;
                                 border-bottom-left-radius: 20px;
@@ -1115,13 +1464,13 @@ export component SettingsModal inherits Rectangle {
                                     Text { text: "3-Band Equalizer"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
 
                                     Text { text: "Bass (100Hz): " + Math.round(eq-bass) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                                    Slider { minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
+                                    Slider { height: 30px; minimum: -12.0; maximum: 12.0; value <=> eq-bass; changed(v) => { root.set-eq(v, eq-mid, eq-treble); } }
 
                                     Text { text: "Mid (1kHz): " + Math.round(eq-mid) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                                    Slider { minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
+                                    Slider { height: 30px; minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
 
                                     Text { text: "Treble (8kHz): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
-                                    Slider { minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                                    Slider { height: 30px; minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
                                 }
                             }
                         }
@@ -1139,6 +1488,31 @@ export component SettingsModal inherits Rectangle {
                                     border-bottom-left-radius: 6px;
                                     border-bottom-right-radius: 6px;
                                     background: #202126b8;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 10px;
+                                        Text { text: "Default search engine"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            for eng in [
+                                                { id: "ytmusic", label: "YouTube Music" },
+                                                { id: "soundcloud", label: "SoundCloud" },
+                                                { id: "local", label: "Local" },
+                                            ]: PillBtn {
+                                                label: eng.label;
+                                                primary: search-platform == eng.id;
+                                                clicked => {
+                                                    search-platform = eng.id;
+                                                    root.save-setting("slint_search_platform", eng.id);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
                                     HorizontalLayout {
                                         padding: 16px;
                                         spacing: 16px;
@@ -1148,7 +1522,10 @@ export component SettingsModal inherits Rectangle {
                                             Text { text: "YouTube Music"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
                                             Text { text: "Native Rust search, trending charts, and stream resolver"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
                                         }
-                                        Text { text: "Connected"; color: Theme.primary; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn { label: "Refresh feed"; btn-height: 30px; clicked => { root.refresh-home(); } }
+                                        }
                                     }
                                 }
                                 Rectangle {
@@ -1164,7 +1541,7 @@ export component SettingsModal inherits Rectangle {
                                             horizontal-stretch: 1;
                                             spacing: 3px;
                                             Text { text: "SoundCloud"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                            Text { text: "Native Rust search and stream resolver"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                            Text { text: "Native Rust search, Smart Mirror, and HLS/MP3 resolver"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
                                         }
                                         Text { text: "Connected"; color: Theme.primary; font-size: 13px; font-weight: 600; vertical-alignment: center; }
                                     }
@@ -1194,7 +1571,7 @@ export component SettingsModal inherits Rectangle {
                                             horizontal-stretch: 1;
                                             spacing: 3px;
                                             Text { text: "Add audio files"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                            Text { text: "Import individual MP3, FLAC, WAV, OGG, or M4A files"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                            Text { text: "Import individual MP3, FLAC, WAV, OGG, or M4A files (" + local-count + " in library)"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
                                         }
                                         VerticalLayout {
                                             alignment: center;
@@ -1208,10 +1585,7 @@ export component SettingsModal inherits Rectangle {
                                 }
 
                                 Rectangle {
-                                    border-top-left-radius: 6px;
-                                    border-top-right-radius: 6px;
-                                    border-bottom-left-radius: 20px;
-                                    border-bottom-right-radius: 20px;
+                                    border-radius: 6px;
                                     background: #202126b8;
 
                                     HorizontalLayout {
@@ -1232,6 +1606,33 @@ export component SettingsModal inherits Rectangle {
                                         }
                                     }
                                 }
+
+                                Rectangle {
+                                    border-top-left-radius: 6px;
+                                    border-top-right-radius: 6px;
+                                    border-bottom-left-radius: 20px;
+                                    border-bottom-right-radius: 20px;
+                                    background: #202126b8;
+
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 10px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Playback data"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: hist-count + " history • " + fav-count + " liked • " + playlist-count + " playlists"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn { label: "Clear history"; clicked => { root.clear-history(); } }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn { label: "Clear queue"; clicked => { root.clear-queue(); } }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -1247,6 +1648,27 @@ export component SettingsModal inherits Rectangle {
                                     border-top-right-radius: 20px;
                                     border-bottom-left-radius: 6px;
                                     border-bottom-right-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Reduced motion"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text { text: "Minimize UI transitions, hover lifts, and animated equalizer bars"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> Theme.reduced-motion;
+                                                toggled(on) => { root.save-setting("slint_reduced_motion", on ? "1" : "0"); }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    border-radius: 6px;
                                     background: #202126b8;
                                     HorizontalLayout {
                                         padding: 16px;
@@ -1274,12 +1696,20 @@ export component SettingsModal inherits Rectangle {
                                     background: #202126b8;
                                     HorizontalLayout {
                                         padding: 16px;
-                                        spacing: 16px;
+                                        spacing: 10px;
                                         VerticalLayout {
                                             horizontal-stretch: 1;
                                             spacing: 3px;
                                             Text { text: "Audio Engine"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
                                             Text { text: status-message; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn { label: "Audio Editor"; clicked => { root.close(); root.open-audio-editor(); } }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn { label: "Karaoke"; clicked => { root.close(); root.open-fullscreen-lyrics(); } }
                                         }
                                     }
                                 }
@@ -1328,9 +1758,55 @@ export component SettingsModal inherits Rectangle {
                                 background: #202126b8;
                                 VerticalLayout {
                                     padding: 16px;
-                                    spacing: 4px;
-                                    Text { text: "Native Theme Tokens"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                    Text { text: "Custom CSS themes apply in WebView2 mode; native Slint uses Material You tokens."; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                    spacing: 12px;
+                                    Text { text: "Quick Theme Presets"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                    Text { text: "Apply curated Material You & glass presets instantly"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        PillBtn {
+                                            label: "Riff Purple";
+                                            primary: Theme.custom-accent == #9f99e6;
+                                            clicked => {
+                                                Theme.custom-accent = #9f99e6; Theme.custom-on-accent = #1e1a4d;
+                                                Theme.primary = #9f99e6; Theme.on-primary = #1e1a4d;
+                                                Theme.panel-bg = #0d0d0d; Theme.panel-opacity = 0.76;
+                                                root.save-setting("slint_accent", "purple");
+                                            }
+                                        }
+                                        PillBtn {
+                                            label: "Midnight OLED";
+                                            primary: Theme.panel-bg == #050507;
+                                            clicked => {
+                                                Theme.panel-bg = #050507; Theme.window-bg = #000000;
+                                                Theme.panel-opacity = 0.88;
+                                                root.save-setting("slint_panel_opacity", "88");
+                                            }
+                                        }
+                                        PillBtn {
+                                            label: "Ocean Glass";
+                                            primary: Theme.custom-accent == #64b5f6;
+                                            clicked => {
+                                                Theme.custom-accent = #64b5f6; Theme.custom-on-accent = #0d2b45;
+                                                Theme.primary = #64b5f6; Theme.on-primary = #0d2b45;
+                                                Theme.panel-bg = #0d0d0d; Theme.window-bg = #2b2b2e;
+                                                Theme.panel-opacity = 0.68;
+                                                root.save-setting("slint_accent", "blue");
+                                                root.save-setting("slint_panel_opacity", "68");
+                                            }
+                                        }
+                                        PillBtn {
+                                            label: "Rose Velvet";
+                                            primary: Theme.custom-accent == #f06292;
+                                            clicked => {
+                                                Theme.custom-accent = #f06292; Theme.custom-on-accent = #4a0d24;
+                                                Theme.primary = #f06292; Theme.on-primary = #4a0d24;
+                                                Theme.panel-bg = #0d0d0d; Theme.window-bg = #2b2b2e;
+                                                Theme.panel-opacity = 0.74;
+                                                root.save-setting("slint_accent", "rose");
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1342,11 +1818,25 @@ export component SettingsModal inherits Rectangle {
                             Rectangle {
                                 border-radius: 20px;
                                 background: #202126b8;
-                                VerticalLayout {
+                                HorizontalLayout {
                                     padding: 16px;
-                                    spacing: 4px;
-                                    Text { text: "JavaScript Plugins"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
-                                    Text { text: "JS plugins run in WebView2 mode. Switch to Web UI in Interface to manage JS plugins."; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                    spacing: 16px;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 4px;
+                                        Text { text: "JavaScript Plugins"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                        Text { text: "JS plugins run in WebView2 mode. Switch to Web UI to manage JS plugins."; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        PillBtn {
+                                            label: "Use Web UI";
+                                            clicked => {
+                                                native-ui-enabled = false;
+                                                root.switch-ui-mode("web");
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1366,7 +1856,7 @@ export component SettingsModal inherits Rectangle {
                                         alignment: center;
                                         spacing: 2px;
                                         Text { text: "User"; color: Theme.text-primary; font-size: 15px; font-weight: 700; }
-                                        Text { text: "Local Riff profile"; color: Theme.text-muted; font-size: 12.5px; }
+                                        Text { text: "Local Riff profile • " + fav-count + " liked • " + playlist-count + " playlists"; color: Theme.text-muted; font-size: 12.5px; }
                                     }
                                 }
                             }
@@ -1442,6 +1932,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
     in property <[LyricLineData]> lyrics-lines: [];
     in property <int> active-lyric-index: -1;
     in property <[float]> spectrum-bands: [];
+    in property <bool> blobs-enabled: true;
 
     // Customize panel state (#tvk-panel)
     in-out property <bool> settings-panel-open: false;
@@ -1488,7 +1979,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
     }
 
     // Orbiting ambient blobs (tvkOrbit1..3)
-    Rectangle {
+    if blobs-enabled: Rectangle {
         width: parent.width * 0.72;
         height: parent.width * 0.72;
         border-radius: self.width / 2;
@@ -1496,7 +1987,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
         y: -self.height * 0.24 + Math.cos(t-sec * 0.29rad) * 45px;
         background: @radial-gradient(circle, accent-color.with-alpha(0.38) 0%, transparent 70%);
     }
-    Rectangle {
+    if blobs-enabled: Rectangle {
         width: parent.width * 0.68;
         height: parent.width * 0.68;
         border-radius: self.width / 2;

@@ -13,21 +13,23 @@ export component IconBtn inherits Rectangle {
 
     width: 36px;
     height: 36px;
-    border-radius: (ta.has-hover && !disabled) ? self.width * 0.4 : self.width / 2;
+    border-radius: (ta.has-hover && !disabled) ? self.width * 0.38 : self.width / 2;
     background: active ? active-bg : (ta.has-hover && !disabled ? Theme.surface-hover : base-bg);
-    opacity: disabled ? 0.28 : (ta.pressed ? 0.82 : 1.0);
-    animate background { duration: 160ms; easing: ease-out; }
-    animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-    animate opacity { duration: 120ms; easing: ease-out; }
+    opacity: disabled ? 0.28 : (ta.pressed ? 0.78 : 1.0);
+    animate background { duration: Theme.reduced-motion ? 0ms : 150ms; easing: ease-out; }
+    animate border-radius { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+    animate opacity { duration: Theme.reduced-motion ? 0ms : 110ms; easing: ease-out; }
 
     Image {
         source: icon;
-        width: icon-size;
-        height: icon-size;
-        colorize: active ? active-icon-color : icon-color;
+        width: ta.pressed && !disabled ? icon-size * 0.9 : icon-size;
+        height: ta.pressed && !disabled ? icon-size * 0.9 : icon-size;
+        colorize: active ? active-icon-color : (ta.has-hover && !disabled ? Theme.text-primary : icon-color);
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        animate colorize { duration: 140ms; easing: ease-out; }
+        animate colorize { duration: Theme.reduced-motion ? 0ms : 140ms; easing: ease-out; }
+        animate width { duration: Theme.reduced-motion ? 0ms : 120ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate height { duration: Theme.reduced-motion ? 0ms : 120ms; easing: cubic-bezier(0.2, 0, 0, 1); }
     }
 
     ta := TouchArea {
@@ -234,15 +236,18 @@ export component TrackRow inherits Rectangle {
     in property <int> index;
     in property <TrackData> track;
     in property <bool> is-current: false;
+    in property <bool> is-playing: false;
     in property <bool> show-album: true;
     callback play-clicked();
     callback toggle-favorite();
     callback add-to-playlist();
 
+    property <float> eq-t: (is-current && is-playing && !Theme.reduced-motion) ? (animation-tick() / 1s) : 0.0;
+
     height: 64px;
     border-radius: 8px;
-    background: is-current ? Theme.surface-active : (ta.has-hover || fav-ta.has-hover || add-ta.has-hover ? #ffffff0d : transparent);
-    animate background { duration: 140ms; easing: ease-out; }
+    background: is-current ? Theme.surface-active : (ta.has-hover || fav-ta.has-hover || add-ta.has-hover ? #ffffff0f : transparent);
+    animate background { duration: Theme.reduced-motion ? 0ms : 140ms; easing: ease-out; }
 
     ta := TouchArea {
         mouse-cursor: pointer;
@@ -254,15 +259,58 @@ export component TrackRow inherits Rectangle {
         padding-right: 14px;
         spacing: 12px;
 
-        // #
-        Text {
+        // # or animated playing EQ bars (spBarEq)
+        Rectangle {
             width: 24px;
-            text: (is-current || ta.has-hover) ? "▶" : (index + 1);
-            color: is-current ? Theme.primary : (ta.has-hover ? Theme.text-primary : Theme.text-muted);
-            font-size: 13px;
-            font-weight: is-current ? 700 : 500;
-            horizontal-alignment: center;
-            vertical-alignment: center;
+            height: 100%;
+
+            if is-current && is-playing && !ta.has-hover: HorizontalLayout {
+                width: 16px;
+                height: 14px;
+                x: 4px;
+                y: (parent.height - self.height) / 2;
+                spacing: 2px;
+                alignment: center;
+
+                VerticalLayout {
+                    alignment: end;
+                    Rectangle {
+                        width: 3px;
+                        height: 4px + 10px * (0.5 + 0.5 * Math.sin(eq-t * 7.5rad));
+                        border-radius: 1.5px;
+                        background: Theme.primary;
+                    }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    Rectangle {
+                        width: 3px;
+                        height: 4px + 10px * (0.5 + 0.5 * Math.sin(eq-t * 9.2rad + 1.8rad));
+                        border-radius: 1.5px;
+                        background: Theme.primary;
+                    }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    Rectangle {
+                        width: 3px;
+                        height: 4px + 10px * (0.5 + 0.5 * Math.sin(eq-t * 6.4rad + 3.4rad));
+                        border-radius: 1.5px;
+                        background: Theme.primary;
+                    }
+                }
+            }
+
+            if !(is-current && is-playing && !ta.has-hover): Text {
+                width: 100%;
+                height: 100%;
+                text: (is-current || ta.has-hover) ? "▶" : (index + 1);
+                color: is-current ? Theme.primary : (ta.has-hover ? Theme.text-primary : Theme.text-muted);
+                font-size: 13px;
+                font-weight: is-current ? 700 : 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
         }
 
         // Cover 46x46
@@ -293,8 +341,10 @@ export component TrackRow inherits Rectangle {
             }
         }
 
-        // Title + Artist
+        // Title + Artist (fixed 0 preferred-width so stretch 2:1 aligns Album column straight!)
         VerticalLayout {
+            min-width: 0px;
+            preferred-width: 0px;
             horizontal-stretch: 2;
             alignment: center;
             spacing: 2px;
@@ -315,14 +365,53 @@ export component TrackRow inherits Rectangle {
             }
         }
 
-        // Album
-        if show-album: Text {
+        // Album / Platform with logo (fixed 0 preferred-width so every row aligns straight!)
+        if show-album: HorizontalLayout {
+            min-width: 0px;
+            preferred-width: 0px;
             horizontal-stretch: 1;
-            text: track.album != "" ? track.album : track.platform;
-            color: Theme.text-muted;
-            font-size: 12.5px;
-            vertical-alignment: center;
-            overflow: elide;
+            spacing: 7px;
+            alignment: start;
+
+            VerticalLayout {
+                alignment: center;
+                Image {
+                    width: 14px;
+                    height: 14px;
+                    source: track.platform == "soundcloud"
+                        ? @image-url("icons/soundcloud.svg")
+                        : (track.platform == "local"
+                            ? @image-url("icons/cloud_off.svg")
+                            : (track.platform == "history"
+                                ? @image-url("icons/ms_history.svg")
+                                : (track.platform == "favorite"
+                                    ? @image-url("icons/heart_fill.svg")
+                                    : @image-url("icons/ytmusic.svg"))));
+                    colorize: track.platform == "soundcloud"
+                        ? #ff7700
+                        : (track.platform == "local" || track.platform == "history"
+                            ? Theme.text-muted
+                            : (track.platform == "favorite"
+                                ? Theme.primary
+                                : #ff4e45));
+                }
+            }
+
+            Text {
+                min-width: 0px;
+                horizontal-stretch: 1;
+                text: track.album != ""
+                    ? track.album
+                    : (track.platform == "ytmusic"
+                        ? "YouTube Music"
+                        : (track.platform == "soundcloud"
+                            ? "SoundCloud"
+                            : (track.platform == "local" ? "Local" : track.platform)));
+                color: Theme.text-muted;
+                font-size: 12.5px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
         }
 
         // Add to playlist button (visible on hover)

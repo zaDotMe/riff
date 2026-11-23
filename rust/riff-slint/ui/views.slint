@@ -14,8 +14,8 @@ component TableHeader inherits Rectangle {
 
         Text { width: 24px; text: "#"; color: Theme.text-muted; font-size: 12px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
         Rectangle { width: 46px; }
-        Text { horizontal-stretch: 2; text: "Title"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
-        if show-album: Text { horizontal-stretch: 1; text: "Album"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+        Text { min-width: 0px; preferred-width: 0px; horizontal-stretch: 2; text: "Title"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+        if show-album: Text { min-width: 0px; preferred-width: 0px; horizontal-stretch: 1; text: "Album"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
         if show-extra-cols: Text { width: 64px; text: "Plays"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
         if show-extra-cols: Text { width: 90px; text: "Date added"; color: Theme.text-muted; font-size: 12px; font-weight: 500; vertical-alignment: center; }
         Rectangle { width: 64px; }
@@ -314,6 +314,7 @@ export component HomeView inherits ScrollView {
 export component SearchView inherits ScrollView {
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
+    in property <bool> is-playing: false;
     in-out property <string> search-platform: "ytmusic";
     callback play-track(TrackData);
     callback platform-changed(string);
@@ -386,6 +387,7 @@ export component SearchView inherits ScrollView {
                 index: idx;
                 track: t;
                 is-current: t.id == current-id && current-id != "";
+                is-playing: root.is-playing;
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
@@ -398,6 +400,7 @@ export component SearchView inherits ScrollView {
 export component LocalFilesView inherits ScrollView {
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
+    in property <bool> is-playing: false;
     callback play-track(TrackData);
     callback add-files();
     callback scan-folder();
@@ -583,6 +586,7 @@ export component LocalFilesView inherits ScrollView {
                 index: idx;
                 track: t;
                 is-current: t.id == current-id && current-id != "";
+                is-playing: root.is-playing;
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
@@ -595,6 +599,7 @@ export component LocalFilesView inherits ScrollView {
 export component FavoritesView inherits ScrollView {
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
+    in property <bool> is-playing: false;
     callback play-track(TrackData);
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
@@ -739,6 +744,7 @@ export component FavoritesView inherits ScrollView {
                 index: idx;
                 track: t;
                 is-current: t.id == current-id && current-id != "";
+                is-playing: root.is-playing;
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
@@ -751,6 +757,7 @@ export component FavoritesView inherits ScrollView {
 export component HistoryView inherits ScrollView {
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
+    in property <bool> is-playing: false;
     callback play-track(TrackData);
     callback clear-history();
     callback toggle-favorite(TrackData);
@@ -868,6 +875,7 @@ export component HistoryView inherits ScrollView {
                 index: idx;
                 track: t;
                 is-current: t.id == current-id && current-id != "";
+                is-playing: root.is-playing;
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
@@ -880,6 +888,7 @@ export component HistoryView inherits ScrollView {
 export component QueueView inherits ScrollView {
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
+    in property <bool> is-playing: false;
     callback play-track(TrackData);
     callback clear-queue();
     callback toggle-favorite(TrackData);
@@ -932,6 +941,7 @@ export component QueueView inherits ScrollView {
                 index: idx;
                 track: t;
                 is-current: t.id == current-id && current-id != "";
+                is-playing: root.is-playing;
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
@@ -946,6 +956,7 @@ export component PlaylistDetailView inherits ScrollView {
     in property <string> playlist-name: "Playlist";
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
+    in property <bool> is-playing: false;
     callback play-track(TrackData);
     callback play-all();
     callback shuffle-play();
@@ -1096,6 +1107,7 @@ export component PlaylistDetailView inherits ScrollView {
                 index: idx;
                 track: t;
                 is-current: t.id == current-id && current-id != "";
+                is-playing: root.is-playing;
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }

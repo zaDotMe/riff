@@ -83,6 +83,15 @@ export component MainWindow inherits Window {
     in-out property <bool> toast_open: false;
     in-out property <string> toast_text: "";
 
+    // Live UI & Visual Settings
+    in-out property <bool> show_visualizer: true;
+    in-out property <float> visualizer_opacity: 0.08;
+    in-out property <bool> auto_hide_titlebar: true;
+    in-out property <bool> show_timestamps: true;
+    in-out property <bool> rp_banner_enabled: true;
+    in-out property <bool> rp_gradient_enabled: true;
+    in-out property <bool> tvk_blobs_enabled: true;
+
     // Equalizer & Audio FX State
     in-out property <float> eq_bass: 0.0;
     in-out property <float> eq_mid: 0.0;
@@ -133,6 +142,7 @@ export component MainWindow inherits Window {
     callback switch_ui_mode(string);
     callback refresh_home();
     callback toggle_mini_mode();
+    callback save_setting(string, string);
     callback window_minimize();
     callback window_maximize();
     callback window_close();
@@ -142,23 +152,23 @@ export component MainWindow inherits Window {
         width: 100%;
         height: 100%;
         clip: true;
-        opacity: current_has_blur ? 1.0 : 0.0;
-        animate opacity { duration: 700ms; easing: ease; }
+        opacity: (current_has_blur && Theme.ambient-blur-enabled) ? 1.0 : 0.0;
+        animate opacity { duration: Theme.reduced-motion ? 0ms : 700ms; easing: ease; }
 
-        if current_has_blur: Image {
+        if current_has_blur && Theme.ambient-blur-enabled: Image {
             source: current_cover_blur;
-            width: parent.width * 1.16;
-            height: parent.height * 1.16;
+            width: parent.width * 1.18;
+            height: parent.height * 1.18;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             image-fit: cover;
-            opacity: 0.48;
+            opacity: 0.68;
         }
 
         Rectangle {
             width: 100%;
             height: 100%;
-            background: @linear-gradient(180deg, #0d0d0d55 0%, #0d0d0d88 100%);
+            background: @linear-gradient(180deg, current_accent.with-alpha(0.16) 0%, #0d0d0d66 55%, #0d0d0d99 100%);
         }
     }
 
@@ -429,12 +439,14 @@ export component MainWindow inherits Window {
                     opacity: mini_mode ? 0.0 : 1.0;
                     visible: self.width > 1px;
                     clip: true;
-                    background: current_has_blur ? #0d0d0dd9 : Theme.panel-bg;
-                    backdrop-blur: current_has_blur ? 24px : 0px;
+                    background: (current_has_blur && Theme.ambient-blur-enabled)
+                        ? Theme.panel-bg.with-alpha(Theme.panel-opacity)
+                        : Theme.panel-bg;
+                    backdrop-blur: (current_has_blur && Theme.ambient-blur-enabled) ? 28px : 0px;
                     border-radius: 10px;
-                    animate width { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-                    animate opacity { duration: 160ms; easing: ease-out; }
-                    animate background { duration: 400ms; easing: ease; }
+                    animate width { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                    animate opacity { duration: Theme.reduced-motion ? 0ms : 160ms; easing: ease-out; }
+                    animate background { duration: Theme.reduced-motion ? 0ms : 400ms; easing: ease; }
 
                     VerticalLayout {
                         padding: 12px;
@@ -867,11 +879,13 @@ export component MainWindow inherits Window {
                 // MAIN CONTENT (#0d0d0d, radius 12px)
                 Rectangle {
                     horizontal-stretch: 1;
-                    background: current_has_blur ? #0d0d0dd9 : Theme.panel-bg;
-                    backdrop-blur: current_has_blur ? 24px : 0px;
+                    background: (current_has_blur && Theme.ambient-blur-enabled)
+                        ? Theme.panel-bg.with-alpha(Theme.panel-opacity)
+                        : Theme.panel-bg;
+                    backdrop-blur: (current_has_blur && Theme.ambient-blur-enabled) ? 28px : 0px;
                     border-radius: 12px;
                     clip: true;
-                    animate background { duration: 400ms; easing: ease; }
+                    animate background { duration: Theme.reduced-motion ? 0ms : 400ms; easing: ease; }
 
                     HomeView {
                         width: 100%;
@@ -901,6 +915,7 @@ export component MainWindow inherits Window {
                         animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.search_results;
                         current-id: root.current_id;
+                        is-playing: root.is_playing;
                         search-platform <=> root.search_platform;
                         play-track(t) => { root.play_track(t); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
@@ -922,6 +937,7 @@ export component MainWindow inherits Window {
                         animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.library_tracks;
                         current-id: root.current_id;
+                        is-playing: root.is_playing;
                         play-track(t) => { root.play_track(t); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
@@ -939,6 +955,7 @@ export component MainWindow inherits Window {
                         animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.favorite_tracks;
                         current-id: root.current_id;
+                        is-playing: root.is_playing;
                         play-track(t) => { root.play_track(t); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
@@ -954,6 +971,7 @@ export component MainWindow inherits Window {
                         animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.history_tracks;
                         current-id: root.current_id;
+                        is-playing: root.is_playing;
                         play-track(t) => { root.play_track(t); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
@@ -970,6 +988,7 @@ export component MainWindow inherits Window {
                         animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                         tracks: root.queue_tracks;
                         current-id: root.current_id;
+                        is-playing: root.is_playing;
                         play-track(t) => { root.play_track(t); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
@@ -988,6 +1007,7 @@ export component MainWindow inherits Window {
                         playlist-name: root.active_playlist_name;
                         tracks: root.active_playlist_tracks;
                         current-id: root.current_id;
+                        is-playing: root.is_playing;
                         play-track(t) => { root.play_track(t); }
                         play-all => { root.play_playlist_all(false); }
                         shuffle-play => { root.play_playlist_all(true); }
@@ -1050,9 +1070,13 @@ export component MainWindow inherits Window {
                         current-is-favorite: root.current_is_favorite;
                         current-cover: root.current_cover;
                         current-has-cover: root.current_has_cover;
+                        current-cover-blur: root.current_cover_blur;
+                        current-has-blur: root.current_has_blur;
                         accent-color: root.current_accent;
                         has-accent: root.current_has_blur;
                         ambient-active: root.current_has_blur;
+                        banner-enabled: root.rp_banner_enabled;
+                        gradient-enabled: root.rp_gradient_enabled;
                         lyrics-lines: root.lyrics_lines;
                         active-lyric-index: root.active_lyric_index;
                         seek-to(pos) => { root.seek_to(pos); }
@@ -1071,7 +1095,7 @@ export component MainWindow inherits Window {
                 background: transparent;
 
                 // Subtle bottom FFT visualizer behind playbar (persis bottom-visualizer)
-                HorizontalLayout {
+                if show_visualizer: HorizontalLayout {
                     x: 0px;
                     y: 0px;
                     width: 100%;
@@ -1079,7 +1103,7 @@ export component MainWindow inherits Window {
                     padding-left: 16px;
                     padding-right: 16px;
                     spacing: 6px;
-                    opacity: 0.06;
+                    opacity: visualizer_opacity;
 
                     for band in spectrum_bands: VerticalLayout {
                         horizontal-stretch: 1;
@@ -1088,7 +1112,7 @@ export component MainWindow inherits Window {
                             height: max(2px, min(76px, band * 76px));
                             border-radius: 3px;
                             background: Theme.primary;
-                            animate height { duration: 90ms; easing: ease-out; }
+                            animate height { duration: Theme.reduced-motion ? 0ms : 80ms; easing: ease-out; }
                         }
                     }
                 }
@@ -1241,7 +1265,7 @@ export component MainWindow inherits Window {
                                 font-size: 11.5px;
                                 horizontal-alignment: right;
                                 vertical-alignment: center;
-                                opacity: current_id != "" ? 1.0 : 0.0;
+                                opacity: (show_timestamps && current_id != "") ? 1.0 : 0.0;
                                 animate opacity { duration: 180ms; easing: ease-out; }
                             }
 
@@ -1259,7 +1283,7 @@ export component MainWindow inherits Window {
                                 color: Theme.text-muted;
                                 font-size: 11.5px;
                                 vertical-alignment: center;
-                                opacity: current_id != "" ? 1.0 : 0.0;
+                                opacity: (show_timestamps && current_id != "") ? 1.0 : 0.0;
                                 animate opacity { duration: 180ms; easing: ease-out; }
                             }
                         }
@@ -1398,6 +1422,7 @@ export component MainWindow inherits Window {
         lyrics-lines: root.lyrics_lines;
         active-lyric-index: root.active_lyric_index;
         spectrum-bands: root.spectrum_bands;
+        blobs-enabled: root.tvk_blobs_enabled;
         toggle-play-pause => { root.toggle_play_pause(); }
         play-prev => { root.play_prev(); }
         play-next => { root.play_next(); }
@@ -1498,12 +1523,37 @@ export component MainWindow inherits Window {
         eq-bass <=> root.eq_bass;
         eq-mid <=> root.eq_mid;
         eq-treble <=> root.eq_treble;
+        audio-speed <=> root.audio_speed;
+        audio-reverb <=> root.audio_reverb;
+        audio-distortion <=> root.audio_distortion;
         status-message: root.status_message;
+        show-visualizer <=> root.show_visualizer;
+        visualizer-opacity <=> root.visualizer_opacity;
+        auto-hide-titlebar <=> root.auto_hide_titlebar;
+        show-timestamps <=> root.show_timestamps;
+        rp-banner-enabled <=> root.rp_banner_enabled;
+        rp-gradient-enabled <=> root.rp_gradient_enabled;
+        tvk-blobs-enabled <=> root.tvk_blobs_enabled;
+        search-platform <=> root.search_platform;
+        local-count: root.library_tracks.length;
+        fav-count: root.favorite_tracks.length;
+        hist-count: root.history_tracks.length;
+        playlist-count: root.playlists.length;
         switch-ui-mode(m) => { root.switch_ui_mode(m); }
         scan-folder => { root.scan_local_folder(); }
         add-files => { root.add_local_files(); }
         apply-preset(p) => { root.apply_eq_preset(p); }
         set-eq(b, m, t) => { root.set_equalizer(b, m, t); }
+        set-speed(s) => { root.set_audio_speed(s); }
+        set-effects(r, d) => { root.set_audio_effects(r, d); }
+        reset-audio => { root.reset_audio_settings(); }
+        clear-history => { root.clear_play_history(); }
+        clear-queue => { root.clear_queue(); }
+        refresh-home => { root.refresh_home(); }
+        open-audio-editor => { audio_editor_open = true; }
+        open-fullscreen-lyrics => { fullscreen_lyrics_open = true; }
+        toggle-mini-mode => { root.toggle_mini_mode(); }
+        save-setting(k, v) => { root.save_setting(k, v); }
         close => { settings_open = false; }
     }
 
@@ -1527,7 +1577,7 @@ export component MainWindow inherits Window {
 
     titlebar_hide_timer := Timer {
         interval: 350ms;
-        running: titlebar_revealed && !top_edge_sensor.has-hover && !titlebar.any-hover;
+        running: auto_hide_titlebar && titlebar_revealed && !top_edge_sensor.has-hover && !titlebar.any-hover;
         triggered => {
             titlebar_revealed = false;
         }
@@ -1536,7 +1586,7 @@ export component MainWindow inherits Window {
     titlebar := Titlebar {
         x: 0px;
         width: 100%;
-        revealed: titlebar_revealed;
+        revealed: !auto_hide_titlebar || titlebar_revealed;
         lyrics-open: root.lyrics_open;
         is-maximized: root.is_maximized;
         mini-mode: root.mini_mode;
