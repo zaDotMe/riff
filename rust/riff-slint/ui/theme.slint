@@ -18,6 +18,19 @@ export struct TrackData {
     has_cover: bool,
 }
 
+export struct LyricWordData {
+    text: string,
+    start_sec: float,
+    end_sec: float,
+    is_past: bool,
+    is_active: bool,
+    progress: float,
+}
+
+export struct LyricRowData {
+    words: [LyricWordData],
+}
+
 export struct LyricLineData {
     time_sec: float,
     time_str: string,
@@ -25,6 +38,8 @@ export struct LyricLineData {
     is_active: bool,
     is_past: bool,
     is_gap: bool,
+    is_synced: bool,
+    rows: [LyricRowData],
 }
 
 export struct SyncLineData {

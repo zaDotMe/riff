@@ -160,9 +160,184 @@ fn is_gap_text(text: &str) -> bool {
         || t.eq_ignore_ascii_case("[Music]")
 }
 
+fn format_source_label(src: &str) -> &'static str {
+    match src.to_ascii_lowercase().as_str() {
+        "custom" => "Custom",
+        "lrclib" => "LRCLIB",
+        "musixmatch" => "Musixmatch",
+        "kugou" => "Kugou",
+        "netease" => "NetEase",
+        "auto" => "Auto",
+        _ => "None",
+    }
+}
+
+#[derive(Clone)]
+struct LyricWordItem {
+    text: String,
+    start_sec: f32,
+    end_sec: f32,
+    is_past: bool,
+    is_active: bool,
+    progress: f32,
+}
+
+#[derive(Clone)]
+struct LyricLineItem {
+    time_sec: f32,
+    time_str: String,
+    text: String,
+    is_active: bool,
+    is_past: bool,
+    is_gap: bool,
+    is_synced: bool,
+    words: Vec<LyricWordItem>,
+}
+
+fn build_word_rows(words: &[LyricWordItem], max_chars: usize) -> ModelRc<LyricRowData> {
+    if words.is_empty() {
+        return ModelRc::new(VecModel::from(Vec::new()));
+    }
+    let mut rows: Vec<LyricRowData> = Vec::new();
+    let mut cur_row: Vec<LyricWordData> = Vec::new();
+    let mut cur_len = 0usize;
+
+    for w in words {
+        let w_len = w.text.chars().count();
+        if !cur_row.is_empty() && cur_len + 1 + w_len > max_chars {
+            rows.push(LyricRowData {
+                words: ModelRc::new(VecModel::from(std::mem::take(&mut cur_row))),
+            });
+            cur_len = 0;
+        }
+        if !cur_row.is_empty() {
+            cur_len += 1;
+        }
+        cur_len += w_len;
+        cur_row.push(LyricWordData {
+            text: SharedString::from(&w.text),
+            start_sec: w.start_sec,
+            end_sec: w.end_sec,
+            is_past: w.is_past,
+            is_active: w.is_active,
+            progress: w.progress,
+        });
+    }
+    if !cur_row.is_empty() {
+        rows.push(LyricRowData {
+            words: ModelRc::new(VecModel::from(cur_row)),
+        });
+    }
+    ModelRc::new(VecModel::from(rows))
+}
+
+fn to_slint_lyrics(items: &[LyricLineItem]) -> ModelRc<LyricLineData> {
+    let data: Vec<LyricLineData> = items
+        .iter()
+        .map(|l| LyricLineData {
+            time_sec: l.time_sec,
+            time_str: SharedString::from(&l.time_str),
+            text: SharedString::from(&l.text),
+            is_active: l.is_active,
+            is_past: l.is_past,
+            is_gap: l.is_gap,
+            is_synced: l.is_synced,
+            rows: build_word_rows(&l.words, 28),
+        })
+        .collect();
+    ModelRc::new(VecModel::from(data))
+}
+
+fn parse_enhanced_lrc_words(raw: &str, _line_start: f32, line_end: f32) -> (String, Vec<LyricWordItem>) {
+    let mut tags: Vec<(f32, usize, usize)> = Vec::new();
+    let mut idx = 0usize;
+    while let Some(rel_open) = raw[idx..].find('<') {
+        let open = idx + rel_open;
+        if let Some(rel_close) = raw[open + 1..].find('>') {
+            let close = open + 1 + rel_close;
+            let inner = &raw[open + 1..close];
+            if let Some((m_s, s_s)) = inner.split_once(':') {
+                if let (Ok(m), Ok(s)) = (m_s.parse::<f32>(), s_s.parse::<f32>()) {
+                    tags.push((m * 60.0 + s, open, close + 1));
+                    idx = close + 1;
+                    continue;
+                }
+            }
+        }
+        idx = open + 1;
+    }
+
+    if tags.is_empty() {
+        return (raw.trim().to_string(), Vec::new());
+    }
+
+    let mut words = Vec::new();
+    let mut clean_parts = Vec::new();
+    for i in 0..tags.len() {
+        let (w_start, _, end_tag) = tags[i];
+        let next_start_idx = tags.get(i + 1).map(|t| t.1).unwrap_or(raw.len());
+        let w_text = raw[end_tag..next_start_idx].trim();
+        if !w_text.is_empty() {
+            let w_end = tags
+                .get(i + 1)
+                .map(|t| t.0)
+                .unwrap_or_else(|| if line_end > w_start { line_end } else { w_start + 0.5 });
+            clean_parts.push(w_text.to_string());
+            words.push(LyricWordItem {
+                text: w_text.to_string(),
+                start_sec: w_start,
+                end_sec: w_end.max(w_start + 0.08),
+                is_past: false,
+                is_active: false,
+                progress: 0.0,
+            });
+        }
+    }
+    (clean_parts.join(" "), words)
+}
+
+fn estimate_words_for_line(text: &str, line_start: f32, line_end: f32) -> Vec<LyricWordItem> {
+    let tokens: Vec<&str> = text.split_whitespace().filter(|s| !s.is_empty()).collect();
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+    let line_dur = (line_end - line_start).max(0.4);
+    let mut weights = Vec::with_capacity(tokens.len());
+    let mut sum_w = 0.0f32;
+    for tok in &tokens {
+        let clean_len = tok.chars().filter(|c| c.is_alphanumeric()).count() as f32;
+        let mut w = (clean_len * 0.55).max(1.4);
+        if tok.ends_with('.') || tok.ends_with('!') || tok.ends_with('?') || tok.ends_with('…') {
+            w += 2.5;
+        } else if tok.ends_with(',') || tok.ends_with(';') || tok.ends_with(':') {
+            w += 1.4;
+        }
+        sum_w += w;
+        weights.push(w);
+    }
+
+    let mut out = Vec::with_capacity(tokens.len());
+    let mut cur_t = line_start;
+    for (i, tok) in tokens.into_iter().enumerate() {
+        let dur = ((weights[i] / sum_w.max(0.1)) * line_dur).max(0.08);
+        let w_start = cur_t;
+        let w_end = cur_t + dur;
+        cur_t = w_end;
+        out.push(LyricWordItem {
+            text: tok.to_string(),
+            start_sec: w_start,
+            end_sec: w_end,
+            is_past: false,
+            is_active: false,
+            progress: 0.0,
+        });
+    }
+    out
+}
+
 /// Parse LRC formatted synchronized lyrics or fallback to line-by-line text
-fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineData> {
-    let mut lines = Vec::new();
+fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineItem> {
+    let mut raw_entries: Vec<(f32, String)> = Vec::new();
     let mut has_timestamps = false;
 
     for raw in text.lines() {
@@ -180,16 +355,9 @@ fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineData> {
                     let min_str = &time_part[..colon];
                     let sec_str = &time_part[colon + 1..];
                     if let (Ok(min), Ok(sec)) = (min_str.parse::<f64>(), sec_str.parse::<f64>()) {
-                        let total = min * 60.0 + sec;
+                        let total = (min * 60.0 + sec) as f32;
                         has_timestamps = true;
-                        lines.push(LyricLineData {
-                            time_sec: total as f32,
-                            time_str: SharedString::from(format_duration(total)),
-                            text: SharedString::from(text_part),
-                            is_active: false,
-                            is_past: false,
-                            is_gap: is_gap_text(text_part),
-                        });
+                        raw_entries.push((total, text_part.to_string()));
                         continue;
                     }
                 }
@@ -197,8 +365,42 @@ fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineData> {
         }
     }
 
-    if has_timestamps && !lines.is_empty() {
-        lines.sort_by(|a, b| a.time_sec.partial_cmp(&b.time_sec).unwrap_or(std::cmp::Ordering::Equal));
+    if has_timestamps && !raw_entries.is_empty() {
+        raw_entries.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut lines = Vec::with_capacity(raw_entries.len());
+        for i in 0..raw_entries.len() {
+            let (start, ref raw_txt) = raw_entries[i];
+            let next_start = raw_entries
+                .get(i + 1)
+                .map(|e| e.0)
+                .unwrap_or_else(|| {
+                    if duration_sec as f32 > start + 0.5 {
+                        (duration_sec as f32).min(start + 6.0)
+                    } else {
+                        start + 4.0
+                    }
+                });
+            let line_end = next_start.max(start + 0.5);
+            let (clean_txt, enh_words) = parse_enhanced_lrc_words(raw_txt, start, line_end);
+            let gap = is_gap_text(&clean_txt);
+            let words = if gap {
+                Vec::new()
+            } else if !enh_words.is_empty() {
+                enh_words
+            } else {
+                estimate_words_for_line(&clean_txt, start, line_end)
+            };
+            lines.push(LyricLineItem {
+                time_sec: start,
+                time_str: format_duration(start as f64),
+                text: clean_txt,
+                is_active: false,
+                is_past: false,
+                is_gap: gap,
+                is_synced: true,
+                words,
+            });
+        }
         return lines;
     }
 
@@ -223,16 +425,196 @@ fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineData> {
         .enumerate()
         .map(|(i, l)| {
             let t = (i as f32) * interval;
-            LyricLineData {
+            let gap = is_gap_text(l);
+            let words = if gap {
+                Vec::new()
+            } else {
+                estimate_words_for_line(l, t, t + interval)
+            };
+            LyricLineItem {
                 time_sec: t,
-                time_str: SharedString::from(format_duration(t as f64)),
-                text: SharedString::from(l),
+                time_str: format_duration(t as f64),
+                text: l.to_string(),
                 is_active: false,
                 is_past: false,
-                is_gap: is_gap_text(l),
+                is_gap: gap,
+                is_synced: false,
+                words,
             }
         })
         .collect()
+}
+
+fn norm_lyric_sim(a: &str, b: &str) -> f32 {
+    let na: String = a.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
+    let nb: String = b.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
+    if na.is_empty() || nb.is_empty() {
+        return 0.0;
+    }
+    if na == nb {
+        return 1.0;
+    }
+    if na.contains(&nb) || nb.contains(&na) {
+        return (na.len().min(nb.len()) as f32) / (na.len().max(nb.len()) as f32);
+    }
+    0.0
+}
+
+fn merge_netease_words(lines: &mut [LyricLineItem], yrc_lines: &[riff_core::lyrics::WordLine]) -> bool {
+    if lines.is_empty() || yrc_lines.is_empty() {
+        return false;
+    }
+    let mut matched = 0usize;
+    let mut y_idx = 0usize;
+    let mut mapped: Vec<Option<Vec<LyricWordItem>>> = vec![None; lines.len()];
+
+    for (i, line) in lines.iter().enumerate() {
+        let start_j = y_idx.saturating_sub(3);
+        let end_j = (y_idx + 4).min(yrc_lines.len());
+        let mut best_sim = 0.0f32;
+        let mut best_j = None;
+        for j in start_j..end_j {
+            let sim = norm_lyric_sim(&line.text, &yrc_lines[j].text);
+            if sim > best_sim {
+                best_sim = sim;
+                best_j = Some(j);
+            }
+        }
+        if let Some(bj) = best_j {
+            if best_sim >= 0.6 {
+                matched += 1;
+                y_idx = bj + 1;
+                let words: Vec<LyricWordItem> = yrc_lines[bj]
+                    .words
+                    .iter()
+                    .map(|w| LyricWordItem {
+                        text: w.text.clone(),
+                        start_sec: w.start as f32,
+                        end_sec: w.end as f32,
+                        is_past: false,
+                        is_active: false,
+                        progress: 0.0,
+                    })
+                    .collect();
+                mapped[i] = Some(words);
+            }
+        }
+    }
+
+    if (matched as f32) / (lines.len() as f32) < 0.55 {
+        return false;
+    }
+
+    for (i, words_opt) in mapped.into_iter().enumerate() {
+        if let Some(words) = words_opt {
+            lines[i].words = words;
+        }
+    }
+    true
+}
+
+fn update_lyrics_progress(lines: &mut [LyricLineItem], pos_f: f32) -> (i32, bool) {
+    if lines.is_empty() {
+        return (-1, false);
+    }
+    let mut active_idx = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        if line.time_sec <= pos_f {
+            active_idx = i;
+        } else {
+            break;
+        }
+    }
+
+    let mut changed = false;
+    for (i, line) in lines.iter_mut().enumerate() {
+        let should_be_active = i == active_idx;
+        let should_be_past = i < active_idx;
+        if line.is_active != should_be_active || line.is_past != should_be_past {
+            line.is_active = should_be_active;
+            line.is_past = should_be_past;
+            changed = true;
+        }
+
+        if should_be_active && !line.is_gap {
+            for w in &mut line.words {
+                let dur = (w.end_sec - w.start_sec).max(0.05);
+                let prog = ((pos_f - w.start_sec) / dur).clamp(0.0, 1.0);
+                let w_past = pos_f >= w.end_sec;
+                let w_active = pos_f >= w.start_sec && pos_f < w.end_sec;
+                if (w.progress - prog).abs() > 0.02 || w.is_past != w_past || w.is_active != w_active {
+                    w.progress = prog;
+                    w.is_past = w_past;
+                    w.is_active = w_active;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    (active_idx as i32, changed)
+}
+
+fn spawn_fetch_lyrics(
+    api: Arc<riff_core::api::RiffApi>,
+    lyr_store: Arc<Mutex<Vec<LyricLineItem>>>,
+    w_weak: slint::Weak<MainWindow>,
+    rt: &tokio::runtime::Handle,
+    title: String,
+    artist: String,
+    duration_sec: f64,
+    source_pref: String,
+    word_source: String,
+) {
+    rt.spawn(async move {
+        let val = api
+            .fetch_lyrics(riff_core::lyrics::LyricsQuery {
+                title: Some(title.clone()),
+                artist: Some(artist.clone()),
+                source: Some(source_pref.clone()),
+                duration: Some(duration_sec),
+                online: Some("1".to_string()),
+            })
+            .await;
+
+        let raw_text = val.get("lyrics").and_then(|x| x.as_str()).unwrap_or("");
+        let actual_src = val.get("source").and_then(|x| x.as_str()).unwrap_or("none").to_string();
+        let mut parsed = parse_lrc(raw_text, duration_sec);
+        let is_synced = val.get("isSynced").and_then(|x| x.as_bool()).unwrap_or_else(|| {
+            parsed.iter().any(|l| l.is_synced)
+        });
+
+        if let Ok(mut store) = lyr_store.lock() {
+            *store = parsed.clone();
+        }
+
+        let src_label = format_source_label(&actual_src).to_string();
+        let w_first = w_weak.clone();
+        let parsed_first = parsed.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = w_first.upgrade() {
+                w.set_lyrics_lines(to_slint_lyrics(&parsed_first));
+                w.set_lyrics_source_label(SharedString::from(&src_label));
+                w.set_lyrics_is_synced(is_synced);
+            }
+        });
+
+        // Upgrade with NetEase YRC word-by-word timings if enabled and synced
+        if word_source != "estimate" && !parsed.is_empty() && is_synced {
+            let yrc_lines = api.fetch_lyrics_words(&title, &artist, duration_sec).await;
+            if !yrc_lines.is_empty() && merge_netease_words(&mut parsed, &yrc_lines) {
+                if let Ok(mut store) = lyr_store.lock() {
+                    *store = parsed.clone();
+                }
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_weak.upgrade() {
+                        w.set_lyrics_lines(to_slint_lyrics(&parsed));
+                        w.set_lyrics_source_label(SharedString::from("NetEase YRC"));
+                    }
+                });
+            }
+        }
+    });
 }
 
 fn playlists_to_slint(list: &[riff_core::models::Playlist]) -> ModelRc<PlaylistData> {
@@ -651,7 +1033,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let main_window = MainWindow::new()?;
     let window_weak = main_window.as_weak();
 
-    let active_lyrics_cache: Arc<Mutex<Vec<LyricLineData>>> = Arc::new(Mutex::new(Vec::new()));
+    let active_lyrics_cache: Arc<Mutex<Vec<LyricLineItem>>> = Arc::new(Mutex::new(Vec::new()));
     let playlist_cache: Arc<Mutex<Vec<TrackItem>>> = Arc::new(Mutex::new(Vec::new()));
     let current_index: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
     let shuffle_state = Arc::new(AtomicBool::new(false));
@@ -736,6 +1118,34 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 }
                 if let Some(v) = kv_map.get("slint_search_platform") {
                     w.set_search_platform(SharedString::from(v.as_str()));
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_source") {
+                    w.set_lyrics_source(SharedString::from(v.as_str()));
+                    w.set_lyrics_source_label(SharedString::from(format_source_label(v)));
+                }
+                if let Some(v) = kv_map.get("slint_word_source") {
+                    w.set_lyrics_word_source(SharedString::from(v.as_str()));
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_mode") {
+                    w.set_lyrics_mode(SharedString::from(v.as_str()));
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_word_style") {
+                    w.set_lyrics_word_style(SharedString::from(v.as_str()));
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_warnings") {
+                    w.set_lyrics_warnings(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_autoscroll") {
+                    w.set_lyrics_autoscroll(v != "0");
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_fullscreen_only") {
+                    w.set_lyrics_fullscreen_only(v == "1");
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_speed").and_then(|s| s.parse::<f32>().ok()) {
+                    w.set_lyrics_speed((v / 10.0).clamp(0.5, 2.5));
+                }
+                if let Some(v) = kv_map.get("slint_lyrics_tightness").and_then(|s| s.parse::<f32>().ok()) {
+                    w.set_lyrics_tightness(v.clamp(2.0, 24.0));
                 }
                 if let Some(v) = kv_map.get("slint_ambient_blur") {
                     theme.set_ambient_blur_enabled(v != "0");
@@ -940,38 +1350,23 @@ pub fn run() -> Result<(), slint::PlatformError> {
             }
         });
 
-        // Fetch Synced Lyrics
-        let api_lyr = api_play.clone();
-        let lyr_store = lyr_play.clone();
-        let w_lyr = w_play.clone();
-        let q_title = track.title.to_string();
-        let q_artist = track.artist.to_string();
-        let q_dur = track.duration_sec as f64;
-
-        rt_play.spawn(async move {
-            let val = api_lyr
-                .fetch_lyrics(riff_core::lyrics::LyricsQuery {
-                    title: Some(q_title),
-                    artist: Some(q_artist),
-                    source: None,
-                    duration: Some(q_dur),
-                    online: Some("1".to_string()),
-                })
-                .await;
-
-            let raw_text = val.get("lyrics").and_then(|x| x.as_str()).unwrap_or("");
-            let parsed = parse_lrc(raw_text, q_dur);
-
-            if let Ok(mut store) = lyr_store.lock() {
-                *store = parsed.clone();
-            }
-
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(w) = w_lyr.upgrade() {
-                    w.set_lyrics_lines(ModelRc::new(VecModel::from(parsed)));
-                }
-            });
-        });
+        // Fetch Synced Lyrics + Word-by-word timings
+        let (src_pref, word_src) = if let Some(w) = w_play.upgrade() {
+            (w.get_lyrics_source().to_string(), w.get_lyrics_word_source().to_string())
+        } else {
+            ("auto".to_string(), "auto".to_string())
+        };
+        spawn_fetch_lyrics(
+            api_play.clone(),
+            lyr_play.clone(),
+            w_play.clone(),
+            &rt_play,
+            track.title.to_string(),
+            track.artist.to_string(),
+            track.duration_sec as f64,
+            src_pref,
+            word_src,
+        );
 
         // Play audio (local file or stream)
         let path = PathBuf::from(track.id.as_str());
@@ -1580,10 +1975,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
             };
 
             let parsed = parse_lrc(&text_to_save, dur);
+            let is_synced = parsed.iter().any(|l| l.is_synced);
             if let Ok(mut store) = lyr_save_ed.lock() {
                 *store = parsed.clone();
             }
-            w.set_lyrics_lines(ModelRc::new(VecModel::from(parsed)));
+            w.set_lyrics_lines(to_slint_lyrics(&parsed));
+            w.set_lyrics_source_label(SharedString::from("Custom"));
+            w.set_lyrics_is_synced(is_synced);
             w.set_active_lyric_index(-1);
             w.set_custom_lyrics_open(false);
 
@@ -1608,7 +2006,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 lyr.iter()
                     .enumerate()
                     .map(|(i, l)| SyncLineData {
-                        text: l.text.clone(),
+                        text: SharedString::from(&l.text),
                         time_sec: -1.0,
                         time_str: SharedString::from(""),
                         is_synced: false,
@@ -1722,10 +2120,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
             };
 
             let parsed = parse_lrc(&lrc_content, dur);
+            let is_synced = parsed.iter().any(|l| l.is_synced);
             if let Ok(mut store) = lyr_sync_save.lock() {
                 *store = parsed.clone();
             }
-            w.set_lyrics_lines(ModelRc::new(VecModel::from(parsed)));
+            w.set_lyrics_lines(to_slint_lyrics(&parsed));
+            w.set_lyrics_source_label(SharedString::from("Custom"));
+            w.set_lyrics_is_synced(is_synced);
             w.set_active_lyric_index(-1);
             w.set_sync_lyrics_open(false);
 
@@ -1952,6 +2353,73 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     });
 
+    let api_lsrc = api.clone();
+    let lyr_lsrc = active_lyrics_cache.clone();
+    let w_lsrc = window_weak.clone();
+    let rt_lsrc = rt_handle.clone();
+    main_window.on_change_lyrics_source(move |src| {
+        let src_str = src.to_string();
+        let api_s = api_lsrc.clone();
+        let src_save = src_str.clone();
+        rt_lsrc.spawn(async move {
+            let _ = api_s.set_setting("slint_lyrics_source", &src_save).await;
+        });
+        if let Some(w) = w_lsrc.upgrade() {
+            w.set_lyrics_source(src.clone());
+            w.set_lyrics_source_label(SharedString::from(format_source_label(&src_str)));
+            let title = w.get_current_title().to_string();
+            let artist = w.get_current_artist().to_string();
+            let dur = w.get_current_duration() as f64;
+            let word_src = w.get_lyrics_word_source().to_string();
+            if !w.get_current_id().is_empty() {
+                spawn_fetch_lyrics(
+                    api_lsrc.clone(),
+                    lyr_lsrc.clone(),
+                    w_lsrc.clone(),
+                    &rt_lsrc,
+                    title,
+                    artist,
+                    dur,
+                    src_str,
+                    word_src,
+                );
+            }
+        }
+    });
+
+    let api_wsrc = api.clone();
+    let lyr_wsrc = active_lyrics_cache.clone();
+    let w_wsrc = window_weak.clone();
+    let rt_wsrc = rt_handle.clone();
+    main_window.on_change_word_source(move |wsrc| {
+        let wsrc_str = wsrc.to_string();
+        let api_s = api_wsrc.clone();
+        let wsrc_save = wsrc_str.clone();
+        rt_wsrc.spawn(async move {
+            let _ = api_s.set_setting("slint_word_source", &wsrc_save).await;
+        });
+        if let Some(w) = w_wsrc.upgrade() {
+            w.set_lyrics_word_source(wsrc.clone());
+            let title = w.get_current_title().to_string();
+            let artist = w.get_current_artist().to_string();
+            let dur = w.get_current_duration() as f64;
+            let src_pref = w.get_lyrics_source().to_string();
+            if !w.get_current_id().is_empty() {
+                spawn_fetch_lyrics(
+                    api_wsrc.clone(),
+                    lyr_wsrc.clone(),
+                    w_wsrc.clone(),
+                    &rt_wsrc,
+                    title,
+                    artist,
+                    dur,
+                    src_pref,
+                    wsrc_str,
+                );
+            }
+        }
+    });
+
     // 13b. Frameless Window Controls
     let w_min = window_weak.clone();
     main_window.on_window_minimize(move || {
@@ -2048,28 +2516,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
                             if let Ok(mut lyr) = lyr_cache.lock() {
                                 if !lyr.is_empty() {
-                                    let mut active_idx = 0;
-                                    let pos_f = position_sec as f32;
-                                    for (i, line) in lyr.iter().enumerate() {
-                                        if line.time_sec <= pos_f {
-                                            active_idx = i;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    let mut changed = false;
-                                    for (i, line) in lyr.iter_mut().enumerate() {
-                                        let should_be_active = i == active_idx;
-                                        let should_be_past = i < active_idx;
-                                        if line.is_active != should_be_active || line.is_past != should_be_past {
-                                            line.is_active = should_be_active;
-                                            line.is_past = should_be_past;
-                                            changed = true;
-                                        }
-                                    }
+                                    let (active_idx, changed) = update_lyrics_progress(&mut lyr, position_sec as f32);
                                     if changed {
-                                        w.set_active_lyric_index(active_idx as i32);
-                                        w.set_lyrics_lines(ModelRc::new(VecModel::from(lyr.clone())));
+                                        w.set_active_lyric_index(active_idx);
+                                        w.set_lyrics_lines(to_slint_lyrics(&lyr));
                                     }
                                 }
                             }
@@ -2114,6 +2564,42 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // 15b. Smooth 30 FPS Word-by-Word Karaoke Ticker
+    let api_karaoke = api.clone();
+    let lyr_karaoke = active_lyrics_cache.clone();
+    let w_karaoke = window_weak.clone();
+    std::thread::spawn(move || loop {
+        let (playing, pos_sec, _, _) = api_karaoke.get_playback_state();
+        if playing {
+            let updated = if let Ok(mut lyr) = lyr_karaoke.lock() {
+                if !lyr.is_empty() {
+                    let (active_idx, changed) = update_lyrics_progress(&mut lyr, pos_sec as f32);
+                    if changed {
+                        Some((active_idx, lyr.clone()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some((active_idx, snapshot)) = updated {
+                let w_c = w_karaoke.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_c.upgrade() {
+                        w.set_active_lyric_index(active_idx);
+                        w.set_lyrics_lines(to_slint_lyrics(&snapshot));
+                    }
+                });
+            }
+            std::thread::sleep(Duration::from_millis(33));
+        } else {
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    });
+
     main_window.run()
 }
 
@@ -2152,6 +2638,31 @@ mod tests {
         assert_eq!(detect_audio_hint(Some("audio/mpeg"), "https://example.com/x"), Some("mp3".to_string()));
         assert_eq!(detect_audio_hint(None, "https://rr1.googlevideo.com/videoplayback?mime=audio%2Fmp4"), Some("m4a".to_string()));
         assert_eq!(detect_audio_hint(None, "https://cf-media.sndcdn.com/track.mp3"), Some("mp3".to_string()));
+    }
+
+    #[test]
+    fn test_word_by_word_karaoke_and_yrc() {
+        let (clean, words) = parse_enhanced_lrc_words("<00:01.00>Hello <00:01.50>world", 1.0, 2.5);
+        assert_eq!(clean, "Hello world");
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0].text, "Hello");
+        assert!((words[0].start_sec - 1.0).abs() < 0.01);
+        assert!((words[1].start_sec - 1.5).abs() < 0.01);
+
+        let mut lines = parse_lrc("[00:01.00]<00:01.00>Hello <00:01.50>world\n[00:03.00]Next line", 10.0);
+        assert!(lines[0].is_synced);
+        let (active_idx, changed) = update_lyrics_progress(&mut lines, 1.25);
+        assert_eq!(active_idx, 0);
+        assert!(changed);
+        let first_word = &lines[0].words[0];
+        assert!(first_word.is_active);
+        assert!((first_word.progress - 0.5).abs() < 0.05);
+
+        let yrc = "[1000,2000](1000,500,0)Hello (1500,500,0)world";
+        let parsed_yrc = riff_core::lyrics::parse_yrc(yrc);
+        assert_eq!(parsed_yrc.len(), 1);
+        assert_eq!(parsed_yrc[0].words.len(), 2);
+        assert_eq!(parsed_yrc[0].words[0].text, "Hello");
     }
 
     #[test]

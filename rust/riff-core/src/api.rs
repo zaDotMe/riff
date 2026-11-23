@@ -570,6 +570,11 @@ impl RiffApi {
         self.lyrics.fetch_lyrics(query).await.0
     }
 
+    /// Fetch word-by-word karaoke timings (NetEase YRC)
+    pub async fn fetch_lyrics_words(&self, title: &str, artist: &str, duration_sec: f64) -> Vec<crate::lyrics::WordLine> {
+        self.lyrics.fetch_netease_words(title, artist, duration_sec).await
+    }
+
     /// Save custom or synced LRC lyrics for a track
     pub async fn save_custom_lyrics(&self, title: &str, artist: &str, content: &str) -> Result<()> {
         self.lyrics.save_custom_lyrics(title, artist, content).await

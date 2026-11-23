@@ -1,10 +1,10 @@
 import { ScrollView } from "std-widgets.slint";
-import { Theme, TrackData, LyricLineData, SyncLineData, PlaylistData } from "theme.slint";
+import { Theme, TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData } from "theme.slint";
 import { IconBtn, PillBtn, ScrubberBar, VolumeBar } from "components.slint";
 import { HomeView, SearchView, LocalFilesView, FavoritesView, HistoryView, QueueView, PlaylistDetailView } from "views.slint";
 import { Titlebar, PresetsDrawer, RightPanel, SettingsModal, FullscreenLyricsOverlay, CustomLyricsModal, SyncLyricsModal, AudioEditorModal, CreatePlaylistModal, AddToPlaylistModal } from "modals.slint";
 
-export { TrackData, LyricLineData, SyncLineData, PlaylistData, Theme }
+export { TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, Theme }
 
 export component MainWindow inherits Window {
     title: "Riff";
@@ -92,6 +92,19 @@ export component MainWindow inherits Window {
     in-out property <bool> rp_gradient_enabled: true;
     in-out property <bool> tvk_blobs_enabled: true;
 
+    // Lyrics & Sync Settings
+    in-out property <string> lyrics_source: "auto";
+    in-out property <string> lyrics_source_label: "Auto";
+    in-out property <bool> lyrics_is_synced: false;
+    in-out property <string> lyrics_word_source: "auto";
+    in-out property <string> lyrics_mode: "Word";
+    in-out property <string> lyrics_word_style: "gradient";
+    in-out property <bool> lyrics_warnings: true;
+    in-out property <bool> lyrics_autoscroll: true;
+    in-out property <bool> lyrics_fullscreen_only: false;
+    in-out property <float> lyrics_speed: 1.0;
+    in-out property <float> lyrics_tightness: 2.0;
+
     // Equalizer & Audio FX State
     in-out property <float> eq_bass: 0.0;
     in-out property <float> eq_mid: 0.0;
@@ -142,6 +155,8 @@ export component MainWindow inherits Window {
     callback switch_ui_mode(string);
     callback refresh_home();
     callback toggle_mini_mode();
+    callback change_lyrics_source(string);
+    callback change_word_source(string);
     callback save_setting(string, string);
     callback window_minimize();
     callback window_maximize();
@@ -1079,11 +1094,22 @@ export component MainWindow inherits Window {
                         gradient-enabled: root.rp_gradient_enabled;
                         lyrics-lines: root.lyrics_lines;
                         active-lyric-index: root.active_lyric_index;
+                        lyrics-mode <=> root.lyrics_mode;
+                        lyrics-source <=> root.lyrics_source;
+                        lyrics-source-label: root.lyrics_source_label;
+                        lyrics-is-synced: root.lyrics_is_synced;
+                        lyrics-warnings: root.lyrics_warnings;
+                        lyrics-autoscroll: root.lyrics_autoscroll;
+                        lyrics-word-style <=> root.lyrics_word_style;
+                        lyrics-speed: root.lyrics_speed;
+                        lyrics-fullscreen-only: root.lyrics_fullscreen_only;
                         seek-to(pos) => { root.seek_to(pos); }
                         edit-lyrics => { root.open_custom_lyrics(); }
                         sync-lyrics => { root.open_sync_lyrics(); }
                         open-fullscreen => { fullscreen_lyrics_open = true; }
                         toggle-favorite => { root.toggle_favorite_current(); }
+                        change-lyrics-source(s) => { root.change_lyrics_source(s); }
+                        save-setting(k, v) => { root.save_setting(k, v); }
                         close => { lyrics_open = false; }
                     }
                 }
@@ -1423,6 +1449,13 @@ export component MainWindow inherits Window {
         active-lyric-index: root.active_lyric_index;
         spectrum-bands: root.spectrum_bands;
         blobs-enabled: root.tvk_blobs_enabled;
+        lyrics-mode <=> root.lyrics_mode;
+        lyrics-word-style <=> root.lyrics_word_style;
+        lyrics-source <=> root.lyrics_source;
+        lyrics-source-label: root.lyrics_source_label;
+        lyrics-is-synced: root.lyrics_is_synced;
+        lyrics-autoscroll: root.lyrics_autoscroll;
+        lyrics-speed: root.lyrics_speed;
         toggle-play-pause => { root.toggle_play_pause(); }
         play-prev => { root.play_prev(); }
         play-next => { root.play_next(); }
@@ -1431,6 +1464,8 @@ export component MainWindow inherits Window {
         seek-to(pos) => { root.seek_to(pos); }
         edit-lyrics => { root.open_custom_lyrics(); }
         sync-lyrics => { root.open_sync_lyrics(); }
+        change-lyrics-source(s) => { root.change_lyrics_source(s); }
+        save-setting(k, v) => { root.save_setting(k, v); }
         close => { fullscreen_lyrics_open = false; }
     }
 
@@ -1535,6 +1570,15 @@ export component MainWindow inherits Window {
         rp-gradient-enabled <=> root.rp_gradient_enabled;
         tvk-blobs-enabled <=> root.tvk_blobs_enabled;
         search-platform <=> root.search_platform;
+        lyrics-source <=> root.lyrics_source;
+        lyrics-word-source <=> root.lyrics_word_source;
+        lyrics-mode <=> root.lyrics_mode;
+        lyrics-word-style <=> root.lyrics_word_style;
+        lyrics-warnings <=> root.lyrics_warnings;
+        lyrics-autoscroll <=> root.lyrics_autoscroll;
+        lyrics-fullscreen-only <=> root.lyrics_fullscreen_only;
+        lyrics-speed <=> root.lyrics_speed;
+        lyrics-tightness <=> root.lyrics_tightness;
         local-count: root.library_tracks.length;
         fav-count: root.favorite_tracks.length;
         hist-count: root.history_tracks.length;
@@ -1553,6 +1597,8 @@ export component MainWindow inherits Window {
         open-audio-editor => { audio_editor_open = true; }
         open-fullscreen-lyrics => { fullscreen_lyrics_open = true; }
         toggle-mini-mode => { root.toggle_mini_mode(); }
+        change-lyrics-source(s) => { root.change_lyrics_source(s); }
+        change-word-source(s) => { root.change_word_source(s); }
         save-setting(k, v) => { root.save_setting(k, v); }
         close => { settings_open = false; }
     }

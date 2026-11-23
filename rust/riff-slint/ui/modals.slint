@@ -396,13 +396,25 @@ export component RightPanel inherits Rectangle {
     in property <bool> gradient-enabled: true;
     in property <[LyricLineData]> lyrics-lines: [];
     in property <int> active-lyric-index: -1;
-    in-out property <string> lyrics-mode: "Line";
+    in-out property <string> lyrics-mode: "Word";
+    in-out property <string> lyrics-source: "auto";
+    in property <string> lyrics-source-label: "Auto";
+    in property <bool> lyrics-is-synced: false;
+    in property <bool> lyrics-warnings: true;
+    in property <bool> lyrics-autoscroll: true;
+    in-out property <string> lyrics-word-style: "gradient";
+    in property <float> lyrics-speed: 1.0;
+    in property <bool> lyrics-fullscreen-only: false;
     callback seek-to(float);
     callback edit-lyrics();
     callback sync-lyrics();
     callback open-fullscreen();
     callback toggle-favorite();
+    callback change-lyrics-source(string);
+    callback save-setting(string, string);
     callback close();
+
+    property <bool> source-picker-open: false;
 
     width: 350px;
     background: (ambient-active && Theme.ambient-blur-enabled)
@@ -413,11 +425,10 @@ export component RightPanel inherits Rectangle {
     clip: true;
     animate background { duration: Theme.reduced-motion ? 0ms : 400ms; easing: ease; }
 
-    // Blurred cover banner (.right-panel-banner equivalent)
+    // Blurred cover banner (.right-panel-banner equivalent, seamless full-height fade)
     if banner-enabled && current-has-blur: Rectangle {
         width: 100%;
-        height: 320px;
-        y: 0px;
+        height: 100%;
         clip: true;
 
         Image {
@@ -427,13 +438,13 @@ export component RightPanel inherits Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             image-fit: cover;
-            opacity: 0.55;
+            opacity: 0.42;
         }
 
         Rectangle {
             width: 100%;
             height: 100%;
-            background: @linear-gradient(180deg, #16161822 0%, #16161899 55%, #161618 100%);
+            background: @linear-gradient(180deg, transparent 0%, #16161888 45%, #161618dd 100%);
         }
     }
 
@@ -514,22 +525,25 @@ export component RightPanel inherits Rectangle {
             Rectangle {
                 height: 28px;
                 border-radius: 14px;
-                background: mode-ta.has-hover ? #ffffff28 : #ffffff1a;
+                background: lyrics-mode == "Word" ? Theme.primary.with-alpha(0.28) : (mode-ta.has-hover ? #ffffff28 : #ffffff1a);
                 animate background { duration: 140ms; easing: ease-out; }
                 HorizontalLayout {
                     padding-left: 10px;
                     padding-right: 10px;
                     Text {
                         text: lyrics-mode;
-                        color: Theme.text-secondary;
+                        color: lyrics-mode == "Word" ? Theme.primary : Theme.text-secondary;
                         font-size: 12px;
-                        font-weight: 500;
+                        font-weight: 600;
                         vertical-alignment: center;
                     }
                 }
                 mode-ta := TouchArea {
                     mouse-cursor: pointer;
-                    clicked => { lyrics-mode = lyrics-mode == "Line" ? "Word" : "Line"; }
+                    clicked => {
+                        lyrics-mode = lyrics-mode == "Line" ? "Word" : "Line";
+                        root.save-setting("slint_lyrics_mode", lyrics-mode);
+                    }
                 }
             }
 
@@ -542,8 +556,111 @@ export component RightPanel inherits Rectangle {
             }
         }
 
+        // Sync & Source status pill + quick source switcher
+        if current-id != "" && (lyrics-lines.length > 0 || lyrics-warnings): VerticalLayout {
+            spacing: 6px;
+
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+
+                Rectangle {
+                    height: 24px;
+                    border-radius: 12px;
+                    background: src-ta.has-hover ? #ffffff22 : #ffffff12;
+                    animate background { duration: 140ms; easing: ease-out; }
+
+                    HorizontalLayout {
+                        padding-left: 9px;
+                        padding-right: 9px;
+                        spacing: 6px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 7px;
+                                height: 7px;
+                                border-radius: 3.5px;
+                                background: lyrics-lines.length == 0 ? #f28b82 : (lyrics-is-synced ? #81c784 : #ffb74d);
+                            }
+                        }
+
+                        Text {
+                            text: lyrics-lines.length == 0
+                                ? "No lyrics • " + lyrics-source-label
+                                : (lyrics-is-synced ? "Synced • " + lyrics-source-label : "Unsynced • " + lyrics-source-label);
+                            color: Theme.text-secondary;
+                            font-size: 11.5px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    src-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { source-picker-open = !source-picker-open; }
+                    }
+                }
+
+                if lyrics-lines.length > 0 && !lyrics-is-synced: Rectangle {
+                    height: 24px;
+                    border-radius: 12px;
+                    background: tap-sync-ta.has-hover ? Theme.primary : Theme.primary.with-alpha(0.22);
+                    animate background { duration: 140ms; easing: ease-out; }
+                    HorizontalLayout {
+                        padding-left: 9px;
+                        padding-right: 9px;
+                        Text {
+                            text: "Tap to sync";
+                            color: tap-sync-ta.has-hover ? Theme.on-primary : Theme.primary;
+                            font-size: 11.5px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    tap-sync-ta := TouchArea { mouse-cursor: pointer; clicked => { root.sync-lyrics(); } }
+                }
+            }
+
+            if source-picker-open: HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                for src in [
+                    { id: "auto", label: "Auto" },
+                    { id: "lrclib", label: "LRCLIB" },
+                    { id: "musixmatch", label: "Musixmatch" },
+                    { id: "kugou", label: "Kugou" },
+                    { id: "netease", label: "NetEase" },
+                ]: Rectangle {
+                    height: 24px;
+                    border-radius: 12px;
+                    background: lyrics-source == src.id ? Theme.primary : (sp-ta.has-hover ? #ffffff24 : #ffffff12);
+                    animate background { duration: 120ms; easing: ease-out; }
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        Text {
+                            text: src.label;
+                            color: lyrics-source == src.id ? Theme.on-primary : Theme.text-secondary;
+                            font-size: 11px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    sp-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            lyrics-source = src.id;
+                            source-picker-open = false;
+                            root.change-lyrics-source(src.id);
+                        }
+                    }
+                }
+            }
+        }
+
         // Empty / Artwork view (persis web_cdp.png)
-        if lyrics-lines.length == 0: VerticalLayout {
+        if lyrics-lines.length == 0 || lyrics-fullscreen-only: VerticalLayout {
             vertical-stretch: 1;
             alignment: center;
             spacing: 10px;
@@ -615,7 +732,7 @@ export component RightPanel inherits Rectangle {
         }
 
         // Synced Lyrics view
-        if lyrics-lines.length > 0: VerticalLayout {
+        if lyrics-lines.length > 0 && !lyrics-fullscreen-only: VerticalLayout {
             vertical-stretch: 1;
             spacing: 12px;
 
@@ -669,8 +786,8 @@ export component RightPanel inherits Rectangle {
 
             rp-scroll := ScrollView {
                 vertical-stretch: 1;
-                content-y: active-lyric-index > 2 ? -min(max(0px, (active-lyric-index - 2) * 44px), max(0px, self.content-height - self.visible-height)) : 0px;
-                animate content-y { duration: 320ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                content-y: (lyrics-autoscroll && active-lyric-index > 2) ? -min(max(0px, (active-lyric-index - 2) * 46px), max(0px, self.content-height - self.visible-height)) : 0px;
+                animate content-y { duration: Theme.reduced-motion ? 0ms : 320ms / max(0.5, lyrics-speed); easing: cubic-bezier(0.2, 0, 0, 1); }
 
                 VerticalLayout {
                     spacing: 8px;
@@ -695,7 +812,10 @@ export component RightPanel inherits Rectangle {
                                 height: 18px;
                                 colorize: line.is_active ? Theme.primary : Theme.text-muted;
                             }
-                            Text {
+
+                            // Line mode OR inactive/gap line
+                            if line.is_gap || lyrics-mode != "Word" || line.rows.length == 0: Text {
+                                horizontal-stretch: 1;
                                 text: line.is_gap ? "Instrumental" : line.text;
                                 color: line.is_active ? Theme.text-primary : (line.is_past ? #e2e2e988 : Theme.text-muted);
                                 font-size: line.is_active ? 18.5px : 15px;
@@ -703,6 +823,56 @@ export component RightPanel inherits Rectangle {
                                 wrap: word-wrap;
                                 animate color { duration: Theme.reduced-motion ? 0ms : 200ms; easing: ease-out; }
                                 animate font-size { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                            }
+
+                            // Word-by-word karaoke mode (Gradient sweep or Words highlight)
+                            if !line.is_gap && lyrics-mode == "Word" && line.rows.length > 0: VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 3px;
+
+                                for row in line.rows: HorizontalLayout {
+                                    spacing: 5px;
+                                    alignment: start;
+
+                                    for w in row.words: Rectangle {
+                                        width: rp-w-base.preferred-width;
+                                        height: rp-w-base.preferred-height;
+
+                                        rp-w-base := Text {
+                                            text: w.text;
+                                            color: line.is_active
+                                                ? (lyrics-word-style == "words"
+                                                    ? (w.is_past ? #ffffff : (w.is_active ? Theme.primary : #ffffff55))
+                                                    : #ffffff55)
+                                                : (line.is_past ? #e2e2e988 : Theme.text-muted);
+                                            font-size: line.is_active ? 18.5px : 15px;
+                                            font-weight: line.is_active ? 700 : 500;
+                                            y: (line.is_active && lyrics-word-style == "words" && w.is_active) ? -1.5px : 0px;
+                                            animate y { duration: Theme.reduced-motion ? 0ms : 140ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                                            animate color { duration: Theme.reduced-motion ? 0ms : 140ms; easing: ease-out; }
+                                            animate font-size { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                                        }
+
+                                        if line.is_active && lyrics-word-style != "words": Rectangle {
+                                            x: 0px;
+                                            y: 0px;
+                                            width: parent.width * clamp(w.progress, 0.0, 1.0);
+                                            height: parent.height;
+                                            clip: true;
+
+                                            Text {
+                                                x: 0px;
+                                                y: 0px;
+                                                width: rp-w-base.width;
+                                                height: rp-w-base.height;
+                                                text: w.text;
+                                                color: #ffffff;
+                                                font-size: 18.5px;
+                                                font-weight: 700;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -738,6 +908,18 @@ export component SettingsModal inherits Rectangle {
     in-out property <bool> rp-gradient-enabled: true;
     in-out property <bool> tvk-blobs-enabled: true;
     in-out property <string> search-platform: "ytmusic";
+
+    // Lyrics Settings
+    in-out property <string> lyrics-source: "auto";
+    in-out property <string> lyrics-word-source: "auto";
+    in-out property <string> lyrics-mode: "Word";
+    in-out property <string> lyrics-word-style: "gradient";
+    in-out property <bool> lyrics-warnings: true;
+    in-out property <bool> lyrics-autoscroll: true;
+    in-out property <bool> lyrics-fullscreen-only: false;
+    in-out property <float> lyrics-speed: 1.0;
+    in-out property <float> lyrics-tightness: 2.0;
+
     in property <int> local-count: 0;
     in property <int> fav-count: 0;
     in property <int> hist-count: 0;
@@ -751,6 +933,8 @@ export component SettingsModal inherits Rectangle {
     callback set-speed(float);
     callback set-effects(float, float);
     callback reset-audio();
+    callback change-lyrics-source(string);
+    callback change-word-source(string);
     callback clear-history();
     callback clear-queue();
     callback refresh-home();
@@ -1452,10 +1636,7 @@ export component SettingsModal inherits Rectangle {
                             }
 
                             Rectangle {
-                                border-top-left-radius: 6px;
-                                border-top-right-radius: 6px;
-                                border-bottom-left-radius: 20px;
-                                border-bottom-right-radius: 20px;
+                                border-radius: 6px;
                                 background: #202126b8;
 
                                 VerticalLayout {
@@ -1471,6 +1652,185 @@ export component SettingsModal inherits Rectangle {
 
                                     Text { text: "Treble (8kHz): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
                                     Slider { height: 30px; minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                                }
+                            }
+
+                            // Lyrics Settings Card (1:1 Web UI)
+                            Rectangle {
+                                border-top-left-radius: 6px;
+                                border-top-right-radius: 6px;
+                                border-bottom-left-radius: 20px;
+                                border-bottom-right-radius: 20px;
+                                background: #202126b8;
+
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 12px;
+
+                                    Text { text: "Lyrics & Sync"; color: Theme.text-primary; font-size: 15px; font-weight: 700; }
+
+                                    // Lyrics source
+                                    VerticalLayout {
+                                        spacing: 6px;
+                                        Text { text: "Lyrics source"; color: Theme.text-primary; font-size: 13.5px; font-weight: 600; }
+                                        Text { text: "Preferred lyrics provider with automatic fallback"; color: Theme.text-muted; font-size: 12px; }
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
+                                            for src in [
+                                                { id: "auto", label: "Auto" },
+                                                { id: "lrclib", label: "LRCLIB" },
+                                                { id: "musixmatch", label: "Musixmatch" },
+                                                { id: "kugou", label: "Kugou LRC" },
+                                                { id: "netease", label: "NetEase" },
+                                            ]: PillBtn {
+                                                label: src.label;
+                                                btn-height: 30px;
+                                                primary: lyrics-source == src.id;
+                                                clicked => {
+                                                    lyrics-source = src.id;
+                                                    root.change-lyrics-source(src.id);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Word-by-word source
+                                    VerticalLayout {
+                                        spacing: 6px;
+                                        Text { text: "Word-by-word source"; color: Theme.text-primary; font-size: 13.5px; font-weight: 600; }
+                                        Text { text: "Source for karaoke word-by-word timings"; color: Theme.text-muted; font-size: 12px; }
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
+                                            for ws in [
+                                                { id: "auto", label: "Auto" },
+                                                { id: "netease", label: "NetEase YRC" },
+                                                { id: "estimate", label: "Estimate" },
+                                            ]: PillBtn {
+                                                label: ws.label;
+                                                btn-height: 30px;
+                                                primary: lyrics-word-source == ws.id;
+                                                clicked => {
+                                                    lyrics-word-source = ws.id;
+                                                    root.change-word-source(ws.id);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Lyrics mode & Word style
+                                    HorizontalLayout {
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 6px;
+                                            Text { text: "Lyrics mode"; color: Theme.text-primary; font-size: 13.5px; font-weight: 600; }
+                                            HorizontalLayout {
+                                                spacing: 6px;
+                                                alignment: start;
+                                                PillBtn {
+                                                    label: "Word";
+                                                    btn-height: 30px;
+                                                    primary: lyrics-mode == "Word";
+                                                    clicked => { lyrics-mode = "Word"; root.save-setting("slint_lyrics_mode", "Word"); }
+                                                }
+                                                PillBtn {
+                                                    label: "Line";
+                                                    btn-height: 30px;
+                                                    primary: lyrics-mode == "Line";
+                                                    clicked => { lyrics-mode = "Line"; root.save-setting("slint_lyrics_mode", "Line"); }
+                                                }
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 6px;
+                                            Text { text: "Word mode style"; color: Theme.text-primary; font-size: 13.5px; font-weight: 600; }
+                                            HorizontalLayout {
+                                                spacing: 6px;
+                                                alignment: start;
+                                                PillBtn {
+                                                    label: "Gradient";
+                                                    btn-height: 30px;
+                                                    primary: lyrics-word-style == "gradient";
+                                                    clicked => { lyrics-word-style = "gradient"; root.save-setting("slint_lyrics_word_style", "gradient"); }
+                                                }
+                                                PillBtn {
+                                                    label: "Words";
+                                                    btn-height: 30px;
+                                                    primary: lyrics-word-style == "words";
+                                                    clicked => { lyrics-word-style = "words"; root.save-setting("slint_lyrics_word_style", "words"); }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Toggles
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            Text { text: "Show 'No lyrics / No sync' warnings"; color: Theme.text-primary; font-size: 13.5px; font-weight: 600; }
+                                            Text { text: "Display sync & source status badge in Now Playing"; color: Theme.text-muted; font-size: 12px; }
+                                        }
+                                        ToggleSwitch {
+                                            checked <=> lyrics-warnings;
+                                            toggled(on) => { root.save-setting("slint_lyrics_warnings", on ? "1" : "0"); }
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            Text { text: "Auto-scroll lyrics"; color: Theme.text-primary; font-size: 13.5px; font-weight: 600; }
+                                            Text { text: "Automatically follow the active lyric line during playback"; color: Theme.text-muted; font-size: 12px; }
+                                        }
+                                        ToggleSwitch {
+                                            checked <=> lyrics-autoscroll;
+                                            toggled(on) => { root.save-setting("slint_lyrics_autoscroll", on ? "1" : "0"); }
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 12px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            Text { text: "Show lyrics only in fullscreen mode"; color: Theme.text-primary; font-size: 13.5px; font-weight: 600; }
+                                            Text { text: "Hide lyrics in the right panel and show them in fullscreen karaoke"; color: Theme.text-muted; font-size: 12px; }
+                                        }
+                                        ToggleSwitch {
+                                            checked <=> lyrics-fullscreen-only;
+                                            toggled(on) => { root.save-setting("slint_lyrics_fullscreen_only", on ? "1" : "0"); }
+                                        }
+                                    }
+
+                                    // Lyrics animation speed
+                                    HorizontalLayout {
+                                        Text { text: "Lyrics animation speed"; color: Theme.text-secondary; font-size: 13px; horizontal-stretch: 1; }
+                                        Text { text: Math.round(lyrics-speed * 10) / 10 + "x"; color: Theme.primary; font-size: 13px; font-weight: 700; }
+                                    }
+                                    Slider {
+                                        height: 28px;
+                                        minimum: 0.5;
+                                        maximum: 2.5;
+                                        value <=> lyrics-speed;
+                                        changed(v) => { root.save-setting("slint_lyrics_speed", Math.round(v * 10) + ""); }
+                                    }
+
+                                    // Gradient tightness
+                                    HorizontalLayout {
+                                        Text { text: "Gradient tightness"; color: Theme.text-secondary; font-size: 13px; horizontal-stretch: 1; }
+                                        Text { text: Math.round(lyrics-tightness) + "%"; color: Theme.primary; font-size: 13px; font-weight: 700; }
+                                    }
+                                    Slider {
+                                        height: 28px;
+                                        minimum: 2.0;
+                                        maximum: 24.0;
+                                        value <=> lyrics-tightness;
+                                        changed(v) => { root.save-setting("slint_lyrics_tightness", Math.round(v) + ""); }
+                                    }
                                 }
                             }
                         }
@@ -1933,6 +2293,13 @@ export component FullscreenLyricsOverlay inherits Rectangle {
     in property <int> active-lyric-index: -1;
     in property <[float]> spectrum-bands: [];
     in property <bool> blobs-enabled: true;
+    in-out property <string> lyrics-mode: "Word";
+    in-out property <string> lyrics-word-style: "gradient";
+    in-out property <string> lyrics-source: "auto";
+    in property <string> lyrics-source-label: "Auto";
+    in property <bool> lyrics-is-synced: false;
+    in property <bool> lyrics-autoscroll: true;
+    in property <float> lyrics-speed: 1.0;
 
     // Customize panel state (#tvk-panel)
     in-out property <bool> settings-panel-open: false;
@@ -1953,6 +2320,8 @@ export component FullscreenLyricsOverlay inherits Rectangle {
     callback seek-to(float);
     callback edit-lyrics();
     callback sync-lyrics();
+    callback change-lyrics-source(string);
+    callback save-setting(string, string);
     callback close();
 
     property <bool> show-lyrics-col: lyrics-lines.length > 0 && !cover-only-mode;
@@ -2095,9 +2464,10 @@ export component FullscreenLyricsOverlay inherits Rectangle {
                 }
             }
 
-            // Audio output badge (.tvk-output)
+            // Audio output & Lyrics Sync/Source badges (.tvk-output)
             HorizontalLayout {
                 alignment: center;
+                spacing: 8px;
                 Rectangle {
                     height: 28px;
                     border-radius: 14px;
@@ -2111,6 +2481,39 @@ export component FullscreenLyricsOverlay inherits Rectangle {
                             Image { source: @image-url("icons/headset.svg"); width: 14px; height: 14px; colorize: #ffffffcc; }
                         }
                         Text { text: "WASAPI 44.1kHz"; color: #ffffffcc; font-size: 12px; font-weight: 500; vertical-alignment: center; }
+                    }
+                }
+                if current-id != "": Rectangle {
+                    height: 28px;
+                    border-radius: 14px;
+                    background: tvk-src-ta.has-hover ? #ffffff26 : #ffffff14;
+                    animate background { duration: 140ms; easing: ease-out; }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 6px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 7px;
+                                height: 7px;
+                                border-radius: 3.5px;
+                                background: lyrics-lines.length == 0 ? #f28b82 : (lyrics-is-synced ? #81c784 : #ffb74d);
+                            }
+                        }
+                        Text {
+                            text: lyrics-lines.length == 0
+                                ? "No lyrics"
+                                : (lyrics-is-synced ? (lyrics-mode + " • " + lyrics-source-label) : ("Unsynced • " + lyrics-source-label));
+                            color: #ffffffcc;
+                            font-size: 12px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    tvk-src-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { settings-panel-open = !settings-panel-open; }
                     }
                 }
             }
@@ -2212,8 +2615,8 @@ export component FullscreenLyricsOverlay inherits Rectangle {
             tvk-scroll := ScrollView {
                 width: 100%;
                 height: 100%;
-                content-y: active-lyric-index > 2 ? -min(max(0px, (active-lyric-index - 2) * (54px + tvk-gap * 1px)), max(0px, self.content-height - self.visible-height)) : 0px;
-                animate content-y { duration: 420ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                content-y: (lyrics-autoscroll && active-lyric-index > 2) ? -min(max(0px, (active-lyric-index - 2) * (54px + tvk-gap * 1px)), max(0px, self.content-height - self.visible-height)) : 0px;
+                animate content-y { duration: Theme.reduced-motion ? 0ms : 420ms / max(0.5, lyrics-speed); easing: cubic-bezier(0.2, 0, 0, 1); }
 
                 VerticalLayout {
                     padding-top: 120px;
@@ -2241,7 +2644,8 @@ export component FullscreenLyricsOverlay inherits Rectangle {
                                 colorize: line.is_active ? #ffffff : #ffffff66;
                             }
 
-                            Text {
+                            // Line mode OR gap line
+                            if line.is_gap || lyrics-mode != "Word" || line.rows.length == 0: Text {
                                 horizontal-stretch: 1;
                                 text: line.is_gap ? "•••" : line.text;
                                 color: line.is_active ? #ffffff : (line.is_past ? #ffffff66 : #ffffff55);
@@ -2249,8 +2653,58 @@ export component FullscreenLyricsOverlay inherits Rectangle {
                                 font-weight: tvk-weight;
                                 horizontal-alignment: tvk-align == 0 ? left : (tvk-align == 2 ? right : center);
                                 wrap: word-wrap;
-                                animate color { duration: 220ms; easing: ease-out; }
-                                animate font-size { duration: 240ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                                animate color { duration: Theme.reduced-motion ? 0ms : 220ms; easing: ease-out; }
+                                animate font-size { duration: Theme.reduced-motion ? 0ms : 240ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                            }
+
+                            // Word-by-word karaoke mode (Gradient sweep or Words highlight)
+                            if !line.is_gap && lyrics-mode == "Word" && line.rows.length > 0: VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 4px;
+
+                                for row in line.rows: HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: tvk-align == 0 ? start : (tvk-align == 2 ? end : center);
+
+                                    for w in row.words: Rectangle {
+                                        width: tvk-w-base.preferred-width;
+                                        height: tvk-w-base.preferred-height;
+
+                                        tvk-w-base := Text {
+                                            text: w.text;
+                                            color: line.is_active
+                                                ? (lyrics-word-style == "words"
+                                                    ? (w.is_past ? #ffffff : (w.is_active ? Theme.primary : #ffffff55))
+                                                    : #ffffff55)
+                                                : (line.is_past ? #ffffff66 : #ffffff44);
+                                            font-size: (line.is_active ? 34px : 28px) * (tvk-size-pct / 100.0);
+                                            font-weight: tvk-weight;
+                                            y: (line.is_active && lyrics-word-style == "words" && w.is_active) ? -3px : 0px;
+                                            animate y { duration: Theme.reduced-motion ? 0ms : 140ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                                            animate color { duration: Theme.reduced-motion ? 0ms : 140ms; easing: ease-out; }
+                                            animate font-size { duration: Theme.reduced-motion ? 0ms : 240ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                                        }
+
+                                        if line.is_active && lyrics-word-style != "words": Rectangle {
+                                            x: 0px;
+                                            y: 0px;
+                                            width: parent.width * clamp(w.progress, 0.0, 1.0);
+                                            height: parent.height;
+                                            clip: true;
+
+                                            Text {
+                                                x: 0px;
+                                                y: 0px;
+                                                width: tvk-w-base.width;
+                                                height: tvk-w-base.height;
+                                                text: w.text;
+                                                color: #ffffff;
+                                                font-size: 34px * (tvk-size-pct / 100.0);
+                                                font-weight: tvk-weight;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -2342,10 +2796,10 @@ export component FullscreenLyricsOverlay inherits Rectangle {
 
     // Top-center Customize Lyrics drop-down panel (.tvk-panel)
     Rectangle {
-        width: min(380px, parent.width - 32px);
-        height: 380px;
+        width: min(420px, parent.width - 32px);
+        height: 490px;
         x: (parent.width - self.width) / 2;
-        y: settings-panel-open ? 0px : -400px;
+        y: settings-panel-open ? 0px : -510px;
         opacity: settings-panel-open ? 1.0 : 0.0;
         visible: self.opacity > 0.01;
         border-bottom-left-radius: 28px;
@@ -2362,7 +2816,58 @@ export component FullscreenLyricsOverlay inherits Rectangle {
 
         VerticalLayout {
             padding: 20px;
-            spacing: 12px;
+            spacing: 10px;
+
+            // Mode & Word Style
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Mode"; color: #ffffff; font-size: 13px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                PillBtn {
+                    label: "Word";
+                    btn-height: 28px;
+                    primary: lyrics-mode == "Word";
+                    clicked => { lyrics-mode = "Word"; root.save-setting("slint_lyrics_mode", "Word"); }
+                }
+                PillBtn {
+                    label: "Line";
+                    btn-height: 28px;
+                    primary: lyrics-mode == "Line";
+                    clicked => { lyrics-mode = "Line"; root.save-setting("slint_lyrics_mode", "Line"); }
+                }
+                PillBtn {
+                    label: lyrics-word-style == "gradient" ? "Gradient" : "Words";
+                    btn-height: 28px;
+                    clicked => {
+                        lyrics-word-style = lyrics-word-style == "gradient" ? "words" : "gradient";
+                        root.save-setting("slint_lyrics_word_style", lyrics-word-style);
+                    }
+                }
+            }
+
+            // Lyrics Source
+            VerticalLayout {
+                spacing: 4px;
+                Text { text: "Lyrics source (" + lyrics-source-label + ")"; color: #ffffff; font-size: 13px; font-weight: 600; }
+                HorizontalLayout {
+                    spacing: 5px;
+                    for src in [
+                        { id: "auto", label: "Auto" },
+                        { id: "lrclib", label: "LRCLIB" },
+                        { id: "musixmatch", label: "Musixmatch" },
+                        { id: "kugou", label: "Kugou" },
+                        { id: "netease", label: "NetEase" },
+                    ]: PillBtn {
+                        label: src.label;
+                        btn-height: 26px;
+                        h-pad: 9px;
+                        primary: lyrics-source == src.id;
+                        clicked => {
+                            lyrics-source = src.id;
+                            root.change-lyrics-source(src.id);
+                        }
+                    }
+                }
+            }
 
             // Alignment
             HorizontalLayout {

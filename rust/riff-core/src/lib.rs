@@ -471,9 +471,14 @@ async fn lyrics_handler(
 }
 
 async fn lyrics_words_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
+    Query(query): Query<lyrics::LyricsQuery>,
 ) -> Json<Value> {
-    Json(json!({ "success": false, "lines": [] }))
+    let title = query.title.unwrap_or_default();
+    let artist = query.artist.unwrap_or_default();
+    let dur = query.duration.unwrap_or(0.0);
+    let lines = state.lyrics.fetch_netease_words(&title, &artist, dur).await;
+    Json(json!({ "success": !lines.is_empty(), "lines": lines }))
 }
 
 #[derive(Debug, serde::Deserialize)]
