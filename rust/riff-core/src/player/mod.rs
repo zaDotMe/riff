@@ -241,9 +241,26 @@ impl AudioPlayer {
                     continue;
                 }
 
-                // If sink already has plenty of buffered samples, yield CPU
+                let calc_audible_pos = |decoded_pos: f64, sink_opt: Option<&AudioSink>, spd: f32| -> f64 {
+                    let buffered_samples = sink_opt.map(|s| s.buffered_samples()).unwrap_or(0) as f64;
+                    let denom = (sink_channels.max(1) as f64) * (sink_sample_rate.max(1.0) as f64);
+                    let buffered_secs = (buffered_samples / denom) * (spd as f64);
+                    (decoded_pos - buffered_secs).max(0.0)
+                };
+
+                // If sink already has plenty of buffered samples, update audible position & yield CPU
                 if let Some(s) = sink.as_ref() {
                     if s.buffered_samples() > 16384 {
+                        let audible = calc_audible_pos(current_position, Some(s), speed_factor);
+                        t_pos.store(audible.to_bits(), Ordering::SeqCst);
+                        if last_state_emit.elapsed() >= Duration::from_millis(100) {
+                            t_events.emit(RiffEvent::PlaybackState {
+                                is_playing: is_active,
+                                position_sec: audible,
+                                duration_sec: current_duration,
+                            });
+                            last_state_emit = Instant::now();
+                        }
                         std::thread::sleep(Duration::from_millis(10));
                         continue;
                     }
@@ -313,14 +330,15 @@ impl AudioPlayer {
                                 }
                             }
 
-                            // Advance tracked position
+                            // Advance tracked position (subtract sink buffer latency for accurate lyric sync)
                             let dt = frames as f64 / dec_sr as f64;
                             current_position += dt;
-                            t_pos.store(current_position.to_bits(), Ordering::SeqCst);
 
                             if let Some(s) = sink.as_ref() {
                                 s.write_samples(&processed);
                             }
+                            let audible = calc_audible_pos(current_position, sink.as_ref(), speed_factor);
+                            t_pos.store(audible.to_bits(), Ordering::SeqCst);
                         }
                         Ok(None) => {
                             reached_eof = true;
@@ -352,11 +370,12 @@ impl AudioPlayer {
                     last_spectrum_emit = Instant::now();
                 }
 
-                // Periodically emit PlaybackState event (~250ms)
-                if last_state_emit.elapsed() >= Duration::from_millis(250) {
+                // Periodically emit PlaybackState event (~100ms)
+                if last_state_emit.elapsed() >= Duration::from_millis(100) {
+                    let audible = calc_audible_pos(current_position, sink.as_ref(), speed_factor);
                     t_events.emit(RiffEvent::PlaybackState {
                         is_playing: is_active,
-                        position_sec: current_position,
+                        position_sec: audible,
                         duration_sec: current_duration,
                     });
                     last_state_emit = Instant::now();

@@ -906,11 +906,11 @@ export component MainWindow inherits Window {
                     HomeView {
                         width: 100%;
                         height: 100%;
-                        y: active_tab == 0 ? 0px : 6px;
+                        y: active_tab == 0 ? 0px : 18px;
                         opacity: active_tab == 0 ? 1.0 : 0.0;
                         visible: self.opacity > 0.01;
-                        animate opacity { duration: 140ms; easing: ease-out; }
-                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                        animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         for-you-tracks: root.home_for_you;
                         trending-tracks: root.home_trending;
                         fav-count: root.favorite_tracks.length;
@@ -924,11 +924,11 @@ export component MainWindow inherits Window {
                     SearchView {
                         width: 100%;
                         height: 100%;
-                        y: active_tab == 1 ? 0px : 6px;
+                        y: active_tab == 1 ? 0px : 18px;
                         opacity: active_tab == 1 ? 1.0 : 0.0;
                         visible: self.opacity > 0.01;
-                        animate opacity { duration: 140ms; easing: ease-out; }
-                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                        animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         tracks: root.search_results;
                         current-id: root.current_id;
                         is-playing: root.is_playing;
@@ -946,11 +946,11 @@ export component MainWindow inherits Window {
                     LocalFilesView {
                         width: 100%;
                         height: 100%;
-                        y: active_tab == 2 ? 0px : 6px;
+                        y: active_tab == 2 ? 0px : 18px;
                         opacity: active_tab == 2 ? 1.0 : 0.0;
                         visible: self.opacity > 0.01;
-                        animate opacity { duration: 140ms; easing: ease-out; }
-                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                        animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         tracks: root.library_tracks;
                         current-id: root.current_id;
                         is-playing: root.is_playing;
@@ -964,11 +964,11 @@ export component MainWindow inherits Window {
                     FavoritesView {
                         width: 100%;
                         height: 100%;
-                        y: active_tab == 3 ? 0px : 6px;
+                        y: active_tab == 3 ? 0px : 18px;
                         opacity: active_tab == 3 ? 1.0 : 0.0;
                         visible: self.opacity > 0.01;
-                        animate opacity { duration: 140ms; easing: ease-out; }
-                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                        animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         tracks: root.favorite_tracks;
                         current-id: root.current_id;
                         is-playing: root.is_playing;
@@ -980,11 +980,11 @@ export component MainWindow inherits Window {
                     HistoryView {
                         width: 100%;
                         height: 100%;
-                        y: active_tab == 4 ? 0px : 6px;
+                        y: active_tab == 4 ? 0px : 18px;
                         opacity: active_tab == 4 ? 1.0 : 0.0;
                         visible: self.opacity > 0.01;
-                        animate opacity { duration: 140ms; easing: ease-out; }
-                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                        animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         tracks: root.history_tracks;
                         current-id: root.current_id;
                         is-playing: root.is_playing;
@@ -997,11 +997,11 @@ export component MainWindow inherits Window {
                     QueueView {
                         width: 100%;
                         height: 100%;
-                        y: active_tab == 5 ? 0px : 6px;
+                        y: active_tab == 5 ? 0px : 18px;
                         opacity: active_tab == 5 ? 1.0 : 0.0;
                         visible: self.opacity > 0.01;
-                        animate opacity { duration: 140ms; easing: ease-out; }
-                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                        animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         tracks: root.queue_tracks;
                         current-id: root.current_id;
                         is-playing: root.is_playing;
@@ -1014,11 +1014,11 @@ export component MainWindow inherits Window {
                     PlaylistDetailView {
                         width: 100%;
                         height: 100%;
-                        y: active_tab == 6 ? 0px : 6px;
+                        y: active_tab == 6 ? 0px : 18px;
                         opacity: active_tab == 6 ? 1.0 : 0.0;
                         visible: self.opacity > 0.01;
-                        animate opacity { duration: 140ms; easing: ease-out; }
-                        animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                        animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         playlist-id: root.active_playlist_id;
                         playlist-name: root.active_playlist_name;
                         tracks: root.active_playlist_tracks;
@@ -1038,7 +1038,7 @@ export component MainWindow inherits Window {
                         height: 36px;
                         width: min(380px, parent.width - 32px);
                         x: (parent.width - self.width) / 2;
-                        y: toast_open ? 14px : -44px;
+                        y: toast_open ? 14px : -52px;
                         opacity: toast_open ? 1.0 : 0.0;
                         visible: self.opacity > 0.01;
                         border-radius: 18px;
@@ -1049,8 +1049,8 @@ export component MainWindow inherits Window {
                         drop-shadow-blur: 18px;
                         drop-shadow-offset-y: 6px;
                         drop-shadow-color: #00000080;
-                        animate y { duration: 260ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
-                        animate opacity { duration: 180ms; easing: ease-out; }
+                        animate y { duration: Theme.reduced-motion ? 0ms : 320ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+                        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: ease-out; }
 
                         HorizontalLayout {
                             padding-left: 16px;
@@ -1074,11 +1074,12 @@ export component MainWindow inherits Window {
                     opacity: (!mini_mode && lyrics_open) ? 1.0 : 0.0;
                     visible: self.width > 1px;
                     clip: true;
-                    animate width { duration: 240ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-                    animate opacity { duration: 180ms; easing: ease-out; }
+                    animate width { duration: Theme.reduced-motion ? 0ms : 280ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                    animate opacity { duration: Theme.reduced-motion ? 0ms : 220ms; easing: ease-out; }
 
                     RightPanel {
-                        x: 8px;
+                        x: (!mini_mode && lyrics_open) ? 8px : 36px;
+                        animate x { duration: Theme.reduced-motion ? 0ms : 280ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         height: 100%;
                         current-id: root.current_id;
                         current-title: root.current_title;
@@ -1408,7 +1409,7 @@ export component MainWindow inherits Window {
 
     // 3b. FLOATING PRESETS DRAWER OVERLAY (persis web_presets.png: floats over MainContent without squeezing it)
     PresetsDrawer {
-        x: presets_open ? 346px : 334px;
+        x: presets_open ? 346px : 296px;
         y: 64px;
         height: parent.height - 64px - 84px;
         opacity: presets_open ? 1.0 : 0.0;
@@ -1422,8 +1423,8 @@ export component MainWindow inherits Window {
         apply-preset(p) => { root.apply_eq_preset(p); }
         set-eq(b, m, t) => { root.set_equalizer(b, m, t); }
         close => { presets_open = false; }
-        animate x { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-        animate opacity { duration: 180ms; easing: ease-out; }
+        animate x { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: ease-out; }
     }
 
     // 4. FULLSCREEN SYNC LYRICS / KARAOKE OVERLAY (#tv-karaoke 1:1)

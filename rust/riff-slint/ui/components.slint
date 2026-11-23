@@ -50,13 +50,14 @@ export component PillBtn inherits Rectangle {
     callback clicked();
 
     height: btn-height;
-    border-radius: radius;
+    border-radius: ta.has-hover ? min(radius + 4px, btn-height / 2) : radius;
     background: primary
-        ? (ta.has-hover ? #b2acef : Theme.primary)
-        : (ta.has-hover ? #2e2e34 : #232326);
-    opacity: ta.pressed ? 0.88 : 1.0;
-    animate background { duration: 150ms; easing: ease-out; }
-    animate opacity { duration: 100ms; easing: ease-out; }
+        ? (ta.has-hover ? Theme.primary.brighter(0.12) : Theme.primary)
+        : (ta.has-hover ? #2e2e36 : #232328);
+    opacity: ta.pressed ? 0.84 : 1.0;
+    animate background { duration: Theme.reduced-motion ? 0ms : 160ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+    animate border-radius { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+    animate opacity { duration: Theme.reduced-motion ? 0ms : 100ms; easing: ease-out; }
 
     HorizontalLayout {
         padding-left: h-pad;
@@ -139,17 +140,17 @@ export component HomeCard inherits Rectangle {
 
         Rectangle {
             width: 180px;
-            height: 182px;
+            height: 184px;
             background: transparent;
 
             Rectangle {
                 width: 180px;
                 height: 180px;
-                y: ta.has-hover ? 0px : 2px;
+                y: ta.has-hover ? 0px : 4px;
                 border-radius: 14px;
                 background: #1e1f22;
                 clip: true;
-                animate y { duration: 180ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                animate y { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
 
                 if track.has_cover: Image {
                     source: track.cover;
@@ -176,20 +177,20 @@ export component HomeCard inherits Rectangle {
                 }
 
                 Rectangle {
-                    width: ta.has-hover ? 42px : 36px;
-                    height: ta.has-hover ? 42px : 36px;
+                    width: ta.has-hover ? 44px : 32px;
+                    height: ta.has-hover ? 44px : 32px;
                     border-radius: self.width / 2;
                     background: Theme.primary;
                     x: parent.width - self.width - 10px;
-                    y: ta.has-hover ? parent.height - self.height - 10px : parent.height - self.height - 2px;
+                    y: ta.has-hover ? parent.height - self.height - 10px : parent.height - self.height + 4px;
                     opacity: ta.has-hover ? 1.0 : 0.0;
-                    drop-shadow-blur: 14px;
+                    drop-shadow-blur: 16px;
                     drop-shadow-offset-y: 4px;
-                    drop-shadow-color: #00000070;
-                    animate opacity { duration: 160ms; easing: ease-out; }
-                    animate y { duration: 180ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
-                    animate width { duration: 180ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
-                    animate height { duration: 180ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                    drop-shadow-color: #00000080;
+                    animate opacity { duration: Theme.reduced-motion ? 0ms : 180ms; easing: ease-out; }
+                    animate y { duration: Theme.reduced-motion ? 0ms : 240ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+                    animate width { duration: Theme.reduced-motion ? 0ms : 240ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+                    animate height { duration: Theme.reduced-motion ? 0ms : 240ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
 
                     Image {
                         source: @image-url("icons/play_fill.svg");

@@ -46,15 +46,106 @@ fn url_encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
-fn clean_track_title(title: &str) -> String {
-    let mut s = title.trim().to_string();
-    if let Some(pos) = s.find('(') {
-        s = s[..pos].trim().to_string();
+fn strip_brackets_noise(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0i32;
+    for ch in s.chars() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = (depth - 1).max(0),
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
     }
-    if let Some(pos) = s.find('[') {
-        s = s[..pos].trim().to_string();
+    out
+}
+
+fn clean_track_title(title: &str) -> String {
+    let stripped = strip_brackets_noise(title);
+    let s = stripped.trim();
+    if s.is_empty() {
+        title.trim().to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+fn clean_artist_name(artist: &str) -> String {
+    let mut s = artist.trim().to_string();
+    for suffix in [" - Topic", " - topic", "VEVO", "vevo"] {
+        if let Some(pos) = s.find(suffix) {
+            s = s[..pos].trim().to_string();
+        }
+    }
+    // Take primary artist if separated by comma / feat / &
+    for sep in [",", " feat.", " ft.", " featuring ", " & ", " x "] {
+        if let Some(pos) = s.to_ascii_lowercase().find(sep) {
+            let head = s[..pos].trim();
+            if !head.is_empty() {
+                s = head.to_string();
+                break;
+            }
+        }
     }
     s
+}
+
+fn normalize_lyric_meta(s: &str) -> String {
+    let cleaned = strip_brackets_noise(s);
+    let mut out = String::with_capacity(cleaned.len());
+    let mut prev_space = true;
+    for ch in cleaned.chars() {
+        if ch.is_alphanumeric() {
+            for lc in ch.to_lowercase() {
+                out.push(lc);
+            }
+            prev_space = false;
+        } else if !prev_space {
+            out.push(' ');
+            prev_space = true;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn is_instrumental_or_breakcore(title: &str, artist: &str) -> bool {
+    let combined = format!("{title} {artist}").to_ascii_lowercase();
+    [
+        "instrumental",
+        "breakcore",
+        "type beat",
+        "backing track",
+        "minus one",
+        "karaoke version",
+        "karaoke mix",
+    ]
+    .iter()
+    .any(|kw| combined.contains(kw))
+}
+
+/// Strict title + artist matching matching origin `isStrictLyricMatch` in server.js
+pub fn is_strict_lyric_match(req_title: &str, req_artist: &str, cand_title: &str, cand_artist: &str) -> bool {
+    if is_instrumental_or_breakcore(req_title, req_artist)
+        || is_instrumental_or_breakcore(cand_title, cand_artist)
+    {
+        return false;
+    }
+    let t1 = normalize_lyric_meta(req_title);
+    let t2 = normalize_lyric_meta(cand_title);
+    if t1.is_empty() || t2.is_empty() {
+        return false;
+    }
+    let title_ok = t1 == t2 || (t1.len() >= 4 && t2.len() >= 4 && (t1.contains(&t2) || t2.contains(&t1)));
+    if !title_ok {
+        return false;
+    }
+
+    let a1 = normalize_lyric_meta(&clean_artist_name(req_artist));
+    let a2 = normalize_lyric_meta(&clean_artist_name(cand_artist));
+    if a1.is_empty() || a2.is_empty() {
+        return false;
+    }
+    a1 == a2 || a1.contains(&a2) || a2.contains(&a1)
 }
 
 fn has_synced_timestamps(text: &str) -> bool {
@@ -62,22 +153,6 @@ fn has_synced_timestamps(text: &str) -> bool {
         let t = l.trim();
         t.starts_with('[') && t.find(']').map(|i| t[1..i].contains(':')).unwrap_or(false)
     })
-}
-
-fn norm_sim_str(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
-        .collect()
-}
-
-fn is_loose_match(target_title: &str, cand_title: &str) -> bool {
-    let a = norm_sim_str(&clean_track_title(target_title));
-    let b = norm_sim_str(&clean_track_title(cand_title));
-    if a.is_empty() || b.is_empty() {
-        return true;
-    }
-    a == b || a.contains(&b) || b.contains(&a)
 }
 
 /// Parse NetEase YRC format: `[lineStartMs,lineDurMs](wordStartMs,wordDurMs,0)word...`
@@ -173,27 +248,47 @@ impl LyricsService {
         Ok(())
     }
 
-    async fn fetch_lrclib(&self, title: &str, artist: &str) -> Option<(String, bool)> {
+    async fn fetch_lrclib(&self, title: &str, artist: &str, duration_sec: f64) -> Option<(String, bool)> {
         let clean_title = clean_track_title(title);
+        let clean_artist = clean_artist_name(artist);
+        let dur_param = if duration_sec > 5.0 {
+            format!("&duration={}", duration_sec.round() as u64)
+        } else {
+            String::new()
+        };
         let direct_url = format!(
-            "https://lrclib.net/api/get?track_name={}&artist_name={}",
+            "https://lrclib.net/api/get?track_name={}&artist_name={}{}",
             url_encode(&clean_title),
-            url_encode(artist)
+            url_encode(&clean_artist),
+            dur_param
         );
 
-        if let Ok(resp) = self.client.get(&direct_url).timeout(std::time::Duration::from_secs(5)).send().await {
+        if let Ok(resp) = self
+            .client
+            .get(&direct_url)
+            .header("User-Agent", "Riff/0.7.6 (https://github.com/zaDotMe/riff-Rust)")
+            .timeout(std::time::Duration::from_secs(6))
+            .send()
+            .await
+        {
             if resp.status().is_success() {
                 if let Ok(item) = resp.json::<LrcLibItem>().await {
-                    if item.instrumental == Some(true) {
-                        return Some((String::new(), true));
-                    }
-                    let text = item
-                        .synced_lyrics
-                        .filter(|s| !s.trim().is_empty())
-                        .or_else(|| item.plain_lyrics.filter(|s| !s.trim().is_empty()))
-                        .unwrap_or_default();
-                    if !text.is_empty() {
-                        return Some((text, false));
+                    let cand_t = item.track_name.as_deref().unwrap_or("");
+                    let cand_a = item.artist_name.as_deref().unwrap_or("");
+                    let dur_ok = duration_sec <= 5.0
+                        || item.duration.map(|d| (d - duration_sec).abs() <= 10.0).unwrap_or(true);
+                    if dur_ok && is_strict_lyric_match(title, artist, cand_t, cand_a) {
+                        if item.instrumental == Some(true) {
+                            return Some((String::new(), true));
+                        }
+                        let text = item
+                            .synced_lyrics
+                            .filter(|s| !s.trim().is_empty())
+                            .or_else(|| item.plain_lyrics.filter(|s| !s.trim().is_empty()))
+                            .unwrap_or_default();
+                        if !text.is_empty() {
+                            return Some((text, false));
+                        }
                     }
                 }
             }
@@ -201,19 +296,56 @@ impl LyricsService {
 
         let search_url = format!(
             "https://lrclib.net/api/search?q={}",
-            url_encode(&format!("{artist} {clean_title}"))
+            url_encode(&format!("{clean_artist} {clean_title}"))
         );
-        if let Ok(resp) = self.client.get(&search_url).timeout(std::time::Duration::from_secs(5)).send().await {
+        if let Ok(resp) = self
+            .client
+            .get(&search_url)
+            .header("User-Agent", "Riff/0.7.6 (https://github.com/zaDotMe/riff-Rust)")
+            .timeout(std::time::Duration::from_secs(6))
+            .send()
+            .await
+        {
             if resp.status().is_success() {
                 if let Ok(items) = resp.json::<Vec<LrcLibItem>>().await {
-                    if let Some(first) = items.into_iter().next() {
-                        if first.instrumental == Some(true) {
+                    let mut matched: Vec<LrcLibItem> = items
+                        .into_iter()
+                        .filter(|it| {
+                            let ct = it.track_name.as_deref().unwrap_or("");
+                            let ca = it.artist_name.as_deref().unwrap_or("");
+                            if !is_strict_lyric_match(title, artist, ct, ca) {
+                                return false;
+                            }
+                            if duration_sec > 5.0 {
+                                if let Some(d) = it.duration {
+                                    if (d - duration_sec).abs() > 12.0 {
+                                        return false;
+                                    }
+                                }
+                            }
+                            true
+                        })
+                        .collect();
+
+                    // Prefer synced lyrics and closest duration match
+                    matched.sort_by(|a, b| {
+                        let a_sync = a.synced_lyrics.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+                        let b_sync = b.synced_lyrics.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+                        b_sync.cmp(&a_sync).then_with(|| {
+                            let da = a.duration.map(|d| (d - duration_sec).abs()).unwrap_or(999.0);
+                            let db = b.duration.map(|d| (d - duration_sec).abs()).unwrap_or(999.0);
+                            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                    });
+
+                    if let Some(best) = matched.into_iter().next() {
+                        if best.instrumental == Some(true) {
                             return Some((String::new(), true));
                         }
-                        let text = first
+                        let text = best
                             .synced_lyrics
                             .filter(|s| !s.trim().is_empty())
-                            .or_else(|| first.plain_lyrics.filter(|s| !s.trim().is_empty()))
+                            .or_else(|| best.plain_lyrics.filter(|s| !s.trim().is_empty()))
                             .unwrap_or_default();
                         if !text.is_empty() {
                             return Some((text, false));
@@ -227,10 +359,11 @@ impl LyricsService {
 
     async fn fetch_kugou(&self, title: &str, artist: &str, duration_sec: f64) -> Option<String> {
         let clean_title = clean_track_title(title);
+        let clean_artist = clean_artist_name(artist);
         let dur_ms = (duration_sec.max(0.0) * 1000.0).round() as u64;
         let search_url = format!(
             "http://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword={}&duration={}&hash=",
-            url_encode(&format!("{artist} - {clean_title}")),
+            url_encode(&format!("{clean_artist} - {clean_title}")),
             dur_ms
         );
         let resp = self
@@ -248,7 +381,18 @@ impl LyricsService {
         let candidates = json.get("candidates")?.as_array()?;
         let cand = candidates.iter().find(|c| {
             let sname = c.get("songname").and_then(|v| v.as_str()).unwrap_or("");
-            is_loose_match(title, sname)
+            let singer = c.get("singername").and_then(|v| v.as_str()).unwrap_or("");
+            if !is_strict_lyric_match(title, artist, sname, singer) {
+                return false;
+            }
+            if duration_sec > 5.0 {
+                if let Some(cdur_ms) = c.get("duration").and_then(|v| v.as_f64()) {
+                    if cdur_ms > 0.0 && ((cdur_ms / 1000.0) - duration_sec).abs() > 8.0 {
+                        return false;
+                    }
+                }
+            }
+            true
         })?;
         let id = cand.get("id")?.as_str().map(String::from).or_else(|| cand.get("id")?.as_i64().map(|n| n.to_string()))?;
         let accesskey = cand.get("accesskey")?.as_str()?;
@@ -289,9 +433,10 @@ impl LyricsService {
 
     async fn search_netease_song_id(&self, title: &str, artist: &str, duration_sec: f64) -> Option<i64> {
         let clean_title = clean_track_title(title);
-        let q = format!("{clean_title} {artist}").trim().to_string();
+        let clean_artist = clean_artist_name(artist);
+        let q = format!("{clean_title} {clean_artist}").trim().to_string();
         let search_url = format!(
-            "http://music.163.com/api/search/get?s={}&type=1&limit=5",
+            "http://music.163.com/api/search/get?s={}&type=1&limit=8",
             url_encode(&q)
         );
         let resp = self
@@ -310,10 +455,21 @@ impl LyricsService {
         let songs = json.pointer("/result/songs")?.as_array()?;
         for s in songs {
             let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if !is_loose_match(title, name) {
+            let artists_str = s
+                .get("artists")
+                .or_else(|| s.get("ar"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            if !is_strict_lyric_match(title, artist, name, &artists_str) {
                 continue;
             }
-            if duration_sec > 0.0 {
+            if duration_sec > 5.0 {
                 let dur_ms = s.get("duration").or_else(|| s.get("dt")).and_then(|v| v.as_f64()).unwrap_or(0.0);
                 if dur_ms > 0.0 && ((dur_ms / 1000.0) - duration_sec).abs() > 5.0 {
                     continue;
@@ -368,7 +524,7 @@ impl LyricsService {
         Vec::new()
     }
 
-    async fn fetch_musixmatch(&self, title: &str, artist: &str) -> Option<String> {
+    async fn fetch_musixmatch(&self, title: &str, artist: &str, duration_sec: f64) -> Option<String> {
         let tok_resp = self
             .client
             .get("https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0")
@@ -380,11 +536,12 @@ impl LyricsService {
         let tok_json: Value = tok_resp.json().await.ok()?;
         let token = tok_json.pointer("/message/body/user_token").and_then(|v| v.as_str()).unwrap_or("");
         let clean_title = clean_track_title(title);
+        let clean_artist = clean_artist_name(artist);
         let macro_url = format!(
             "https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get?app_id=web-desktop-app-v1.0&usertoken={}&q_track={}&q_artist={}",
             url_encode(token),
             url_encode(&clean_title),
-            url_encode(artist)
+            url_encode(&clean_artist)
         );
         let resp = self
             .client
@@ -396,6 +553,21 @@ impl LyricsService {
             .ok()?;
         let json: Value = resp.json().await.ok()?;
         let macro_calls = json.pointer("/message/body/macro_calls")?;
+        let track_obj = macro_calls
+            .pointer("/matcher.track.get/message/body/track")
+            .or_else(|| macro_calls.pointer("/track.get/message/body/track"))?;
+        let cand_t = track_obj.get("track_name").and_then(|v| v.as_str()).unwrap_or("");
+        let cand_a = track_obj.get("artist_name").and_then(|v| v.as_str()).unwrap_or("");
+        if !is_strict_lyric_match(title, artist, cand_t, cand_a) {
+            return None;
+        }
+        if duration_sec > 5.0 {
+            if let Some(tl) = track_obj.get("track_length").and_then(|v| v.as_f64()) {
+                if tl > 0.0 && (tl - duration_sec).abs() > 10.0 {
+                    return None;
+                }
+            }
+        }
         let sub = macro_calls
             .pointer("/track.subtitles.get/message/body/subtitle_list/0/subtitle/subtitle_body")
             .and_then(|v| v.as_str())
@@ -457,6 +629,17 @@ impl LyricsService {
             }
         }
 
+        if is_instrumental_or_breakcore(&title, &artist) {
+            return Json(json!({
+                "success": true,
+                "lyrics": "",
+                "source": "none",
+                "isSynced": false,
+                "isCustom": false,
+                "instrumental": true
+            }));
+        }
+
         if !allow_online {
             return Json(json!({
                 "success": false,
@@ -474,7 +657,7 @@ impl LyricsService {
 
         match source_pref.as_str() {
             "lrclib" => {
-                if let Some((text, inst)) = self.fetch_lrclib(&title, &artist).await {
+                if let Some((text, inst)) = self.fetch_lrclib(&title, &artist, duration_sec).await {
                     if inst {
                         return Json(json!({ "success": true, "lyrics": "", "source": "lrclib", "isSynced": false, "isCustom": false, "instrumental": true }));
                     }
@@ -495,14 +678,14 @@ impl LyricsService {
                 }
             }
             "musixmatch" => {
-                if let Some(text) = self.fetch_musixmatch(&title, &artist).await {
+                if let Some(text) = self.fetch_musixmatch(&title, &artist, duration_sec).await {
                     chosen_text = text;
                     chosen_source = "musixmatch".to_string();
                 }
             }
             _ => {
-                // Auto cascade: LRCLIB -> Musixmatch -> Kugou -> NetEase (preferring synced)
-                if let Some((text, inst)) = self.fetch_lrclib(&title, &artist).await {
+                // Auto cascade: LRCLIB -> Musixmatch -> Kugou -> NetEase (strict match + preferring synced)
+                if let Some((text, inst)) = self.fetch_lrclib(&title, &artist, duration_sec).await {
                     if inst {
                         return Json(json!({ "success": true, "lyrics": "", "source": "lrclib", "isSynced": false, "isCustom": false, "instrumental": true }));
                     }
@@ -514,7 +697,7 @@ impl LyricsService {
                     }
                 }
                 if chosen_text.is_empty() {
-                    if let Some(text) = self.fetch_musixmatch(&title, &artist).await {
+                    if let Some(text) = self.fetch_musixmatch(&title, &artist, duration_sec).await {
                         if has_synced_timestamps(&text) {
                             chosen_text = text;
                             chosen_source = "musixmatch".to_string();

@@ -335,10 +335,32 @@ fn estimate_words_for_line(text: &str, line_start: f32, line_end: f32) -> Vec<Ly
     out
 }
 
-/// Parse LRC formatted synchronized lyrics or fallback to line-by-line text
+fn parse_lrc_timestamp(tag: &str) -> Option<f32> {
+    let parts: Vec<&str> = tag.split(':').collect();
+    match parts.len() {
+        2 => {
+            let min = parts[0].trim().parse::<f64>().ok()?;
+            let sec = parts[1].trim().parse::<f64>().ok()?;
+            Some((min * 60.0 + sec) as f32)
+        }
+        3 => {
+            // [mm:ss:xx] format (centiseconds after second colon)
+            let min = parts[0].trim().parse::<f64>().ok()?;
+            let sec = parts[1].trim().parse::<f64>().ok()?;
+            let frac_str = parts[2].trim();
+            let frac = frac_str.parse::<f64>().ok()?;
+            let div = if frac_str.len() >= 3 { 1000.0 } else { 100.0 };
+            Some((min * 60.0 + sec + frac / div) as f32)
+        }
+        _ => None,
+    }
+}
+
+/// Parse LRC formatted synchronized lyrics (supports multi-timestamps, [mm:ss:xx], [offset:ms], and auto gaps)
 fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineItem> {
     let mut raw_entries: Vec<(f32, String)> = Vec::new();
     let mut has_timestamps = false;
+    let mut offset_sec = 0.0f32;
 
     for raw in text.lines() {
         let trimmed = raw.trim();
@@ -346,28 +368,58 @@ fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineItem> {
             continue;
         }
 
-        if trimmed.starts_with('[') {
-            if let Some(close_bracket) = trimmed.find(']') {
-                let time_part = &trimmed[1..close_bracket];
-                let text_part = trimmed[close_bracket + 1..].trim();
-
-                if let Some(colon) = time_part.find(':') {
-                    let min_str = &time_part[..colon];
-                    let sec_str = &time_part[colon + 1..];
-                    if let (Ok(min), Ok(sec)) = (min_str.parse::<f64>(), sec_str.parse::<f64>()) {
-                        let total = (min * 60.0 + sec) as f32;
-                        has_timestamps = true;
-                        raw_entries.push((total, text_part.to_string()));
-                        continue;
-                    }
+        // Check [offset:+/-ms] header tag
+        if let Some(rest) = trimmed.strip_prefix("[offset:") {
+            if let Some(end) = rest.find(']') {
+                if let Ok(ms) = rest[..end].trim().parse::<f32>() {
+                    offset_sec = ms / 1000.0;
                 }
+            }
+            continue;
+        }
+
+        // Extract all leading [mm:ss.xx] timestamps on this line
+        let mut cursor = trimmed;
+        let mut line_times: Vec<f32> = Vec::new();
+        while cursor.starts_with('[') {
+            if let Some(close_bracket) = cursor.find(']') {
+                let inner = &cursor[1..close_bracket];
+                if let Some(t) = parse_lrc_timestamp(inner) {
+                    line_times.push(t);
+                    cursor = cursor[close_bracket + 1..].trim_start();
+                    continue;
+                }
+            }
+            break;
+        }
+
+        if !line_times.is_empty() {
+            has_timestamps = true;
+            let text_part = cursor.trim().to_string();
+            for t in line_times {
+                raw_entries.push(((t - offset_sec).max(0.0), text_part.clone()));
             }
         }
     }
 
     if has_timestamps && !raw_entries.is_empty() {
         raw_entries.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        let mut lines = Vec::with_capacity(raw_entries.len());
+        let mut lines = Vec::with_capacity(raw_entries.len() + 4);
+
+        // Insert leading instrumental gap if first lyric starts >= 6s (matches origin lyrics.js)
+        if raw_entries[0].0 >= 6.0 {
+            lines.push(LyricLineItem {
+                time_sec: 0.0,
+                time_str: format_duration(0.0),
+                text: String::new(),
+                is_active: false,
+                is_past: false,
+                is_gap: true,
+                is_synced: true,
+                words: Vec::new(),
+            });
+        }
+
         for i in 0..raw_entries.len() {
             let (start, ref raw_txt) = raw_entries[i];
             let next_start = raw_entries
@@ -382,24 +434,43 @@ fn parse_lrc(text: &str, duration_sec: f64) -> Vec<LyricLineItem> {
                 });
             let line_end = next_start.max(start + 0.5);
             let (clean_txt, enh_words) = parse_enhanced_lrc_words(raw_txt, start, line_end);
-            let gap = is_gap_text(&clean_txt);
+            let gap = clean_txt.trim().is_empty() || is_gap_text(&clean_txt);
             let words = if gap {
                 Vec::new()
             } else if !enh_words.is_empty() {
                 enh_words
             } else {
-                estimate_words_for_line(&clean_txt, start, line_end)
+                estimate_words_for_line(&clean_txt, start, line_end.min(start + 5.0))
             };
             lines.push(LyricLineItem {
                 time_sec: start,
                 time_str: format_duration(start as f64),
-                text: clean_txt,
+                text: if gap { String::new() } else { clean_txt },
                 is_active: false,
                 is_past: false,
                 is_gap: gap,
                 is_synced: true,
                 words,
             });
+
+            // Insert instrumental gap if pause between lines >= 6s
+            if !gap {
+                if let Some((nxt_t, nxt_txt)) = raw_entries.get(i + 1) {
+                    let est_end = (start + 4.0).min(*nxt_t);
+                    if !nxt_txt.trim().is_empty() && !is_gap_text(nxt_txt) && (*nxt_t - est_end) >= 6.0 {
+                        lines.push(LyricLineItem {
+                            time_sec: est_end,
+                            time_str: format_duration(est_end as f64),
+                            text: String::new(),
+                            is_active: false,
+                            is_past: false,
+                            is_gap: true,
+                            is_synced: true,
+                            words: Vec::new(),
+                        });
+                    }
+                }
+            }
         }
         return lines;
     }
@@ -517,19 +588,25 @@ fn update_lyrics_progress(lines: &mut [LyricLineItem], pos_f: f32) -> (i32, bool
     if lines.is_empty() {
         return (-1, false);
     }
-    let mut active_idx = 0usize;
-    for (i, line) in lines.iter().enumerate() {
-        if line.time_sec <= pos_f {
-            active_idx = i;
-        } else {
-            break;
+    let match_t = pos_f + 0.08;
+    let active_opt: Option<usize> = if match_t < lines[0].time_sec {
+        None
+    } else {
+        let mut idx = 0usize;
+        for (i, line) in lines.iter().enumerate() {
+            if line.time_sec <= match_t {
+                idx = i;
+            } else {
+                break;
+            }
         }
-    }
+        Some(idx)
+    };
 
     let mut changed = false;
     for (i, line) in lines.iter_mut().enumerate() {
-        let should_be_active = i == active_idx;
-        let should_be_past = i < active_idx;
+        let should_be_active = active_opt == Some(i);
+        let should_be_past = active_opt.map(|a| i < a).unwrap_or(false);
         if line.is_active != should_be_active || line.is_past != should_be_past {
             line.is_active = should_be_active;
             line.is_past = should_be_past;
@@ -539,9 +616,9 @@ fn update_lyrics_progress(lines: &mut [LyricLineItem], pos_f: f32) -> (i32, bool
         if should_be_active && !line.is_gap {
             for w in &mut line.words {
                 let dur = (w.end_sec - w.start_sec).max(0.05);
-                let prog = ((pos_f - w.start_sec) / dur).clamp(0.0, 1.0);
-                let w_past = pos_f >= w.end_sec;
-                let w_active = pos_f >= w.start_sec && pos_f < w.end_sec;
+                let prog = ((match_t - w.start_sec) / dur).clamp(0.0, 1.0);
+                let w_past = match_t >= w.end_sec;
+                let w_active = match_t >= w.start_sec && match_t < w.end_sec;
                 if (w.progress - prog).abs() > 0.02 || w.is_past != w_past || w.is_active != w_active {
                     w.progress = prog;
                     w.is_past = w_past;
@@ -552,7 +629,7 @@ fn update_lyrics_progress(lines: &mut [LyricLineItem], pos_f: f32) -> (i32, bool
         }
     }
 
-    (active_idx as i32, changed)
+    (active_opt.map(|i| i as i32).unwrap_or(-1), changed)
 }
 
 fn spawn_fetch_lyrics(
@@ -2656,13 +2733,46 @@ mod tests {
         assert!(changed);
         let first_word = &lines[0].words[0];
         assert!(first_word.is_active);
-        assert!((first_word.progress - 0.5).abs() < 0.05);
+        assert!((first_word.progress - 0.66).abs() < 0.05);
 
         let yrc = "[1000,2000](1000,500,0)Hello (1500,500,0)world";
         let parsed_yrc = riff_core::lyrics::parse_yrc(yrc);
         assert_eq!(parsed_yrc.len(), 1);
         assert_eq!(parsed_yrc[0].words.len(), 2);
         assert_eq!(parsed_yrc[0].words[0].text, "Hello");
+    }
+
+    #[test]
+    fn test_lrc_multi_timestamp_offset_and_strict_match() {
+        let lrc = "[offset:500]\n[00:08.50][00:20:50]Chorus line\n[00:10.00]Verse";
+        let mut lines = parse_lrc(lrc, 60.0);
+        // Leading gap inserted because first lyric starts at 8.0s >= 6s
+        assert!(lines[0].is_gap);
+        assert_eq!(lines[1].text, "Chorus line");
+        assert!((lines[1].time_sec - 8.0).abs() < 0.05);
+        assert_eq!(lines[2].text, "Verse");
+        assert!((lines[2].time_sec - 9.5).abs() < 0.05);
+        // Middle instrumental gap inserted between 13.5s and 20.0s (>= 6s)
+        assert!(lines[3].is_gap);
+        assert_eq!(lines[4].text, "Chorus line");
+        assert!((lines[4].time_sec - 20.0).abs() < 0.05);
+
+        // Before first lyric (at 0.5s), active line should be 0 (leading gap), and if no gap, -1
+        let (idx, _) = update_lyrics_progress(&mut lines, 0.5);
+        assert_eq!(idx, 0);
+
+        assert!(riff_core::lyrics::is_strict_lyric_match(
+            "Rock That Body (Official Video)",
+            "The Black Eyed Peas - Topic",
+            "Rock That Body",
+            "Black Eyed Peas"
+        ));
+        assert!(!riff_core::lyrics::is_strict_lyric_match(
+            "Rock That Body",
+            "The Black Eyed Peas",
+            "Rock That Body",
+            "Random DJ"
+        ));
     }
 
     #[test]

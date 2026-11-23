@@ -285,29 +285,25 @@ impl RiffApi {
             || target_url.contains("youtube.com")
             || target_url.contains("youtu.be");
 
-        if is_yt && (!effective_title.is_empty() || !artist_val.is_empty()) {
-            if let Ok(resolved) = self.soundcloud.resolve_smart_mirror(&effective_title, &artist_val, duration_val).await {
-                info!(
-                    "Smart Mirror resolved full track '{}' by '{}' (dur: {}s, is_hls: {})",
-                    resolved.title, resolved.artist, resolved.duration, resolved.is_hls
+        let quality = query.quality.as_deref().unwrap_or("medium");
+        let timeout_secs = query.timeout.unwrap_or(20).clamp(5, 30);
+
+        // 2a. Direct YouTube InnerTube resolution first (exact video ID match, matches origin server.js)
+        if is_yt {
+            let cand_id = if !id.is_empty() { &id } else { &target_url };
+            if let Ok(direct_url) = self.youtube.resolve_stream(cand_id, quality).await {
+                let proxy_url = format!(
+                    "http://127.0.0.1:{local_port}/api/audio-proxy?url={}",
+                    url_encode(&direct_url)
                 );
-                let is_hls = resolved.is_hls;
-                let stream_url = if is_hls {
-                    resolved.url.clone()
-                } else {
-                    format!(
-                        "http://127.0.0.1:{local_port}/api/audio-proxy?url={}",
-                        url_encode(&resolved.url)
-                    )
-                };
 
                 return Ok(json!({
                     "success": true,
                     "isLocal": false,
-                    "streamUrl": stream_url,
-                    "rawStreamUrl": resolved.url,
-                    "proxyUrl": format!("http://127.0.0.1:{local_port}/api/audio-proxy?url={}", url_encode(&resolved.url)),
-                    "isHls": is_hls,
+                    "streamUrl": proxy_url,
+                    "rawStreamUrl": direct_url,
+                    "proxyUrl": proxy_url,
+                    "isHls": false,
                     "resolvedId": id,
                     "sourceMeta": {
                         "id": id,
@@ -322,10 +318,7 @@ impl RiffApi {
             }
         }
 
-        let quality = query.quality.as_deref().unwrap_or("medium");
-        let timeout_secs = query.timeout.unwrap_or(20).clamp(5, 30);
-
-        // 2b. Attempt yt-dlp resolution first
+        // 2b. Attempt yt-dlp resolution for the exact target URL
         if let Ok(raw_stream) = crate::stream::resolve_with_ytdlp(
             self.config.ytdlp.as_deref(),
             &target_url,
@@ -360,22 +353,30 @@ impl RiffApi {
             }));
         }
 
-        // 2c. Fallback: native InnerTube player resolution for YouTube
-        if is_yt {
-            let cand_id = if !id.is_empty() { &id } else { &target_url };
-            if let Ok(direct_url) = self.youtube.resolve_stream(cand_id, quality).await {
-                let proxy_url = format!(
-                    "http://127.0.0.1:{local_port}/api/audio-proxy?url={}",
-                    url_encode(&direct_url)
+        // 2c. Fallback: SoundCloud Smart Mirror (strict title + artist + duration match)
+        if is_yt && (!effective_title.is_empty() || !artist_val.is_empty()) {
+            if let Ok(resolved) = self.soundcloud.resolve_smart_mirror(&effective_title, &artist_val, duration_val).await {
+                info!(
+                    "Smart Mirror fallback resolved '{}' by '{}' (dur: {}s, is_hls: {})",
+                    resolved.title, resolved.artist, resolved.duration, resolved.is_hls
                 );
+                let is_hls = resolved.is_hls;
+                let stream_url = if is_hls {
+                    resolved.url.clone()
+                } else {
+                    format!(
+                        "http://127.0.0.1:{local_port}/api/audio-proxy?url={}",
+                        url_encode(&resolved.url)
+                    )
+                };
 
                 return Ok(json!({
                     "success": true,
                     "isLocal": false,
-                    "streamUrl": proxy_url,
-                    "rawStreamUrl": direct_url,
-                    "proxyUrl": proxy_url,
-                    "isHls": false,
+                    "streamUrl": stream_url,
+                    "rawStreamUrl": resolved.url,
+                    "proxyUrl": format!("http://127.0.0.1:{local_port}/api/audio-proxy?url={}", url_encode(&resolved.url)),
+                    "isHls": is_hls,
                     "resolvedId": id,
                     "sourceMeta": {
                         "id": id,
@@ -383,14 +384,14 @@ impl RiffApi {
                         "artist": artist_val,
                         "duration": duration_val,
                         "thumbnail": query.thumbnail.clone().unwrap_or_default(),
-                        "platform": "youtube",
+                        "platform": if platform.is_empty() { "ytmusic".to_string() } else { platform },
                         "url": target_url,
                     },
                 }));
             }
         }
 
-        bail!("failed to resolve audio stream via smart mirror, yt-dlp, or innertube");
+        bail!("failed to resolve audio stream via innertube, yt-dlp, or smart mirror");
     }
 
     /// List all tracks in SQLite library

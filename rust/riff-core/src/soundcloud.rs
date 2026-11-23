@@ -256,8 +256,10 @@ impl SoundCloudClient {
         };
         push_query(format!("{} {}", song, artist_hint));
         push_query(format!("{} {}", song, artist));
-        push_query(song.clone());
-        push_query(cleaned_title.clone());
+        if artist_hint.is_empty() && artist.trim().is_empty() {
+            push_query(song.clone());
+            push_query(cleaned_title.clone());
+        }
 
         let mut cid = self.get_client_id(false).await;
         let mut last_err = anyhow!("no smart mirror query attempted");
@@ -326,7 +328,7 @@ impl SoundCloudClient {
                     if dur_sec < 35.0 || dur_sec > 660.0 {
                         return false;
                     }
-                    if target_dur_sec > 0.0 && target_dur_sec <= 660.0 && (dur_sec - target_dur_sec).abs() > 90.0 {
+                    if target_dur_sec > 0.0 && target_dur_sec <= 660.0 && (dur_sec - target_dur_sec).abs() > 25.0 {
                         return false;
                     }
 
@@ -369,7 +371,7 @@ impl SoundCloudClient {
                         return false;
                     }
 
-                    title_match_ratio(t, &song) >= 0.6
+                    title_match_ratio(t, &song) >= 0.75 && artist_match_ratio(t, &artist_hint) >= 0.5
                 })
                 .collect();
 
@@ -755,6 +757,22 @@ fn split_song_artist(cleaned_title: &str, artist: &str) -> (String, String) {
 
 fn title_match_ratio(t: &Value, song: &str) -> f64 {
     let wanted = tokenize(song);
+    if wanted.is_empty() {
+        return 1.0;
+    }
+    let title = t.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    let artist = t
+        .get("user")
+        .and_then(|u| u.get("username").or_else(|| u.get("name")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let have: Vec<String> = tokenize(&format!("{} {}", title, artist));
+    let hits = wanted.iter().filter(|w| have.contains(w)).count();
+    hits as f64 / wanted.len() as f64
+}
+
+fn artist_match_ratio(t: &Value, artist_hint: &str) -> f64 {
+    let wanted = tokenize(artist_hint);
     if wanted.is_empty() {
         return 1.0;
     }
