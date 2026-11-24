@@ -39,6 +39,68 @@ export component IconBtn inherits Rectangle {
     }
 }
 
+// Window control button with a staggered reveal animation when the
+// auto-hide titlebar slides down from the top edge.
+export component WinBtn inherits Rectangle {
+    in property <image> icon;
+    in property <length> icon-size: 14px;
+    in property <color> hover-bg: #2a2a30;
+    in property <color> icon-color: Theme.text-secondary;
+    in property <color> hover-icon-color: Theme.text-primary;
+    in property <bool> active: false;
+    in property <color> active-icon-color: Theme.primary;
+    in property <bool> revealed: true;
+    in property <duration> reveal-delay: 0ms;
+    out property <bool> hovered: ta.has-hover;
+    callback clicked();
+
+    width: 34px;
+    height: 28px;
+    y: 6px;
+    border-radius: ta.has-hover ? 11px : 14px;
+    background: ta.has-hover ? hover-bg : transparent;
+    opacity: shown ? 1.0 : 0.0;
+    animate background { duration: Theme.reduced-motion ? 0ms : 140ms; easing: ease-out; }
+    animate border-radius { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+    animate opacity { duration: Theme.reduced-motion ? 0ms : 180ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+
+    property <bool> shown: false;
+
+    // Delay each control slightly so the buttons cascade in after the bar.
+    Timer {
+        interval: Theme.reduced-motion ? 0ms : reveal-delay;
+        running: revealed && !shown;
+        triggered => { shown = true; }
+    }
+
+    // Keep the controls visible while the bar slides away, then reset for the
+    // next reveal so the entrance animation can play again.
+    Timer {
+        interval: Theme.reduced-motion ? 0ms : 300ms;
+        running: !revealed && shown;
+        triggered => { shown = false; }
+    }
+
+    Image {
+        source: icon;
+        width: ta.pressed ? icon-size * 0.9 : (ta.has-hover ? icon-size + 1px : icon-size);
+        height: self.width;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2 + (shown ? 0px : 3px);
+        colorize: active ? active-icon-color : (ta.has-hover ? hover-icon-color : icon-color);
+        animate width { duration: Theme.reduced-motion ? 0ms : 140ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate height { duration: Theme.reduced-motion ? 0ms : 140ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate y { duration: Theme.reduced-motion ? 0ms : 180ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+        animate colorize { duration: Theme.reduced-motion ? 0ms : 140ms; easing: ease-out; }
+    }
+
+    ta := TouchArea {
+        enabled: shown;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 export component PillBtn inherits Rectangle {
     in property <string> label;
     in property <image> icon;

@@ -1,16 +1,17 @@
 <div align="center">
 
-# Riff
+<img src="assets/icon-512x512.png" width="112" alt="Riff icon" />
 
-**Desktop music player for YouTube Music, SoundCloud, and local audio.**
+# Riff — Native Rust Edition
 
-[![Release](https://img.shields.io/github/v/release/rootscripts/riff?style=flat-square&label=release&labelColor=0d0d10&color=6750A4)](https://github.com/rootscripts/riff/releases) [![Downloads](https://img.shields.io/github/downloads/rootscripts/riff/total?style=flat-square&label=downloads&labelColor=0d0d10&color=4d71ff)](https://github.com/rootscripts/riff/releases) [![Platforms](https://img.shields.io/badge/platforms-Windows%20·%20Linux%20·%20macOS-2ec4b6?style=flat-square&labelColor=0d0d10)](https://github.com/rootscripts/riff/releases) [![License](https://img.shields.io/badge/license-MIT-534dff?style=flat-square&labelColor=0d0d10)](./LICENSE)
+**A fast, native desktop music player for YouTube Music, SoundCloud, and local audio.**
+Built with **Rust + Slint**, with a Tauri dual launcher for the legacy Web UI.
 
-[Overview](#overview) • [Features](#features) • [Architecture](#architecture) • [Getting Started](#getting-started) • [Building](#building) • [macOS Notes](#macos-notes) • [Contributing](#contributing) • [License](#license)
+[![Release](https://img.shields.io/github/v/release/zaDotMe/riff-Rust?style=flat-square&label=release&labelColor=0d0d10&color=6750A4)](https://github.com/zaDotMe/riff-Rust/releases)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Android%20(in%20progress)-2ec4b6?style=flat-square&labelColor=0d0d10)](https://github.com/zaDotMe/riff-Rust/releases)
+[![License](https://img.shields.io/badge/license-MIT-534dff?style=flat-square&labelColor=0d0d10)](./LICENSE)
 
-<br/>
-
-<img width="600" height="242" alt="изображение" src="https://github.com/user-attachments/assets/5d7011e7-9ed8-4678-aaa0-fbf2c12e598b" />
+[Features](#features) · [Downloads](#downloads) · [Architecture](#architecture) · [Building](#building) · [Legacy Web UI](#legacy-web-ui) · [Credits](#credits)
 
 </div>
 
@@ -18,125 +19,136 @@
 
 ## Overview
 
-Riff is the best open-source desktop music player for Windows, Linux, and macOS. It streams from YouTube Music, YouTube, and SoundCloud without ads, and plays local audio files (FLAC, WAV, MP3, OGG).
+This repository is the **native Rust rewrite** of [Riff](https://github.com/rootscripts/riff).
+The original Electron/Web implementation is kept under `src/` for reference and for the
+dual-launcher mode, but the primary application is now:
 
-No account or subscription required. No tracking or telemetry. Never.
+- **`riff-core`** — native audio engine, streaming resolver, SQLite library, lyrics providers.
+- **`riff-slint`** — the native Slint desktop UI (1:1 with the Web UI, including motion).
+- **`riff-tauri`** — dual launcher that can start either the native Slint UI or the WebView2 UI.
+
+No account, no subscription, no telemetry.
 
 ---
 
 ## Features
 
-- **Streaming & local**: Stream from YouTube Music, YouTube, and SoundCloud without ads, with automatic fallback, or play local lossless tracks (FLAC, WAV, MP3, OGG, M4A).
-- **Syllable-synced Lyrics**: Syllable and timestamped lyrics with support for `.lrc` files, manual timing offset, and translations.
-- **Audio editor, presets**: 10-band equalizer, playback speed and pitch control with presets, reverb, bass boost, clear sound function, volume normalizer, and an in-app sleep timer. Provides also presets tab to switch between your custom or our official presets like slowed + reverb, nightcore.
-- **Playlist import**: Import public playlists from Spotify, Apple Music, Deezer, VK Music, Yandex Music, YouTube Music, TikTok and YouTube directly into your library with synchronization so you don't miss new tracks in the playlist.
-- **Visualizers**: WebGL and canvas audio visualizers (3 types available: wave, bars, swift).
-- **Interface & Themes**: Theme customizer with dynamic colors extracted from album art, plus a built-in CSS editor for custom styles, intensity, monochrome brightness, brightness slider, with 20+ icons available and custom icon available also.
-- **Discord RPC**: Shows the active track, artist, and playback progress in Discord.
-- **Last.fm**: Built-in easy last.fm scrobbler.
+- **Streaming & local playback** — YouTube Music, YouTube, SoundCloud, plus local FLAC/WAV/MP3/OGG/M4A/AAC.
+- **Native audio engine** — Symphonia decoding, CPAL output, 3-band EQ, speed/pitch, reverb, distortion, sleep timer, 16-band FFT visualizer.
+- **Multi-source lyrics** — Auto, LRCLIB, Musixmatch, Kugou, NetEase, Genius, and custom LRC.
+- **Word-by-word karaoke** — NetEase YRC, enhanced LRC, and weighted estimation, rendered at 30 FPS with Gradient and Words styles.
+- **Sync tools** — per-track sync offset (±5000 ms), tap-to-sync editor, source picker, sync/source badges.
+- **1:1 desktop UI** — glass blur, dynamic cover accent, ambient banner, animated EQ bars, smooth tab/modal transitions.
+- **Full settings** — interface, themes, banners, audio, integrations, storage, advanced, plugins, account.
+- **Library** — favorites, history, playlists, queue, local folder scanning, playlist import.
+- **Dual launcher** — native Slint UI or the original WebView2 UI.
 
-- **Plugins**: Extensible system for custom functionality and custom .css themes.
+---
+
+## Downloads
+
+Release artifacts are published on the [Releases page](https://github.com/zaDotMe/riff-Rust/releases).
+
+| Platform | Artifact |
+| --- | --- |
+| Windows (native UI) | `Riff-Slint-windows-x64.exe` |
+| Windows (dual launcher) | `Riff-Tauri-windows-x64.exe` |
+| Windows (portable) | `Riff-windows-x64-portable.zip` |
+| Linux (portable) | `Riff-linux-x86_64.tar.gz` |
+| Linux (standalone) | `riff-slint-linux-x86_64` |
+| Linux (installer) | `Riff-linux-amd64.deb`, `Riff-linux-x86_64.AppImage` |
+| Android | APK — in progress |
+
+> Linux artifacts are produced by the GitHub Actions release workflow.
+> Android packaging is the remaining migration milestone.
 
 ---
 
 ## Architecture
 
-Riff is built with Electron and runs an internal proxy server alongside a Vanilla JS and WebGL renderer.
-
 ```
 riff/
-├── assets/              # Icons and UI presets
-├── scripts/             # Build and packaging scripts
-├── src/
-│   ├── main/            # Electron main process
-│   │   ├── main.js      # App lifecycle, window management, and IPC
-│   │   ├── discord.js   # Discord Rich Presence
-│   │   ├── launcher.js  # yt-dlp and ffmpeg runner
-│   │   ├── plugins.js   # Plugin loader
-│   │   ├── preload.js   # Context bridge to renderer
-│   │   ├── themes.js    # Theme and custom CSS handler
-│   │   └── updater.js   # Auto-update manager
-│   ├── renderer/        # Frontend UI (Vanilla JS & HTML5)
-│   │   ├── audio.js     # Web Audio API playback engine
-│   │   ├── styles.css   # Main stylesheet
-│   │   └── modules/     # UI modules
-│   │       ├── eq.js    # Equalizer and audio filters
-│   │       ├── lyrics.js# Synced lyrics renderer and parser
-│   │       ├── visualizer.js # WebGL and canvas visualizers
-│   │       ├── library.js    # Local file indexing
-│   │       ├── import.js     # Playlist importer
-│   │       └── ui.js         # UI controls and color extraction
-│   ├── server/          # Local backend proxy
-│   │   ├── server.js    # Stream resolution and caching
-│   │   └── tools.js     # Media extractors
-│   └── shared/          # Shared constants and schemas
-├── vendor/              # Bundled binaries
-├── package.json
-└── LICENSE
+├─ rust/
+│  ├─ riff-core/          # Native engine: audio, streaming, SQLite, lyrics
+│  └─ riff-slint/         # Slint desktop UI + karaoke renderer
+├─ src-tauri/             # Tauri dual launcher + Android scaffolding
+├─ packaging/linux/       # .desktop entry and install script
+├─ scripts/               # Release packaging helpers
+├─ src/                   # Legacy Electron/Web UI (reference + dual mode)
+└─ assets/                # Shared icons and artwork
 ```
 
----
+### Playback pipeline
 
-## Getting Started
-
-### Prerequisites
-
-- **Node.js** `18+`
-- **npm**
-
----
-
-### Setup
-
-```bash
-git clone https://github.com/rootscripts/riff.git
-cd riff
-npm install
-```
-
----
-
-### Running in Development
-
-```bash
-npm start
-```
+1. Resolve the exact track (YouTube ID first, then SoundCloud with strict title/artist/duration matching).
+2. Decode with Symphonia and feed CPAL.
+3. Report the **audible** position (`decoded position − sink latency`) every 100 ms so lyrics stay in sync.
+4. Render lyrics from the best matching provider, with word-level timing when available.
 
 ---
 
 ## Building
 
+### Prerequisites
+
+- Rust stable (1.80+)
+- Windows: MSVC toolchain + WebView2 (for the Tauri launcher)
+- Linux: `libasound2-dev`, `libxkbcommon-dev`, `libwayland-dev`, `libfontconfig1-dev`, `libssl-dev`, `pkg-config`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`
+- Node.js 20+ only if you build the Tauri/Web launcher
+
+### Native Slint app
+
 ```bash
-# Build for your current OS (output goes to dist/)
-npm run dist
+cargo build --release -p riff-slint
+./target/release/riff-slint
 ```
 
-Pre-built binaries for Windows (`.exe`), Linux (`.AppImage`), and macOS (`.dmg`) are also available on [Releases](https://github.com/rootscripts/riff/releases).
+### Dual launcher (Tauri)
+
+```bash
+npm install
+cargo build --release -p riff-tauri
+# or: npx tauri build
+```
+
+### Tests
+
+```bash
+cargo test --release -p riff-core -p riff-slint
+```
+
+### Package Windows artifacts
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
+```
+
+Artifacts are written to `dist/release/`.
 
 ---
 
-## macOS Notes
+## Legacy Web UI
 
-macOS releases are ad-hoc signed. If Gatekeeper blocks the app on first launch:
+The original Electron/Web implementation remains available and is still used by the
+Tauri launcher's WebView2 mode. It lives in `src/` and is intentionally excluded from
+GitHub's language statistics (see `.gitattributes`) so the repository is reported as a
+**Rust + Slint** project.
 
-1. Right-click `Riff.app` in `/Applications`, click **Open**, and confirm. On macOS 15+, open **System Settings → Privacy & Security** and select **Open Anyway**.
-2. If macOS reports the bundle as damaged, run:
-   ```bash
-   xattr -cr /Applications/Riff.app
-   ```
-3. On Apple Silicon, installing dependencies via Homebrew is recommended:
-   ```bash
-   brew install yt-dlp ffmpeg
-   ```
+Run it with:
 
----
-
-## Contributing
-
-Contributing is not welcome and we will never open pull request tab, the app is developed exclusively by our core team, please do not write us if you want to join or something
+```bash
+npm install
+npm start
+```
 
 ---
+
+## Credits
+
+Riff was originally created by [rootscripts](https://github.com/rootscripts/riff).
+This fork adds the native Rust + Slint rewrite, multi-source lyrics, native audio engine,
+and the cross-platform release pipeline.
 
 ## License
 
-Distributed under the [MIT License](./LICENSE).
+MIT — see [LICENSE](./LICENSE).

@@ -1,13 +1,13 @@
 import { Slider, ScrollView, AboutSlint, TextEdit, LineEdit } from "std-widgets.slint";
 import { Theme, LyricLineData, SyncLineData, PlaylistData } from "theme.slint";
-import { IconBtn, PillBtn, ToggleSwitch, ScrubberBar } from "components.slint";
+import { IconBtn, PillBtn, ToggleSwitch, ScrubberBar, WinBtn } from "components.slint";
 
 export component Titlebar inherits Rectangle {
     in property <bool> revealed: false;
     in property <bool> lyrics-open: true;
     in property <bool> is-maximized: false;
     in property <bool> mini-mode: false;
-    out property <bool> any-hover: drag-ta.has-hover || btn-lyrics.has-hover || btn-mini.has-hover || btn-min.has-hover || btn-max.has-hover || btn-close.has-hover;
+    out property <bool> any-hover: drag-ta.has-hover || btn-lyrics.hovered || btn-mini.hovered || btn-min.hovered || btn-max.hovered || btn-close.hovered;
 
     callback toggle-lyrics();
     callback mini-player();
@@ -19,7 +19,7 @@ export component Titlebar inherits Rectangle {
     height: 40px;
     y: revealed ? 0px : -42px;
     opacity: revealed ? 1.0 : 0.0;
-    visible: self.opacity > 0.01;
+    visible: revealed || self.opacity > 0.01;
     background: #18181be8;
     backdrop-blur: 16px;
     drop-shadow-blur: 18px;
@@ -81,130 +81,54 @@ export component Titlebar inherits Rectangle {
         alignment: end;
 
         // Lyrics toggle
-        Rectangle {
+        btn-lyrics := WinBtn {
             width: 34px;
-            height: 28px;
-            y: 6px;
-            border-radius: btn-lyrics.has-hover ? 11px : 14px;
-            background: btn-lyrics.has-hover ? #2a2a30 : transparent;
-            animate background { duration: 140ms; easing: ease-out; }
-            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-
-            Image {
-                source: @image-url("icons/win_lyrics.svg");
-                width: 14px;
-                height: 14px;
-                colorize: lyrics-open ? Theme.primary : Theme.text-secondary;
-                x: 10px;
-                y: 7px;
-                animate colorize { duration: 140ms; easing: ease-out; }
-            }
-
-            btn-lyrics := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.toggle-lyrics(); }
-            }
+            icon: @image-url("icons/win_lyrics.svg");
+            active: root.lyrics-open;
+            active-icon-color: Theme.primary;
+            revealed: root.revealed;
+            reveal-delay: 0ms;
+            clicked => { root.toggle-lyrics(); }
         }
 
         // Compact mini player / toggle lyrics
-        Rectangle {
+        btn-mini := WinBtn {
             width: 34px;
-            height: 28px;
-            y: 6px;
-            border-radius: btn-mini.has-hover ? 11px : 14px;
-            background: btn-mini.has-hover ? #2a2a30 : transparent;
-            animate background { duration: 140ms; easing: ease-out; }
-            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-
-            Image {
-                source: @image-url("icons/win_mini_player.svg");
-                width: 14px;
-                height: 14px;
-                colorize: btn-mini.has-hover ? Theme.text-primary : Theme.text-secondary;
-                x: 10px;
-                y: 7px;
-            }
-
-            btn-mini := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.mini-player(); }
-            }
+            icon: @image-url("icons/win_mini_player.svg");
+            revealed: root.revealed;
+            reveal-delay: 30ms;
+            clicked => { root.mini-player(); }
         }
 
         // Minimize
-        Rectangle {
+        btn-min := WinBtn {
             width: 36px;
-            height: 28px;
-            y: 6px;
-            border-radius: btn-min.has-hover ? 11px : 14px;
-            background: btn-min.has-hover ? #2a2a30 : transparent;
-            animate background { duration: 140ms; easing: ease-out; }
-            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-
-            Image {
-                source: @image-url("icons/win_minimize.svg");
-                width: 14px;
-                height: 14px;
-                colorize: btn-min.has-hover ? Theme.text-primary : Theme.text-secondary;
-                x: 11px;
-                y: 7px;
-            }
-
-            btn-min := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.minimize(); }
-            }
+            icon: @image-url("icons/win_minimize.svg");
+            revealed: root.revealed;
+            reveal-delay: 60ms;
+            clicked => { root.minimize(); }
         }
 
         // Maximize / Restore
-        Rectangle {
+        btn-max := WinBtn {
             width: 36px;
-            height: 28px;
-            y: 6px;
-            border-radius: btn-max.has-hover ? 11px : 14px;
-            background: btn-max.has-hover ? #2a2a30 : transparent;
-            animate background { duration: 140ms; easing: ease-out; }
-            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-
-            Image {
-                source: @image-url("icons/win_maximize.svg");
-                width: 13px;
-                height: 13px;
-                colorize: btn-max.has-hover ? Theme.text-primary : Theme.text-secondary;
-                x: 11.5px;
-                y: 7.5px;
-            }
-
-            btn-max := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.maximize(); }
-            }
+            icon: @image-url("icons/win_maximize.svg");
+            icon-size: 13px;
+            revealed: root.revealed;
+            reveal-delay: 90ms;
+            clicked => { root.maximize(); }
         }
 
         // Close
-        Rectangle {
+        btn-close := WinBtn {
             width: 36px;
-            height: 28px;
-            y: 6px;
-            border-radius: btn-close.has-hover ? 11px : 14px;
-            background: btn-close.has-hover ? #b3261e : transparent;
-            animate background { duration: 140ms; easing: ease-out; }
-            animate border-radius { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
-
-            Image {
-                source: @image-url("icons/ms_close.svg");
-                width: 15px;
-                height: 15px;
-                colorize: btn-close.has-hover ? #ffffff : Theme.text-secondary;
-                x: 10.5px;
-                y: 6.5px;
-                animate colorize { duration: 140ms; easing: ease-out; }
-            }
-
-            btn-close := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.close(); }
-            }
+            icon: @image-url("icons/ms_close.svg");
+            icon-size: 15px;
+            hover-bg: #b3261e;
+            hover-icon-color: #ffffff;
+            revealed: root.revealed;
+            reveal-delay: 120ms;
+            clicked => { root.close(); }
         }
     }
 }

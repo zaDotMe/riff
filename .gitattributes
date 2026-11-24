@@ -1,0 +1,18 @@
+# Keep the legacy Electron/Web implementation in the tree for the dual launcher
+# and as a reference, but exclude it from GitHub's language statistics. The
+# project itself is Rust + Slint.
+src/** linguist-vendored
+assets/** linguist-vendored
+vendor/** linguist-vendored
+library-tools.js linguist-vendored
+search-text.js linguist-vendored
+scripts/bench-backend.js linguist-vendored
+scripts/mac-adhoc-sign.js linguist-vendored
+scripts/test-rust-backend.js linguist-vendored
+package.json linguist-vendored
+package-lock.json linguist-vendored
+
+# Generated/build output
+target/** linguist-generated
+dist/** linguist-generated
+node_modules/** linguist-vendored
