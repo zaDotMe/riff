@@ -57,10 +57,10 @@ Release artifacts are published on the [Releases page](https://github.com/zaDotM
 | Linux (portable) | `Riff-linux-x86_64.tar.gz` |
 | Linux (standalone) | `riff-slint-linux-x86_64` |
 | Linux (installer) | `Riff-linux-amd64.deb` |
-| Android | APK — in progress |
+| Google TV / Android TV (arm64-v8a) | `Riff-google-tv-arm64-v8a.apk` |
+| Android | APK also installable on supported Android devices |
 
-> Linux artifacts are produced by the GitHub Actions release workflow.
-> Android packaging is the remaining migration milestone.
+> Linux & Google TV artifacts are produced by the GitHub Actions release workflow.
 
 ---
 
@@ -95,6 +95,13 @@ riff/
 - Windows: MSVC toolchain + WebView2 (for the Tauri launcher)
 - Linux: `libasound2-dev`, `libxkbcommon-dev`, `libwayland-dev`, `libfontconfig1-dev`, `libssl-dev`, `pkg-config`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`
 - Node.js 20+ only if you build the Tauri/Web launcher
+
+### Keyboard
+
+- **Space** — pause / resume the current track.
+- **Space** in **Tap to Sync** — mark the current synchronized lyric line.
+- **Esc** — close the active dialog or fullscreen view.
+- **F11** — toggle fullscreen lyrics.
 
 ### Native Slint app
 

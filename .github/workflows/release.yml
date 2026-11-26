@@ -1,4 +1,4 @@
-name: Release Windows & Linux
+name: Release Windows, Linux & Google TV
 
 on:
   push:
@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.7.7)"
+        description: "Release tag (e.g. v0.7.8)"
         required: false
-        default: "v0.7.7"
+        default: "v0.7.8"
 
 permissions:
   contents: write
@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist-release | Out-Null
-          $ver = if ($env:GITHUB_REF_NAME -and $env:GITHUB_REF_NAME.StartsWith("v")) { $env:GITHUB_REF_NAME.Substring(1) } else { "0.7.7" }
+          $ver = if ($env:GITHUB_REF_NAME -and $env:GITHUB_REF_NAME.StartsWith("v")) { $env:GITHUB_REF_NAME.Substring(1) } else { "0.7.8" }
           $makensis = (Get-Command makensis -ErrorAction SilentlyContinue)?.Source
           if (-not $makensis -and (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
             $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
@@ -123,7 +123,7 @@ jobs:
           cp target/release/riff-slint dist-release/riff-slint-linux-x86_64
 
           VER="${GITHUB_REF_NAME#v}"
-          if [ -z "$VER" ] || [ "$VER" = "$GITHUB_REF_NAME" ]; then VER="0.7.7"; fi
+          if [ -z "$VER" ] || [ "$VER" = "$GITHUB_REF_NAME" ]; then VER="0.7.8"; fi
           mkdir -p deb-pkg/DEBIAN deb-pkg/usr/bin deb-pkg/usr/share/applications deb-pkg/usr/share/icons/hicolor/512x512/apps
           cp target/release/riff-slint deb-pkg/usr/bin/riff-slint
           cp target/release/riff-core deb-pkg/usr/bin/riff-core
@@ -146,9 +146,51 @@ jobs:
           name: linux-artifacts
           path: dist-release/*
 
+  build-google-tv:
+    name: Build Google TV / Android TV (Slint APK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Android target
+        run: rustup target add aarch64-linux-android
+
+      - name: Setup Android SDK + NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34 build-tools;34.0.0 ndk;27.2.12479018"
+
+      - name: Configure Android NDK
+        run: |
+          NDK_DIR="${ANDROID_HOME}/ndk/27.2.12479018"
+          echo "ANDROID_NDK_ROOT=${NDK_DIR}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${NDK_DIR}" >> "$GITHUB_ENV"
+
+      - name: Install cargo-apk
+        run: cargo install cargo-apk --locked
+
+      - name: Build arm64-v8a Google TV APK
+        run: cargo apk build --release -p riff-slint
+
+      - name: Package Google TV artifact
+        run: |
+          mkdir -p dist-release
+          APK=$(find target/release/apk -name "*.apk" -print -quit)
+          if [ -z "$APK" ]; then APK=$(find target -name "*.apk" -print -quit); fi
+          if [ -z "$APK" ]; then echo "No APK produced" >&2; exit 1; fi
+          cp "$APK" dist-release/Riff-google-tv-arm64-v8a.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: google-tv-artifacts
+          path: dist-release/*
+
   publish-release:
     name: Publish GitHub Release
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-google-tv]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -165,21 +207,27 @@ jobs:
           name: linux-artifacts
           path: release-assets
 
+      - name: Download Google TV artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: google-tv-artifacts
+          path: release-assets
+
       - name: Determine tag
         id: meta
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${{ github.event.inputs.tag || 'v0.7.7' }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ github.event.inputs.tag || 'v0.7.8' }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
-          name: "Riff ${{ steps.meta.outputs.tag }} (Pure Slint • Windows & Linux)"
-          body_path: docs/RELEASE_NOTES_v0.7.7.md
+          name: "Riff ${{ steps.meta.outputs.tag }} (Pure Slint • Windows, Linux & Google TV)"
+          body_path: docs/RELEASE_NOTES_v0.7.8.md
           files: release-assets/*
           draft: false
           prerelease: false

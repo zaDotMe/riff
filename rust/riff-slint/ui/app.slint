@@ -218,7 +218,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Keyboard shortcuts (ESC closes modals/fullscreen, Space taps sync line, F11 toggles fullscreen lyrics)
+    // Keyboard shortcuts (ESC closes modals/fullscreen, Space pauses/resumes, F11 toggles fullscreen lyrics)
     FocusScope {
         width: 100%;
         height: 100%;
@@ -236,6 +236,10 @@ export component MainWindow inherits Window {
             }
             if (event.text == " " && sync_lyrics_open) {
                 root.tap_sync_next();
+                return accept;
+            }
+            if (event.text == " ") {
+                root.toggle_play_pause();
                 return accept;
             }
             if (event.text == Key.F11) {

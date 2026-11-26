@@ -8,6 +8,28 @@ use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffe
 
 slint::include_modules!();
 
+#[cfg(not(target_os = "android"))]
+fn pick_local_folder() -> Option<PathBuf> {
+    rfd::FileDialog::new().pick_folder()
+}
+
+#[cfg(target_os = "android")]
+fn pick_local_folder() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(not(target_os = "android"))]
+fn pick_audio_files() -> Option<Vec<PathBuf>> {
+    rfd::FileDialog::new()
+        .add_filter("Audio", &["mp3", "flac", "wav", "ogg", "m4a", "aac", "opus"])
+        .pick_files()
+}
+
+#[cfg(target_os = "android")]
+fn pick_audio_files() -> Option<Vec<PathBuf>> {
+    None
+}
+
 #[derive(Clone)]
 struct TrackItem {
     id: String,
@@ -2159,7 +2181,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let rt_scan = rt_handle.clone();
 
     main_window.on_scan_local_folder(move || {
-        let folder = rfd::FileDialog::new().pick_folder();
+        let folder = pick_local_folder();
         if let Some(dir) = folder {
             let api_sc = api_scan.clone();
             let w_sc = w_scan.clone();
@@ -2207,9 +2229,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let rt_addf = rt_handle.clone();
 
     main_window.on_add_local_files(move || {
-        let files = rfd::FileDialog::new()
-            .add_filter("Audio", &["mp3", "flac", "wav", "ogg", "m4a", "aac", "opus"])
-            .pick_files();
+        let files = pick_audio_files();
         if let Some(paths) = files {
             let api_af = api_addf.clone();
             let w_af = w_addf.clone();
@@ -3467,6 +3487,20 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     main_window.run()
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub fn android_main(app: slint::android::AndroidApp) {
+    // Android's working directory isn't writable; use the app's private data directory.
+    if let Some(internal_dir) = app.internal_data_path() {
+        let data_dir = internal_dir.join("riff");
+        let _ = std::fs::create_dir_all(&data_dir);
+        std::env::set_var("RIFF_DATA_DIR", data_dir);
+    }
+
+    slint::android::init(app).expect("failed to initialize Android Slint backend");
+    run().expect("Riff failed to run");
 }
 
 #[cfg(test)]
