@@ -51,12 +51,12 @@ Release artifacts are published on the [Releases page](https://github.com/zaDotM
 
 | Platform | Artifact |
 | --- | --- |
+| Windows (installer) | `Riff-Setup-windows-x64.exe` (installs `riff-slint.exe`) |
 | Windows (native UI) | `Riff-Slint-windows-x64.exe` |
-| Windows (dual launcher) | `Riff-Tauri-windows-x64.exe` |
 | Windows (portable) | `Riff-windows-x64-portable.zip` |
 | Linux (portable) | `Riff-linux-x86_64.tar.gz` |
 | Linux (standalone) | `riff-slint-linux-x86_64` |
-| Linux (installer) | `Riff-linux-amd64.deb`, `Riff-linux-x86_64.AppImage` |
+| Linux (installer) | `Riff-linux-amd64.deb` |
 | Android | APK — in progress |
 
 > Linux artifacts are produced by the GitHub Actions release workflow.

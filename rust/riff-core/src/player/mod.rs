@@ -36,6 +36,7 @@ pub struct AudioPlayer {
     position: Arc<AtomicU64>, // f64 stored as u64 bits
     duration: Arc<AtomicU64>,
     current_track: Arc<Mutex<Option<Track>>>,
+    last_error: Arc<Mutex<Option<String>>>,
 }
 
 impl AudioPlayer {
@@ -46,12 +47,14 @@ impl AudioPlayer {
         let position = Arc::new(AtomicU64::new(0.0f64.to_bits()));
         let duration = Arc::new(AtomicU64::new(0.0f64.to_bits()));
         let current_track = Arc::new(Mutex::new(None));
+        let last_error = Arc::new(Mutex::new(None));
 
         let t_playing = is_playing.clone();
         let t_vol = volume.clone();
         let t_pos = position.clone();
         let t_dur = duration.clone();
         let t_track = current_track.clone();
+        let t_err = last_error.clone();
         let t_events = events;
 
         // Spawn dedicated audio playback engine thread
@@ -122,12 +125,26 @@ impl AudioPlayer {
                                             });
                                         }
                                         Err(e) => {
-                                            error!("Failed to open decoder for {}: {}", path.display(), e);
+                                            let msg = format!("Cannot decode {}: {}", path.display(), e);
+                                            error!("{}", msg);
+                                            is_active = false;
+                                            t_playing.store(false, Ordering::SeqCst);
+                                            if let Ok(mut err_lock) = t_err.lock() {
+                                                *err_lock = Some(msg.clone());
+                                            }
+                                            t_events.emit(RiffEvent::PlaybackError { message: msg });
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("Failed to open file {}: {}", path.display(), e);
+                                    let msg = format!("Cannot open {}: {}", path.display(), e);
+                                    error!("{}", msg);
+                                    is_active = false;
+                                    t_playing.store(false, Ordering::SeqCst);
+                                    if let Ok(mut err_lock) = t_err.lock() {
+                                        *err_lock = Some(msg.clone());
+                                    }
+                                    t_events.emit(RiffEvent::PlaybackError { message: msg });
                                 }
                             }
                         }
@@ -163,7 +180,14 @@ impl AudioPlayer {
                                     });
                                 }
                                 Err(e) => {
-                                    error!("Failed to decode audio bytes: {}", e);
+                                    let msg = format!("Failed to decode audio stream: {}", e);
+                                    error!("{}", msg);
+                                    is_active = false;
+                                    t_playing.store(false, Ordering::SeqCst);
+                                    if let Ok(mut err_lock) = t_err.lock() {
+                                        *err_lock = Some(msg.clone());
+                                    }
+                                    t_events.emit(RiffEvent::PlaybackError { message: msg });
                                 }
                             }
                         }
@@ -390,14 +414,21 @@ impl AudioPlayer {
             position,
             duration,
             current_track,
+            last_error,
         }
     }
 
     pub fn play_file(&self, path: PathBuf, track: Option<Track>) {
+        if let Ok(mut err) = self.last_error.lock() {
+            *err = None;
+        }
         let _ = self.cmd_tx.send(PlayerCommand::PlayFile { path, track });
     }
 
     pub fn play_bytes(&self, data: Vec<u8>, hint: Option<String>, track: Option<Track>) {
+        if let Ok(mut err) = self.last_error.lock() {
+            *err = None;
+        }
         let _ = self.cmd_tx.send(PlayerCommand::PlayBytes { data, hint, track });
     }
 
@@ -451,5 +482,9 @@ impl AudioPlayer {
 
     pub fn get_current_track(&self) -> Option<Track> {
         self.current_track.lock().ok().and_then(|t| t.clone())
+    }
+
+    pub fn take_last_error(&self) -> Option<String> {
+        self.last_error.lock().ok().and_then(|mut e| e.take())
     }
 }

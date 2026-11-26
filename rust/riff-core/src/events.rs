@@ -31,6 +31,9 @@ pub enum RiffEvent {
     LibraryUpdated {
         count: i64,
     },
+    PlaybackError {
+        message: String,
+    },
 }
 
 #[derive(Clone)]

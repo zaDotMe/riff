@@ -364,7 +364,25 @@ async fn library_remove(
     State(state): State<AppState>,
     Json(payload): Json<LibraryRemoveRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let removed = run_db(&state.db, move |conn| db::remove_track(conn, &payload.id)).await?;
+    let removed = run_db(&state.db, move |conn| {
+        if payload.clear_all {
+            let count = conn.execute("DELETE FROM tracks", [])?;
+            return Ok(count > 0);
+        }
+        let mut any_removed = false;
+        if let Some(id) = payload.id {
+            if !id.is_empty() && db::remove_track(conn, &id)? {
+                any_removed = true;
+            }
+        }
+        for id in payload.ids {
+            if !id.is_empty() && db::remove_track(conn, &id)? {
+                any_removed = true;
+            }
+        }
+        Ok(any_removed)
+    })
+    .await?;
     Ok(Json(json!({ "success": true, "removed": removed })))
 }
 
@@ -431,7 +449,15 @@ async fn serve_track(
     .await?
     .ok_or_else(|| ApiError::not_found("track not found"))?;
 
-    let path = state.config.library_dir.join(&track.file);
+    let candidate = PathBuf::from(&track.path);
+    let path = if !track.path.is_empty() && candidate.is_file() {
+        candidate
+    } else {
+        state.config.library_dir.join(&track.file)
+    };
+    if !path.is_file() {
+        return Err(ApiError::not_found(format!("audio file not found: {}", path.display())));
+    }
     let range = headers
         .get(header::RANGE)
         .and_then(|value| value.to_str().ok())
@@ -507,12 +533,33 @@ struct VibePayload {
     seeds: Option<Vec<String>>,
 }
 
+async fn search_music_songs(
+    youtube: &youtube::YouTubeClient,
+    query: &str,
+    limit: usize,
+) -> Vec<youtube::YouTubeTrack> {
+    let mut tracks = youtube
+        .search_music(query, limit.saturating_mul(2).max(limit))
+        .await
+        .unwrap_or_default();
+    tracks.retain(|t| t.duration == 0.0 || t.duration <= 900.0);
+    if tracks.is_empty() {
+        tracks = youtube
+            .search(query, limit.saturating_mul(2).max(limit))
+            .await
+            .unwrap_or_default();
+        tracks.retain(|t| t.duration == 0.0 || t.duration <= 900.0);
+    }
+    tracks.truncate(limit);
+    tracks
+}
+
 async fn hot_picks_handler(
     State(state): State<AppState>,
     Query(query): Query<LimitQuery>,
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(12).clamp(1, 25);
-    let tracks = state.youtube.search("Top Hits Indonesia 2026", limit).await.unwrap_or_default();
+    let tracks = search_music_songs(&state.youtube, "Popular pop songs 2026", limit).await;
     let title = "Hot picks 2026".to_string();
     Json(json!({
         "success": true,
@@ -528,14 +575,14 @@ async fn trending_handler(
     let limit = query.limit.unwrap_or(16).clamp(1, 30);
     let region = query.region.as_deref().unwrap_or("id").to_lowercase();
     let query_str = if region == "id" {
-        "Lagu Populer Indonesia 2026 Hits"
+        "Lagu pop Indonesia viral hits"
     } else if region == "ru" || region == "ua" {
-        "Тренды музыки"
+        "Тренды музыки новинки"
     } else {
-        "Trending music worldwide"
+        "Trending viral songs 2026"
     };
 
-    let tracks = state.youtube.search(query_str, limit).await.unwrap_or_default();
+    let tracks = search_music_songs(&state.youtube, query_str, limit).await;
     Json(json!({
         "success": true,
         "region": region,
@@ -549,18 +596,18 @@ async fn top_chart_handler(
 ) -> Json<Value> {
     let country = query.country.as_deref().unwrap_or("id").to_lowercase();
     let query_str = match country.as_str() {
-        "id" => "Top 50 Indonesia Lagu Terpopuler",
-        "ua" => "Top Hits Ukraine",
-        "ru" => "Топ чарт Россия",
-        "us" => "Top Hits USA Billboard",
-        "gb" => "Official UK Top 40",
-        "jp" => "Billboard Japan Hot 100",
-        "kr" => "Melon Top 100 K-Pop",
-        "global" => "Top 50 Global Hits",
-        _ => "Top Hits Indonesia 2026",
+        "id" => "Top songs Indonesia chart",
+        "ua" => "Top hits Ukraine songs",
+        "ru" => "Топ чарт Россия песни",
+        "us" => "Billboard Hot 100 songs",
+        "gb" => "UK Top 40 hits songs",
+        "jp" => "Japan Hot 100 J-Pop songs",
+        "kr" => "K-Pop Top 100 hits",
+        "global" => "Global Top 50 hits songs",
+        _ => "Top songs Indonesia hits",
     };
 
-    let tracks = state.youtube.search(query_str, 25).await.unwrap_or_default();
+    let tracks = search_music_songs(&state.youtube, query_str, 25).await;
     Json(json!({
         "success": true,
         "country": country,
@@ -588,7 +635,7 @@ async fn vibe_handler(
             if let Some(fav) = favs.first() {
                 let artist = fav.get("artist").and_then(|v| v.as_str()).unwrap_or_default();
                 if !artist.is_empty() {
-                    search_query = format!("{artist} mix");
+                    search_query = format!("{artist} songs");
                 }
             }
         }
@@ -599,17 +646,17 @@ async fn vibe_handler(
             if let Some(item) = hist.first() {
                 let artist = item.get("artist").and_then(|v| v.as_str()).unwrap_or_default();
                 if !artist.is_empty() {
-                    search_query = format!("{artist} mix");
+                    search_query = format!("{artist} songs");
                 }
             }
         }
     }
 
     if search_query.is_empty() {
-        search_query = "Trending hits 2026".to_string();
+        search_query = "Trending songs 2026".to_string();
     }
 
-    let tracks = state.youtube.search(&search_query, limit).await.unwrap_or_default();
+    let tracks = search_music_songs(&state.youtube, &search_query, limit).await;
 
     Json(json!({
         "success": true,
@@ -656,11 +703,13 @@ async fn tools_status(State(state): State<AppState>) -> Json<Value> {
     let ytdlp = binary_status(
         state.config.ytdlp.as_deref(),
         if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" },
+        "--version",
     )
     .await;
     let ffmpeg = binary_status(
         state.config.ffmpeg.as_deref(),
         if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" },
+        "-version",
     )
     .await;
 
@@ -671,18 +720,28 @@ async fn tools_status(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
-async fn binary_status(configured: Option<&Path>, fallback: &str) -> Value {
+async fn binary_status(configured: Option<&Path>, fallback: &str, version_flag: &str) -> Value {
     let binary = configured
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from(fallback));
 
-    match tokio::process::Command::new(&binary)
-        .arg("--version")
-        .output()
-        .await
+    let mut command = tokio::process::Command::new(&binary);
+    command.arg(version_flag);
+    #[cfg(windows)]
     {
+        command.creation_flags(0x0800_0000);
+    }
+
+    match command.output().await {
         Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout)
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let raw = if stdout.trim().is_empty() {
+                stderr.as_ref()
+            } else {
+                stdout.as_ref()
+            };
+            let version = raw
                 .lines()
                 .next()
                 .unwrap_or_default()

@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Riff
-Comment=Native Rust + Slint & Tauri Audio Player
+Comment=Native Rust + Slint Audio Player
 Exec=riff-slint
 Icon=riff
 Terminal=false

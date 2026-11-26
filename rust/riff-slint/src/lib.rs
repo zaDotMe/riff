@@ -146,6 +146,221 @@ fn to_slint_model(items: Vec<TrackItem>) -> ModelRc<TrackData> {
     ModelRc::new(VecModel::from(data))
 }
 
+fn infer_platform_for_track(t: &riff_core::models::Track) -> &'static str {
+    if t.id.starts_with("local_") || t.path.contains('\\') || t.path.contains('/') {
+        "local"
+    } else if t.id.len() >= 6 && t.id.chars().all(|c| c.is_ascii_digit()) {
+        "soundcloud"
+    } else {
+        "ytmusic"
+    }
+}
+
+async fn hydrate_track_covers(items: &mut [TrackItem], http: &reqwest::Client) {
+    let mut set = tokio::task::JoinSet::new();
+    for (idx, item) in items.iter().enumerate().take(30) {
+        if item.cover_rgba.is_none() && !item.thumbnail.is_empty() {
+            let client = http.clone();
+            let url = item.thumbnail.clone();
+            set.spawn(async move { (idx, fetch_cover_rgba(&client, &url).await) });
+        }
+    }
+    while let Some(res) = set.join_next().await {
+        if let Ok((idx, rgba)) = res {
+            if let Some(slot) = items.get_mut(idx) {
+                slot.cover_rgba = rgba;
+            }
+        }
+    }
+}
+
+fn sync_favorite_flags(w: &MainWindow, fav_ids: &HashSet<String>) {
+    let update_model = |m: ModelRc<TrackData>| {
+        let mut vec: Vec<TrackData> = m.iter().collect();
+        for item in &mut vec {
+            item.is_favorite = fav_ids.contains(item.id.as_str());
+        }
+        ModelRc::new(VecModel::from(vec))
+    };
+    w.set_library_tracks(update_model(w.get_library_tracks()));
+    w.set_search_results(update_model(w.get_search_results()));
+    w.set_history_tracks(update_model(w.get_history_tracks()));
+    w.set_queue_tracks(update_model(w.get_queue_tracks()));
+    w.set_home_for_you(update_model(w.get_home_for_you()));
+    w.set_home_trending(update_model(w.get_home_trending()));
+    w.set_active_playlist_tracks(update_model(w.get_active_playlist_tracks()));
+}
+
+#[derive(Clone)]
+struct NavHistory {
+    stack: Vec<i32>,
+    idx: usize,
+}
+
+impl NavHistory {
+    fn new() -> Self {
+        Self {
+            stack: vec![0],
+            idx: 0,
+        }
+    }
+
+    fn push(&mut self, tab: i32) {
+        if self.stack.get(self.idx).copied() == Some(tab) {
+            return;
+        }
+        self.stack.truncate(self.idx + 1);
+        self.stack.push(tab);
+        if self.stack.len() > 40 {
+            self.stack.remove(0);
+        }
+        self.idx = self.stack.len().saturating_sub(1);
+    }
+
+    fn back(&mut self) -> Option<i32> {
+        if self.idx > 0 {
+            self.idx -= 1;
+            self.stack.get(self.idx).copied()
+        } else {
+            None
+        }
+    }
+
+    fn forward(&mut self) -> Option<i32> {
+        if self.idx + 1 < self.stack.len() {
+            self.idx += 1;
+            self.stack.get(self.idx).copied()
+        } else {
+            None
+        }
+    }
+
+    fn can_back(&self) -> bool {
+        self.idx > 0
+    }
+
+    fn can_forward(&self) -> bool {
+        self.idx + 1 < self.stack.len()
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SavedSearchEntry {
+    key: String,
+    kind: String,
+    title: String,
+    subtitle: String,
+    track_id: String,
+    platform: String,
+    thumbnail: String,
+    duration_sec: f64,
+}
+
+#[derive(Clone)]
+struct SearchHistorySlot {
+    entry: SavedSearchEntry,
+    cover_rgba: Option<(u32, u32, Vec<u8>)>,
+}
+
+async fn hydrate_search_history(
+    entries: &[SavedSearchEntry],
+    http: &reqwest::Client,
+) -> Vec<SearchHistorySlot> {
+    let mut slots: Vec<SearchHistorySlot> = entries
+        .iter()
+        .cloned()
+        .map(|entry| SearchHistorySlot {
+            entry,
+            cover_rgba: None,
+        })
+        .collect();
+    let mut set = tokio::task::JoinSet::new();
+    for (idx, s) in slots.iter().enumerate().take(12) {
+        if !s.entry.thumbnail.is_empty() {
+            let client = http.clone();
+            let url = s.entry.thumbnail.clone();
+            set.spawn(async move { (idx, fetch_cover_rgba(&client, &url).await) });
+        }
+    }
+    while let Some(res) = set.join_next().await {
+        if let Ok((idx, rgba)) = res {
+            if let Some(slot) = slots.get_mut(idx) {
+                slot.cover_rgba = rgba;
+            }
+        }
+    }
+    slots
+}
+
+fn to_slint_search_history(slots: Vec<SearchHistorySlot>) -> ModelRc<SearchHistoryItem> {
+    let data: Vec<SearchHistoryItem> = slots
+        .into_iter()
+        .map(|s| {
+            let (cover, has_cover) = match s.cover_rgba {
+                Some((w, h, raw)) => (rgba_to_slint_image(w, h, raw), true),
+                None => (Image::default(), false),
+            };
+            SearchHistoryItem {
+                key: SharedString::from(s.entry.key),
+                kind: SharedString::from(s.entry.kind),
+                title: SharedString::from(s.entry.title),
+                subtitle: SharedString::from(s.entry.subtitle),
+                track_id: SharedString::from(s.entry.track_id),
+                platform: SharedString::from(s.entry.platform),
+                thumbnail: SharedString::from(s.entry.thumbnail),
+                duration_sec: s.entry.duration_sec as f32,
+                cover,
+                has_cover,
+            }
+        })
+        .collect();
+    ModelRc::new(VecModel::from(data))
+}
+
+fn apply_sidebar_playlists(
+    list: &[riff_core::models::Playlist],
+    filter_q: &str,
+    sort_mode: &str,
+) -> Vec<riff_core::models::Playlist> {
+    let q = filter_q.trim().to_ascii_lowercase();
+    let mut out: Vec<riff_core::models::Playlist> = list
+        .iter()
+        .filter(|p| q.is_empty() || p.name.to_ascii_lowercase().contains(&q))
+        .cloned()
+        .collect();
+    match sort_mode {
+        "A-Z" => out.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())),
+        "Tracks" => out.sort_by(|a, b| b.tracks.len().cmp(&a.tracks.len())),
+        _ => {}
+    }
+    out
+}
+
+fn apply_track_filter_sort(items: &[TrackItem], filter_q: &str, sort_mode: &str) -> Vec<TrackItem> {
+    let q = filter_q.trim().to_ascii_lowercase();
+    let mut out: Vec<TrackItem> = items
+        .iter()
+        .filter(|t| {
+            q.is_empty()
+                || t.title.to_ascii_lowercase().contains(&q)
+                || t.artist.to_ascii_lowercase().contains(&q)
+                || t.album.to_ascii_lowercase().contains(&q)
+        })
+        .cloned()
+        .collect();
+    match sort_mode {
+        "Title A-Z" => out.sort_by(|a, b| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase())),
+        "Artist A-Z" => out.sort_by(|a, b| a.artist.to_ascii_lowercase().cmp(&b.artist.to_ascii_lowercase())),
+        "Duration" => out.sort_by(|a, b| {
+            b.duration_sec
+                .partial_cmp(&a.duration_sec)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        _ => {}
+    }
+    out
+}
+
 fn format_lrc_tag(sec: f32) -> String {
     let s = sec.max(0.0);
     let m = (s / 60.0).floor() as u32;
@@ -840,6 +1055,8 @@ fn googlevideo_user_agent(raw_url: &str) -> &'static str {
             if k == "c" {
                 if v == "ANDROID_MUSIC" {
                     return "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip";
+                } else if v == "ANDROID" {
+                    return "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip";
                 } else if v == "IOS" {
                     return "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
                 } else if v == "VISIONOS" || v == "WEB" || v == "WEB_REMIX" || v == "MWEB" {
@@ -959,20 +1176,49 @@ async fn download_stream_bytes(
     if is_googlevideo {
         const CHUNK_SIZE: u64 = 1_048_576;
         let ua = googlevideo_user_agent(raw_url);
+        let is_web_client = reqwest::Url::parse(raw_url)
+            .ok()
+            .map(|u| {
+                u.query_pairs()
+                    .any(|(k, v)| k == "c" && matches!(v.as_ref(), "WEB" | "WEB_REMIX" | "MWEB"))
+            })
+            .unwrap_or(false);
         let mut out = Vec::new();
         let mut start = 0u64;
         let mut detected_hint = detect_audio_hint(None, raw_url);
 
         loop {
             let end = start + CHUNK_SIZE - 1;
-            let resp = http
+            let mut req = http
                 .get(raw_url)
                 .header("User-Agent", ua)
                 .header("Range", format!("bytes={start}-{end}"))
-                .timeout(Duration::from_secs(20))
+                .timeout(Duration::from_secs(20));
+            if is_web_client {
+                req = req
+                    .header("Origin", "https://music.youtube.com")
+                    .header("Referer", "https://music.youtube.com/");
+            }
+            let mut resp = req
                 .send()
                 .await
                 .map_err(|e| format!("Stream chunk failed: {e}"))?;
+
+            if resp.status().as_u16() == 403 && start == 0 {
+                let mut fallback_req = http
+                    .get(raw_url)
+                    .header("User-Agent", ua)
+                    .timeout(Duration::from_secs(30));
+                if is_web_client {
+                    fallback_req = fallback_req
+                        .header("Origin", "https://music.youtube.com")
+                        .header("Referer", "https://music.youtube.com/");
+                }
+                resp = fallback_req
+                    .send()
+                    .await
+                    .map_err(|e| format!("Stream fallback failed: {e}"))?;
+            }
 
             let status = resp.status();
             if !status.is_success() && status.as_u16() != 206 {
@@ -1066,11 +1312,27 @@ async fn load_home_sections(
     fav_ids: &HashSet<String>,
 ) -> (Vec<TrackItem>, Vec<TrackItem>) {
     let (fy_res, tr_res) = tokio::join!(
-        api.search("top hits mix", "ytmusic", 8, 0),
-        api.search("trending music 2026", "ytmusic", 8, 0),
+        api.search("popular pop songs 2026", "ytmusic", 14, 0),
+        api.search("trending viral songs 2026", "ytmusic", 14, 0),
     );
-    let for_you_raw = fy_res.map(|(t, _)| t).unwrap_or_default();
-    let trending_raw = tr_res.map(|(t, _)| t).unwrap_or_default();
+    let filter_songs = |tracks: Vec<serde_json::Value>| -> Vec<serde_json::Value> {
+        let filtered: Vec<serde_json::Value> = tracks
+            .iter()
+            .filter(|t| {
+                let dur = t.get("duration").and_then(|d| d.as_f64()).unwrap_or(0.0);
+                dur == 0.0 || dur <= 900.0
+            })
+            .take(8)
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            tracks.into_iter().take(8).collect()
+        } else {
+            filtered
+        }
+    };
+    let for_you_raw = filter_songs(fy_res.map(|(t, _)| t).unwrap_or_default());
+    let trending_raw = filter_songs(tr_res.map(|(t, _)| t).unwrap_or_default());
 
     tokio::join!(
         json_tracks_to_items(for_you_raw, http, fav_ids, "ytmusic"),
@@ -1123,6 +1385,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let eof_handled = Arc::new(AtomicBool::new(false));
     let play_generation = Arc::new(AtomicU64::new(0));
     let lyrics_offset_ms = Arc::new(AtomicI32::new(0));
+    let nav_history = Arc::new(Mutex::new(NavHistory::new()));
+    let all_playlists_cache: Arc<Mutex<Vec<riff_core::models::Playlist>>> = Arc::new(Mutex::new(Vec::new()));
+    let sb_filter_query: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let sb_sort_mode: Arc<Mutex<String>> = Arc::new(Mutex::new("Recents".to_string()));
+    let search_history_cache: Arc<Mutex<Vec<SavedSearchEntry>>> = Arc::new(Mutex::new(Vec::new()));
+    let all_library_cache: Arc<Mutex<Vec<TrackItem>>> = Arc::new(Mutex::new(Vec::new()));
+    let local_filter_query: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let local_sort_mode: Arc<Mutex<String>> = Arc::new(Mutex::new("Default".to_string()));
+    let all_favorites_cache: Arc<Mutex<Vec<TrackItem>>> = Arc::new(Mutex::new(Vec::new()));
+    let fav_filter_query: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let fav_sort_mode: Arc<Mutex<String>> = Arc::new(Mutex::new("Default".to_string()));
 
     // 1. Initial Data Load (Library, Favorites, History, Playlists, Home Feed)
     let api_init = api.clone();
@@ -1130,6 +1403,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let w_init = window_weak.clone();
     let pl_init = playlist_cache.clone();
     let off_init = lyrics_offset_ms.clone();
+    let all_pls_init = all_playlists_cache.clone();
+    let sh_init = search_history_cache.clone();
+    let all_lib_init = all_library_cache.clone();
+    let all_fav_init = all_favorites_cache.clone();
 
     rt_handle.spawn(async move {
         let (lib_res, fav_res, hist_res, pls_res, kv_res) = tokio::join!(
@@ -1157,17 +1434,40 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 item
             })
             .collect();
-        let fav_items: Vec<TrackItem> = fav_tracks
+        let mut fav_items: Vec<TrackItem> = fav_tracks
             .iter()
-            .map(|t| TrackItem::from_core(t, "favorite", true))
+            .map(|t| TrackItem::from_core(t, infer_platform_for_track(t), true))
             .collect();
-        let hist_items: Vec<TrackItem> = hist_tracks
+        let mut hist_items: Vec<TrackItem> = hist_tracks
             .iter()
-            .map(|t| TrackItem::from_core(t, "history", fav_ids.contains(&t.id)))
+            .map(|t| TrackItem::from_core(t, infer_platform_for_track(t), fav_ids.contains(&t.id)))
             .collect();
+
+        let saved_sh: Vec<SavedSearchEntry> = kv_map
+            .get("slint_search_history")
+            .and_then(|s| serde_json::from_str::<Vec<SavedSearchEntry>>(s).ok())
+            .unwrap_or_default();
+
+        let (_, _, sh_slots) = tokio::join!(
+            hydrate_track_covers(&mut fav_items, &http_init),
+            hydrate_track_covers(&mut hist_items, &http_init),
+            hydrate_search_history(&saved_sh, &http_init),
+        );
 
         if let Ok(mut pl) = pl_init.lock() {
             *pl = lib_items.clone();
+        }
+        if let Ok(mut pls) = all_pls_init.lock() {
+            *pls = user_playlists.clone();
+        }
+        if let Ok(mut sh) = sh_init.lock() {
+            *sh = saved_sh;
+        }
+        if let Ok(mut lc) = all_lib_init.lock() {
+            *lc = lib_items.clone();
+        }
+        if let Ok(mut fc) = all_fav_init.lock() {
+            *fc = fav_items.clone();
         }
 
         let queue_init = lib_items.clone();
@@ -1175,6 +1475,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = w_first.upgrade() {
                 let theme = w.global::<Theme>();
+                if let Some(v) = kv_map.get("slint_sidebar_collapsed") {
+                    w.set_sidebar_collapsed(v == "1");
+                }
                 if let Some(v) = kv_map.get("slint_show_visualizer") {
                     w.set_show_visualizer(v != "0");
                 }
@@ -1269,6 +1572,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 w.set_history_tracks(to_slint_model(hist_items));
                 w.set_queue_tracks(to_slint_model(queue_init));
                 w.set_playlists(playlists_to_slint(&user_playlists));
+                w.set_search_history(to_slint_search_history(sh_slots));
             }
         });
 
@@ -1327,6 +1631,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             w.set_current_artist(track.artist.clone());
             w.set_current_album(track.album.clone());
             w.set_current_platform(track.platform.clone());
+            w.set_current_thumbnail(track.thumbnail.clone());
             w.set_current_is_favorite(track.is_favorite);
             w.set_active_lyric_index(-1);
             w.set_current_pos(0.0);
@@ -1418,6 +1723,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         };
 
         let api_hist = api_play.clone();
+        let http_hist = http_play.clone();
         let track_for_hist = core_track.clone();
         let w_hist = w_play.clone();
 
@@ -1426,10 +1732,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if let Ok(updated_hist) = api_hist.get_history().await {
                 let favs = api_hist.get_favorites().await.unwrap_or_default();
                 let fav_set: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
-                let h_items: Vec<TrackItem> = updated_hist
+                let mut h_items: Vec<TrackItem> = updated_hist
                     .iter()
-                    .map(|t| TrackItem::from_core(t, "history", fav_set.contains(&t.id)))
+                    .map(|t| TrackItem::from_core(t, infer_platform_for_track(t), fav_set.contains(&t.id)))
                     .collect();
+                hydrate_track_covers(&mut h_items, &http_hist).await;
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = w_hist.upgrade() {
                         w.set_history_tracks(to_slint_model(h_items));
@@ -1675,8 +1982,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     // 7. Favorite Toggle for Current Track
     let api_fav = api.clone();
+    let http_fav = http.clone();
     let w_fav = window_weak.clone();
     let rt_fav = rt_handle.clone();
+    let all_fav_cur = all_favorites_cache.clone();
 
     main_window.on_toggle_favorite_current(move || {
         if let Some(w) = w_fav.upgrade() {
@@ -1684,34 +1993,43 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if id.is_empty() {
                 return;
             }
+            let alb = w.get_current_album().to_string();
             let track = riff_core::models::Track {
                 id: id.clone(),
                 path: id,
                 file: w.get_current_title().to_string(),
                 title: w.get_current_title().to_string(),
                 artist: w.get_current_artist().to_string(),
-                album: Some(w.get_current_album().to_string()),
+                album: if alb.is_empty() { None } else { Some(alb) },
                 duration: w.get_current_duration() as f64,
-                thumbnail: String::new(),
+                thumbnail: w.get_current_thumbnail().to_string(),
                 added_at: 0,
                 updated_at: 0,
             };
 
             let api_f = api_fav.clone();
+            let http_f = http_fav.clone();
             let w_f = w_fav.clone();
+            let fc = all_fav_cur.clone();
 
             rt_fav.spawn(async move {
                 if let Ok(is_fav) = api_f.toggle_favorite(&track).await {
                     let favs = api_f.get_favorites().await.unwrap_or_default();
-                    let fav_items: Vec<TrackItem> = favs
+                    let fav_ids: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+                    let mut fav_items: Vec<TrackItem> = favs
                         .iter()
-                        .map(|t| TrackItem::from_core(t, "favorite", true))
+                        .map(|t| TrackItem::from_core(t, infer_platform_for_track(t), true))
                         .collect();
+                    hydrate_track_covers(&mut fav_items, &http_f).await;
+                    if let Ok(mut g) = fc.lock() {
+                        *g = fav_items.clone();
+                    }
 
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = w_f.upgrade() {
                             w.set_current_is_favorite(is_fav);
                             w.set_favorite_tracks(to_slint_model(fav_items));
+                            sync_favorite_flags(&w, &fav_ids);
                         }
                     });
                 }
@@ -1721,78 +2039,115 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     // 7b. Favorite Toggle for Any Track Row
     let api_fav_row = api.clone();
+    let http_fav_row = http.clone();
     let w_fav_row = window_weak.clone();
     let rt_fav_row = rt_handle.clone();
+    let all_fav_row = all_favorites_cache.clone();
     main_window.on_toggle_favorite_track(move |td| {
         let core_t = track_data_to_core(&td);
         let tid = td.id.to_string();
         let api_f = api_fav_row.clone();
+        let http_f = http_fav_row.clone();
         let w_f = w_fav_row.clone();
+        let fc = all_fav_row.clone();
         rt_fav_row.spawn(async move {
             if let Ok(is_fav) = api_f.toggle_favorite(&core_t).await {
                 let favs = api_f.get_favorites().await.unwrap_or_default();
                 let fav_ids: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
-                let fav_items: Vec<TrackItem> = favs
+                let mut fav_items: Vec<TrackItem> = favs
                     .iter()
-                    .map(|t| TrackItem::from_core(t, "favorite", true))
+                    .map(|t| TrackItem::from_core(t, infer_platform_for_track(t), true))
                     .collect();
+                hydrate_track_covers(&mut fav_items, &http_f).await;
+                if let Ok(mut g) = fc.lock() {
+                    *g = fav_items.clone();
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = w_f.upgrade() {
                         if w.get_current_id().as_str() == tid {
                             w.set_current_is_favorite(is_fav);
                         }
                         w.set_favorite_tracks(to_slint_model(fav_items));
-                        let update_model = |m: ModelRc<TrackData>| {
-                            let mut vec: Vec<TrackData> = m.iter().collect();
-                            for item in &mut vec {
-                                item.is_favorite = fav_ids.contains(item.id.as_str());
-                            }
-                            ModelRc::new(VecModel::from(vec))
-                        };
-                        w.set_library_tracks(update_model(w.get_library_tracks()));
-                        w.set_search_results(update_model(w.get_search_results()));
-                        w.set_history_tracks(update_model(w.get_history_tracks()));
-                        w.set_queue_tracks(update_model(w.get_queue_tracks()));
-                        w.set_active_playlist_tracks(update_model(w.get_active_playlist_tracks()));
+                        sync_favorite_flags(&w, &fav_ids);
                     }
                 });
             }
         });
     });
 
-    // 8. Search Callback
+    // 8. Search Callback (with Search History persistence + loading state)
     let api_search = api.clone();
     let http_search = http.clone();
     let w_search = window_weak.clone();
     let pl_search = playlist_cache.clone();
+    let sh_search = search_history_cache.clone();
     let rt_search = rt_handle.clone();
 
     main_window.on_trigger_search(move |query_str, plat_str| {
-        let query = query_str.to_string();
+        let query = query_str.trim().to_string();
+        if query.is_empty() {
+            return;
+        }
         let plat = plat_str.to_string();
         let api_s = api_search.clone();
         let http_s = http_search.clone();
         let w_s = w_search.clone();
         let pl_s = pl_search.clone();
+        let sh_s = sh_search.clone();
+
+        if let Some(w) = w_s.upgrade() {
+            w.set_is_searching(true);
+            w.set_search_history_open(false);
+        }
 
         rt_search.spawn(async move {
-            let search_platform = if plat == "all" { "ytmusic" } else { &plat };
-            if let Ok((tracks, _)) = api_s.search(&query, search_platform, 25, 0).await {
+            let search_platform = if plat == "all" || plat.is_empty() { "ytmusic" } else { &plat };
+
+            // Record search query in persistent Search History
+            let entry = SavedSearchEntry {
+                key: format!("q:{}", query.to_ascii_lowercase()),
+                kind: "query".to_string(),
+                title: query.clone(),
+                subtitle: String::new(),
+                track_id: String::new(),
+                platform: search_platform.to_string(),
+                thumbnail: String::new(),
+                duration_sec: 0.0,
+            };
+            let sh_snapshot = if let Ok(mut g) = sh_s.lock() {
+                g.retain(|e| e.key != entry.key);
+                g.insert(0, entry);
+                if g.len() > 20 {
+                    g.truncate(20);
+                }
+                g.clone()
+            } else {
+                Vec::new()
+            };
+            if let Ok(json_str) = serde_json::to_string(&sh_snapshot) {
+                let _ = api_s.set_setting("slint_search_history", &json_str).await;
+            }
+            let sh_slots = hydrate_search_history(&sh_snapshot, &http_s).await;
+
+            let items = if let Ok((tracks, _)) = api_s.search(&query, search_platform, 25, 0).await {
                 let favs = api_s.get_favorites().await.unwrap_or_default();
                 let fav_set: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
-
-                let items = json_tracks_to_items(tracks, &http_s, &fav_set, "ytmusic").await;
-
+                let items = json_tracks_to_items(tracks, &http_s, &fav_set, search_platform).await;
                 if let Ok(mut pl) = pl_s.lock() {
                     *pl = items.clone();
                 }
+                items
+            } else {
+                Vec::new()
+            };
 
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(w) = w_s.upgrade() {
-                        w.set_search_results(to_slint_model(items));
-                    }
-                });
-            }
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_s.upgrade() {
+                    w.set_is_searching(false);
+                    w.set_search_results(to_slint_model(items));
+                    w.set_search_history(to_slint_search_history(sh_slots));
+                }
+            });
         });
     });
 
@@ -1800,6 +2155,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let api_scan = api.clone();
     let w_scan = window_weak.clone();
     let pl_scan = playlist_cache.clone();
+    let all_lib_scan = all_library_cache.clone();
     let rt_scan = rt_handle.clone();
 
     main_window.on_scan_local_folder(move || {
@@ -1808,6 +2164,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let api_sc = api_scan.clone();
             let w_sc = w_scan.clone();
             let pl_sc = pl_scan.clone();
+            let lc = all_lib_scan.clone();
 
             rt_scan.spawn(async move {
                 let _ = api_sc.scan_library(Some(&dir)).await;
@@ -1827,6 +2184,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     if let Ok(mut pl) = pl_sc.lock() {
                         *pl = items.clone();
                     }
+                    if let Ok(mut g) = lc.lock() {
+                        *g = items.clone();
+                    }
 
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = w_sc.upgrade() {
@@ -1843,6 +2203,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let api_addf = api.clone();
     let w_addf = window_weak.clone();
     let pl_addf = playlist_cache.clone();
+    let all_lib_addf = all_library_cache.clone();
     let rt_addf = rt_handle.clone();
 
     main_window.on_add_local_files(move || {
@@ -1853,6 +2214,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let api_af = api_addf.clone();
             let w_af = w_addf.clone();
             let pl_af = pl_addf.clone();
+            let lc = all_lib_addf.clone();
 
             rt_addf.spawn(async move {
                 let add_items: Vec<riff_core::models::LibraryAddItem> = paths
@@ -1882,6 +2244,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
                     if let Ok(mut pl) = pl_af.lock() {
                         *pl = items.clone();
+                    }
+                    if let Ok(mut g) = lc.lock() {
+                        *g = items.clone();
                     }
 
                     let _ = slint::invoke_from_event_loop(move || {
@@ -2229,19 +2594,31 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let api_cpl = api.clone();
     let w_cpl = window_weak.clone();
     let rt_cpl = rt_handle.clone();
+    let all_pls_cpl = all_playlists_cache.clone();
+    let nav_cpl = nav_history.clone();
     main_window.on_create_playlist(move |name| {
         let api_c = api_cpl.clone();
         let w_c = w_cpl.clone();
         let n = name.to_string();
+        let apc = all_pls_cpl.clone();
+        let nh = nav_cpl.clone();
         rt_cpl.spawn(async move {
             if let Ok(created) = api_c.create_playlist(&n).await {
                 let all = api_c.get_playlists().await.unwrap_or_default();
+                if let Ok(mut g) = apc.lock() {
+                    *g = all.clone();
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = w_c.upgrade() {
                         w.set_playlists(playlists_to_slint(&all));
                         w.set_active_playlist_id(SharedString::from(&created.id));
                         w.set_active_playlist_name(SharedString::from(&created.name));
                         w.set_active_playlist_tracks(ModelRc::new(VecModel::from(Vec::new())));
+                        if let Ok(mut nav) = nh.lock() {
+                            nav.push(6);
+                            w.set_can_go_back(nav.can_back());
+                            w.set_can_go_forward(nav.can_forward());
+                        }
                         w.set_active_tab(6);
                     }
                 });
@@ -2253,11 +2630,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let http_opl = http.clone();
     let w_opl = window_weak.clone();
     let rt_opl = rt_handle.clone();
+    let nav_opl = nav_history.clone();
     main_window.on_open_playlist(move |pid| {
         let api_o = api_opl.clone();
         let http_o = http_opl.clone();
         let w_o = w_opl.clone();
         let id = pid.to_string();
+        let nh = nav_opl.clone();
         rt_opl.spawn(async move {
             let all = api_o.get_playlists().await.unwrap_or_default();
             let favs = api_o.get_favorites().await.unwrap_or_default();
@@ -2266,13 +2645,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 let mut items: Vec<TrackItem> = pl
                     .tracks
                     .iter()
-                    .map(|t| TrackItem::from_core(t, "playlist", fav_ids.contains(&t.id)))
+                    .map(|t| TrackItem::from_core(t, infer_platform_for_track(t), fav_ids.contains(&t.id)))
                     .collect();
-                for item in &mut items {
-                    if !item.thumbnail.is_empty() {
-                        item.cover_rgba = fetch_cover_rgba(&http_o, &item.thumbnail).await;
-                    }
-                }
+                hydrate_track_covers(&mut items, &http_o).await;
                 let pl_id = pl.id;
                 let pl_name = pl.name;
                 let _ = slint::invoke_from_event_loop(move || {
@@ -2280,6 +2655,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         w.set_active_playlist_id(SharedString::from(&pl_id));
                         w.set_active_playlist_name(SharedString::from(&pl_name));
                         w.set_active_playlist_tracks(to_slint_model(items));
+                        if let Ok(mut nav) = nh.lock() {
+                            nav.push(6);
+                            w.set_can_go_back(nav.can_back());
+                            w.set_can_go_forward(nav.can_forward());
+                        }
                         w.set_active_tab(6);
                     }
                 });
@@ -2290,16 +2670,28 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let api_dpl = api.clone();
     let w_dpl = window_weak.clone();
     let rt_dpl = rt_handle.clone();
+    let all_pls_dpl = all_playlists_cache.clone();
+    let nav_dpl = nav_history.clone();
     main_window.on_delete_playlist(move |pid| {
         let api_d = api_dpl.clone();
         let w_d = w_dpl.clone();
         let id = pid.to_string();
+        let apc = all_pls_dpl.clone();
+        let nh = nav_dpl.clone();
         rt_dpl.spawn(async move {
             let _ = api_d.delete_playlist(&id).await;
             let all = api_d.get_playlists().await.unwrap_or_default();
+            if let Ok(mut g) = apc.lock() {
+                *g = all.clone();
+            }
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = w_d.upgrade() {
                     w.set_playlists(playlists_to_slint(&all));
+                    if let Ok(mut nav) = nh.lock() {
+                        nav.push(0);
+                        w.set_can_go_back(nav.can_back());
+                        w.set_can_go_forward(nav.can_forward());
+                    }
                     w.set_active_tab(0);
                 }
             });
@@ -2580,6 +2972,326 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let _ = slint::quit_event_loop();
     });
 
+    // 13c. Navigation History, Collapsible Sidebar, Search History, and View Shuffle/Filter/Sort
+    let nh_nav = nav_history.clone();
+    let w_nav = window_weak.clone();
+    main_window.on_navigate_to(move |tab| {
+        if let Some(w) = w_nav.upgrade() {
+            if let Ok(mut nav) = nh_nav.lock() {
+                nav.push(tab);
+                w.set_can_go_back(nav.can_back());
+                w.set_can_go_forward(nav.can_forward());
+            }
+            w.set_active_tab(tab);
+        }
+    });
+
+    let nh_back = nav_history.clone();
+    let w_back = window_weak.clone();
+    main_window.on_nav_back(move || {
+        if let Some(w) = w_back.upgrade() {
+            if let Ok(mut nav) = nh_back.lock() {
+                if let Some(tab) = nav.back() {
+                    w.set_active_tab(tab);
+                }
+                w.set_can_go_back(nav.can_back());
+                w.set_can_go_forward(nav.can_forward());
+            }
+        }
+    });
+
+    let nh_fwd = nav_history.clone();
+    let w_fwd = window_weak.clone();
+    main_window.on_nav_forward(move || {
+        if let Some(w) = w_fwd.upgrade() {
+            if let Ok(mut nav) = nh_fwd.lock() {
+                if let Some(tab) = nav.forward() {
+                    w.set_active_tab(tab);
+                }
+                w.set_can_go_back(nav.can_back());
+                w.set_can_go_forward(nav.can_forward());
+            }
+        }
+    });
+
+    let api_sb = api.clone();
+    let w_sb = window_weak.clone();
+    let rt_sb = rt_handle.clone();
+    main_window.on_toggle_sidebar(move || {
+        if let Some(w) = w_sb.upgrade() {
+            let next = !w.get_sidebar_collapsed();
+            w.set_sidebar_collapsed(next);
+            let api_s = api_sb.clone();
+            let val = if next { "1" } else { "0" };
+            rt_sb.spawn(async move {
+                let _ = api_s.set_setting("slint_sidebar_collapsed", val).await;
+            });
+        }
+    });
+
+    let pls_flt = all_playlists_cache.clone();
+    let q_sb_flt = sb_filter_query.clone();
+    let m_sb_flt = sb_sort_mode.clone();
+    let w_sb_flt = window_weak.clone();
+    main_window.on_filter_sidebar(move |query| {
+        let q = query.to_string();
+        if let Ok(mut g) = q_sb_flt.lock() {
+            *g = q.clone();
+        }
+        let mode = m_sb_flt.lock().map(|g| g.clone()).unwrap_or_else(|_| "Recents".to_string());
+        if let (Ok(all), Some(w)) = (pls_flt.lock(), w_sb_flt.upgrade()) {
+            let filtered = apply_sidebar_playlists(&all, &q, &mode);
+            w.set_playlists(playlists_to_slint(&filtered));
+        }
+    });
+
+    let pls_srt = all_playlists_cache.clone();
+    let q_sb_srt = sb_filter_query.clone();
+    let m_sb_srt = sb_sort_mode.clone();
+    let w_sb_srt = window_weak.clone();
+    main_window.on_cycle_sidebar_sort(move || {
+        let next_mode = if let Ok(mut g) = m_sb_srt.lock() {
+            *g = match g.as_str() {
+                "Recents" => "A-Z".to_string(),
+                "A-Z" => "Tracks".to_string(),
+                _ => "Recents".to_string(),
+            };
+            g.clone()
+        } else {
+            "Recents".to_string()
+        };
+        let q = q_sb_srt.lock().map(|g| g.clone()).unwrap_or_default();
+        if let (Ok(all), Some(w)) = (pls_srt.lock(), w_sb_srt.upgrade()) {
+            let sorted = apply_sidebar_playlists(&all, &q, &next_mode);
+            w.set_sb_sort_label(SharedString::from(&next_mode));
+            w.set_playlists(playlists_to_slint(&sorted));
+        }
+    });
+
+    let w_sh_sel = window_weak.clone();
+    main_window.on_select_search_history(move |entry| {
+        if let Some(w) = w_sh_sel.upgrade() {
+            w.set_search_history_open(false);
+            if entry.kind == "track" && !entry.track_id.is_empty() {
+                let td = TrackData {
+                    id: entry.track_id,
+                    title: entry.title,
+                    artist: entry.subtitle,
+                    album: SharedString::default(),
+                    duration_str: SharedString::from(format_duration(entry.duration_sec as f64)),
+                    duration_sec: entry.duration_sec,
+                    platform: entry.platform,
+                    thumbnail: entry.thumbnail,
+                    is_favorite: false,
+                    cover: entry.cover,
+                    has_cover: entry.has_cover,
+                };
+                w.invoke_play_track(td);
+            } else {
+                let plat = if entry.platform.is_empty() {
+                    w.get_search_platform()
+                } else {
+                    entry.platform.clone()
+                };
+                w.set_search_platform(plat.clone());
+                w.set_search_query(entry.title.clone());
+                w.invoke_navigate_to(1);
+                w.invoke_trigger_search(entry.title, plat);
+            }
+        }
+    });
+
+    let api_sh_rm = api.clone();
+    let http_sh_rm = http.clone();
+    let sh_rm_cache = search_history_cache.clone();
+    let w_sh_rm = window_weak.clone();
+    let rt_sh_rm = rt_handle.clone();
+    main_window.on_remove_search_history(move |key| {
+        let k = key.to_string();
+        let snapshot = if let Ok(mut g) = sh_rm_cache.lock() {
+            g.retain(|e| e.key != k);
+            g.clone()
+        } else {
+            Vec::new()
+        };
+        let api_s = api_sh_rm.clone();
+        let http_s = http_sh_rm.clone();
+        let w_s = w_sh_rm.clone();
+        rt_sh_rm.spawn(async move {
+            if let Ok(json_str) = serde_json::to_string(&snapshot) {
+                let _ = api_s.set_setting("slint_search_history", &json_str).await;
+            }
+            let slots = hydrate_search_history(&snapshot, &http_s).await;
+            let is_empty = slots.is_empty();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_s.upgrade() {
+                    w.set_search_history(to_slint_search_history(slots));
+                    if is_empty {
+                        w.set_search_history_open(false);
+                    }
+                }
+            });
+        });
+    });
+
+    let api_sh_clr = api.clone();
+    let sh_clr_cache = search_history_cache.clone();
+    let w_sh_clr = window_weak.clone();
+    let rt_sh_clr = rt_handle.clone();
+    main_window.on_clear_search_history(move || {
+        if let Ok(mut g) = sh_clr_cache.lock() {
+            g.clear();
+        }
+        if let Some(w) = w_sh_clr.upgrade() {
+            w.set_search_history(ModelRc::new(VecModel::from(Vec::new())));
+            w.set_search_history_open(false);
+        }
+        let api_s = api_sh_clr.clone();
+        rt_sh_clr.spawn(async move {
+            let _ = api_s.set_setting("slint_search_history", "[]").await;
+        });
+    });
+
+    let shuf_loc_st = shuffle_state.clone();
+    let pl_loc = playlist_cache.clone();
+    let idx_loc = current_index.clone();
+    let w_loc_shuf = window_weak.clone();
+    main_window.on_shuffle_local(move || {
+        if let Some(w) = w_loc_shuf.upgrade() {
+            let tracks: Vec<TrackData> = w.get_library_tracks().iter().collect();
+            if tracks.is_empty() {
+                return;
+            }
+            shuf_loc_st.store(true, Ordering::SeqCst);
+            w.set_shuffle_on(true);
+            let items: Vec<TrackItem> = tracks.iter().map(track_data_to_item).collect();
+            let pick = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() as usize)
+                .unwrap_or(0))
+                % tracks.len();
+            if let Ok(mut pl) = pl_loc.lock() {
+                *pl = items.clone();
+            }
+            if let Ok(mut idx) = idx_loc.lock() {
+                *idx = pick;
+            }
+            w.set_queue_tracks(to_slint_model(items));
+            w.invoke_play_track(tracks[pick].clone());
+        }
+    });
+
+    let lc_flt = all_library_cache.clone();
+    let q_loc_flt = local_filter_query.clone();
+    let m_loc_flt = local_sort_mode.clone();
+    let w_loc_flt = window_weak.clone();
+    main_window.on_filter_local(move |query| {
+        let q = query.to_string();
+        if let Ok(mut g) = q_loc_flt.lock() {
+            *g = q.clone();
+        }
+        let mode = m_loc_flt.lock().map(|g| g.clone()).unwrap_or_else(|_| "Default".to_string());
+        if let (Ok(all), Some(w)) = (lc_flt.lock(), w_loc_flt.upgrade()) {
+            let filtered = apply_track_filter_sort(&all, &q, &mode);
+            w.set_library_tracks(to_slint_model(filtered));
+        }
+    });
+
+    let lc_srt = all_library_cache.clone();
+    let q_loc_srt = local_filter_query.clone();
+    let m_loc_srt = local_sort_mode.clone();
+    let w_loc_srt = window_weak.clone();
+    let rt_loc_srt = rt_handle.clone();
+    main_window.on_sort_local(move || {
+        let next_mode = if let Ok(mut g) = m_loc_srt.lock() {
+            *g = match g.as_str() {
+                "Default" => "Title A-Z".to_string(),
+                "Title A-Z" => "Artist A-Z".to_string(),
+                "Artist A-Z" => "Duration".to_string(),
+                _ => "Default".to_string(),
+            };
+            g.clone()
+        } else {
+            "Default".to_string()
+        };
+        let q = q_loc_srt.lock().map(|g| g.clone()).unwrap_or_default();
+        if let (Ok(all), Some(w)) = (lc_srt.lock(), w_loc_srt.upgrade()) {
+            let sorted = apply_track_filter_sort(&all, &q, &next_mode);
+            w.set_library_tracks(to_slint_model(sorted));
+        }
+        show_toast(&w_loc_srt, &rt_loc_srt, format!("Sort: {next_mode}"));
+    });
+
+    let shuf_fav_st = shuffle_state.clone();
+    let pl_fav = playlist_cache.clone();
+    let idx_fav = current_index.clone();
+    let w_fav_shuf = window_weak.clone();
+    main_window.on_shuffle_favorites(move || {
+        if let Some(w) = w_fav_shuf.upgrade() {
+            let tracks: Vec<TrackData> = w.get_favorite_tracks().iter().collect();
+            if tracks.is_empty() {
+                return;
+            }
+            shuf_fav_st.store(true, Ordering::SeqCst);
+            w.set_shuffle_on(true);
+            let items: Vec<TrackItem> = tracks.iter().map(track_data_to_item).collect();
+            let pick = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() as usize)
+                .unwrap_or(0))
+                % tracks.len();
+            if let Ok(mut pl) = pl_fav.lock() {
+                *pl = items.clone();
+            }
+            if let Ok(mut idx) = idx_fav.lock() {
+                *idx = pick;
+            }
+            w.set_queue_tracks(to_slint_model(items));
+            w.invoke_play_track(tracks[pick].clone());
+        }
+    });
+
+    let fc_flt = all_favorites_cache.clone();
+    let q_fav_flt = fav_filter_query.clone();
+    let m_fav_flt = fav_sort_mode.clone();
+    let w_fav_flt = window_weak.clone();
+    main_window.on_filter_favorites(move |query| {
+        let q = query.to_string();
+        if let Ok(mut g) = q_fav_flt.lock() {
+            *g = q.clone();
+        }
+        let mode = m_fav_flt.lock().map(|g| g.clone()).unwrap_or_else(|_| "Default".to_string());
+        if let (Ok(all), Some(w)) = (fc_flt.lock(), w_fav_flt.upgrade()) {
+            let filtered = apply_track_filter_sort(&all, &q, &mode);
+            w.set_favorite_tracks(to_slint_model(filtered));
+        }
+    });
+
+    let fc_srt = all_favorites_cache.clone();
+    let q_fav_srt = fav_filter_query.clone();
+    let m_fav_srt = fav_sort_mode.clone();
+    let w_fav_srt = window_weak.clone();
+    let rt_fav_srt = rt_handle.clone();
+    main_window.on_sort_favorites(move || {
+        let next_mode = if let Ok(mut g) = m_fav_srt.lock() {
+            *g = match g.as_str() {
+                "Default" => "Title A-Z".to_string(),
+                "Title A-Z" => "Artist A-Z".to_string(),
+                "Artist A-Z" => "Duration".to_string(),
+                _ => "Default".to_string(),
+            };
+            g.clone()
+        } else {
+            "Default".to_string()
+        };
+        let q = q_fav_srt.lock().map(|g| g.clone()).unwrap_or_default();
+        if let (Ok(all), Some(w)) = (fc_srt.lock(), w_fav_srt.upgrade()) {
+            let sorted = apply_track_filter_sort(&all, &q, &next_mode);
+            w.set_favorite_tracks(to_slint_model(sorted));
+        }
+        show_toast(&w_fav_srt, &rt_fav_srt, format!("Sort: {next_mode}"));
+    });
+
     // 14. Sleep Timer Background Ticker (1s)
     let sd_tick = sleep_deadline.clone();
     let api_sleep_tick = api.clone();
@@ -2627,6 +3339,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let eof_ev = eof_handled.clone();
     let api_ev = api.clone();
     let off_ev = lyrics_offset_ms.clone();
+    let rt_ev = rt_handle.clone();
 
     std::thread::spawn(move || {
         while let Ok(event) = rx.blocking_recv() {
@@ -2699,6 +3412,16 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             }
                         }
                     });
+                }
+                riff_core::events::RiffEvent::PlaybackError { message } => {
+                    let w_err = w_opt.clone();
+                    let rt_err = rt_ev.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = w_err.upgrade() {
+                            w.set_is_playing(false);
+                        }
+                    });
+                    show_toast(&w_opt, &rt_err, format!("Playback error: {message}"));
                 }
                 _ => {}
             }
@@ -2839,6 +3562,52 @@ mod tests {
             "Rock That Body",
             "Random DJ"
         ));
+    }
+
+    #[test]
+    fn test_nav_history_and_sidebar_filter_sort() {
+        let mut nav = NavHistory::new();
+        assert!(!nav.can_back());
+        assert!(!nav.can_forward());
+        nav.push(1);
+        nav.push(3);
+        assert!(nav.can_back());
+        assert!(!nav.can_forward());
+        assert_eq!(nav.back(), Some(1));
+        assert!(nav.can_forward());
+        assert_eq!(nav.forward(), Some(3));
+        assert_eq!(nav.back(), Some(1));
+        nav.push(2);
+        assert!(!nav.can_forward());
+
+        let pls = vec![
+            riff_core::models::Playlist {
+                id: "1".to_string(),
+                name: "Chill Mix".to_string(),
+                tracks: vec![],
+            },
+            riff_core::models::Playlist {
+                id: "2".to_string(),
+                name: "Ambient Focus".to_string(),
+                tracks: vec![riff_core::models::Track {
+                    id: "a".to_string(),
+                    path: "a".to_string(),
+                    file: "a".to_string(),
+                    title: "Track".to_string(),
+                    artist: "Artist".to_string(),
+                    album: None,
+                    duration: 120.0,
+                    thumbnail: String::new(),
+                    added_at: 0,
+                    updated_at: 0,
+                }],
+            },
+        ];
+        let az = apply_sidebar_playlists(&pls, "", "A-Z");
+        assert_eq!(az[0].name, "Ambient Focus");
+        let flt = apply_sidebar_playlists(&pls, "chill", "Recents");
+        assert_eq!(flt.len(), 1);
+        assert_eq!(flt[0].id, "1");
     }
 
     #[test]

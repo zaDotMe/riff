@@ -315,6 +315,7 @@ export component SearchView inherits ScrollView {
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
     in property <bool> is-playing: false;
+    in property <bool> is-searching: false;
     in-out property <string> search-platform: "ytmusic";
     callback play-track(TrackData);
     callback platform-changed(string);
@@ -334,6 +335,7 @@ export component SearchView inherits ScrollView {
 
             for chip in [
                 { id: "ytmusic", label: "YouTube Music" },
+                { id: "youtube", label: "YouTube" },
                 { id: "soundcloud", label: "SoundCloud" },
                 { id: "local", label: "Local" },
             ]: Rectangle {
@@ -367,7 +369,21 @@ export component SearchView inherits ScrollView {
 
         if tracks.length > 0: TableHeader { show-album: root.width >= 460px; }
 
-        if tracks.length == 0: Rectangle {
+        if is-searching && tracks.length == 0: Rectangle {
+            height: 180px;
+            Text {
+                width: parent.width - 32px;
+                x: 16px;
+                text: "Searching...";
+                color: Theme.text-secondary;
+                font-size: 14.5px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        if !is-searching && tracks.length == 0: Rectangle {
             height: 180px;
             Text {
                 width: parent.width - 32px;
@@ -401,11 +417,16 @@ export component LocalFilesView inherits ScrollView {
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
     in property <bool> is-playing: false;
+    in-out property <string> filter-query: "";
+    in-out property <bool> filter-open: false;
     callback play-track(TrackData);
+    callback shuffle-play();
     callback add-files();
     callback scan-folder();
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
+    callback filter-changed(string);
+    callback cycle-sort();
 
     property <bool> is-narrow: root.width < 540px;
     property <length> hero-cover: root.width < 520px ? 112px : (root.width < 680px ? 164px : 220px);
@@ -495,6 +516,7 @@ export component LocalFilesView inherits ScrollView {
                         icon: @image-url("icons/shuffle.svg");
                         icon-size: is-narrow ? 16px : 18px;
                         disabled: tracks.length == 0;
+                        clicked => { root.shuffle-play(); }
                     }
 
                     PillBtn {
@@ -519,11 +541,63 @@ export component LocalFilesView inherits ScrollView {
 
                     Rectangle { horizontal-stretch: 1; }
 
+                    if filter-open: Rectangle {
+                        width: is-narrow ? 130px : 190px;
+                        height: 32px;
+                        border-radius: 16px;
+                        background: #ffffff14;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 8px;
+                            spacing: 4px;
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                clip: true;
+                                if filter-query == "": Text {
+                                    text: "Filter files...";
+                                    color: Theme.text-muted;
+                                    font-size: 12.5px;
+                                    vertical-alignment: center;
+                                    width: 100%;
+                                    height: 100%;
+                                }
+                                loc-flt := TextInput {
+                                    text <=> filter-query;
+                                    color: Theme.text-primary;
+                                    font-size: 12.5px;
+                                    vertical-alignment: center;
+                                    single-line: true;
+                                    edited => { root.filter-changed(filter-query); }
+                                }
+                            }
+                            if filter-query != "": IconBtn {
+                                width: 22px;
+                                height: 22px;
+                                icon: @image-url("icons/ms_close.svg");
+                                icon-size: 12px;
+                                clicked => {
+                                    filter-query = "";
+                                    root.filter-changed("");
+                                }
+                            }
+                        }
+                    }
+
                     IconBtn {
                         width: is-narrow ? 28px : 36px;
                         height: is-narrow ? 28px : 36px;
                         icon: @image-url("icons/search_stroke.svg");
                         icon-size: is-narrow ? 16px : 18px;
+                        active: filter-open;
+                        active-bg: #ffffff18;
+                        active-icon-color: Theme.text-primary;
+                        clicked => {
+                            filter-open = !filter-open;
+                            if (!filter-open && filter-query != "") {
+                                filter-query = "";
+                                root.filter-changed("");
+                            }
+                        }
                     }
 
                     IconBtn {
@@ -531,6 +605,7 @@ export component LocalFilesView inherits ScrollView {
                         height: is-narrow ? 28px : 36px;
                         icon: @image-url("icons/ms_sort.svg");
                         icon-size: is-narrow ? 16px : 18px;
+                        clicked => { root.cycle-sort(); }
                     }
                 }
             }
@@ -600,9 +675,14 @@ export component FavoritesView inherits ScrollView {
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
     in property <bool> is-playing: false;
+    in-out property <string> filter-query: "";
+    in-out property <bool> filter-open: false;
     callback play-track(TrackData);
+    callback shuffle-play();
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
+    callback filter-changed(string);
+    callback cycle-sort();
 
     property <bool> is-narrow: root.width < 540px;
     property <length> hero-cover: root.width < 520px ? 112px : (root.width < 680px ? 164px : 220px);
@@ -693,23 +773,72 @@ export component FavoritesView inherits ScrollView {
                         icon: @image-url("icons/shuffle.svg");
                         icon-size: 18px;
                         disabled: tracks.length == 0;
-                    }
-
-                    IconBtn {
-                        icon: @image-url("icons/dots.svg");
-                        icon-size: 18px;
+                        clicked => { root.shuffle-play(); }
                     }
 
                     Rectangle { horizontal-stretch: 1; }
 
+                    if filter-open: Rectangle {
+                        width: is-narrow ? 140px : 200px;
+                        height: 32px;
+                        border-radius: 16px;
+                        background: #ffffff14;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 8px;
+                            spacing: 4px;
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                clip: true;
+                                if filter-query == "": Text {
+                                    text: "Filter liked songs...";
+                                    color: Theme.text-muted;
+                                    font-size: 12.5px;
+                                    vertical-alignment: center;
+                                    width: 100%;
+                                    height: 100%;
+                                }
+                                fav-flt := TextInput {
+                                    text <=> filter-query;
+                                    color: Theme.text-primary;
+                                    font-size: 12.5px;
+                                    vertical-alignment: center;
+                                    single-line: true;
+                                    edited => { root.filter-changed(filter-query); }
+                                }
+                            }
+                            if filter-query != "": IconBtn {
+                                width: 22px;
+                                height: 22px;
+                                icon: @image-url("icons/ms_close.svg");
+                                icon-size: 12px;
+                                clicked => {
+                                    filter-query = "";
+                                    root.filter-changed("");
+                                }
+                            }
+                        }
+                    }
+
                     IconBtn {
                         icon: @image-url("icons/search_stroke.svg");
                         icon-size: 18px;
+                        active: filter-open;
+                        active-bg: #ffffff18;
+                        active-icon-color: Theme.text-primary;
+                        clicked => {
+                            filter-open = !filter-open;
+                            if (!filter-open && filter-query != "") {
+                                filter-query = "";
+                                root.filter-changed("");
+                            }
+                        }
                     }
 
                     IconBtn {
                         icon: @image-url("icons/ms_sort.svg");
                         icon-size: 18px;
+                        clicked => { root.cycle-sort(); }
                     }
                 }
             }

@@ -169,18 +169,27 @@ pub async fn proxy_audio(
     let mut request = client.get(raw_url);
     if is_googlevideo {
         let mut ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
+        let mut is_web_client = false;
         for (k, v) in parsed.query_pairs() {
             if k == "c" {
                 if v == "ANDROID_MUSIC" {
                     ua = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip";
+                } else if v == "ANDROID" {
+                    ua = "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip";
                 } else if v == "IOS" {
                     ua = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
                 } else if v == "VISIONOS" || v == "WEB" || v == "WEB_REMIX" || v == "MWEB" {
                     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+                    is_web_client = matches!(v.as_ref(), "WEB" | "WEB_REMIX" | "MWEB");
                 }
             }
         }
         request = request.header(header::USER_AGENT, ua);
+        if is_web_client {
+            request = request
+                .header(header::ORIGIN, "https://music.youtube.com")
+                .header(header::REFERER, "https://music.youtube.com/");
+        }
     }
 
     if let Some(ref r) = effective_range {

@@ -1,6 +1,16 @@
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use reqwest::Client;
 use serde_json::{json, Value};
+use tokio::sync::RwLock;
 use tracing::debug;
+
+const VISITOR_CACHE_TTL: Duration = Duration::from_secs(25 * 60);
+const WEB_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const VISIONOS_PLAYER_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+const ANDROID_MUSIC_UA: &str = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14; en_US) gzip";
+const IOS_UA: &str = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct YouTubeTrack {
@@ -20,11 +30,15 @@ pub struct YouTubeTrack {
 #[derive(Clone)]
 pub struct YouTubeClient {
     client: Client,
+    visitor_cache: Arc<RwLock<(String, Instant)>>,
 }
 
 impl YouTubeClient {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            visitor_cache: Arc::new(RwLock::new((String::new(), Instant::now()))),
+        }
     }
 
     /// Searches YouTube for tracks using InnerTube WEB client
@@ -170,14 +184,114 @@ impl YouTubeClient {
         Ok(tracks)
     }
 
-    /// Resolves direct audio stream URL via InnerTube ANDROID_MUSIC or IOS player
+    async fn get_visitor_data(&self, video_id: &str, force_refresh: bool) -> Option<String> {
+        if !force_refresh {
+            let cache = self.visitor_cache.read().await;
+            if !cache.0.is_empty() && cache.1.elapsed() < VISITOR_CACHE_TTL {
+                return Some(cache.0.clone());
+            }
+        }
+
+        let watch_url = format!("https://www.youtube.com/watch?v={video_id}");
+        let resp = self
+            .client
+            .get(&watch_url)
+            .header("User-Agent", WEB_UA)
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .timeout(Duration::from_secs(8))
+            .send()
+            .await
+            .ok()?;
+
+        if !resp.status().is_success() {
+            return None;
+        }
+        let html = resp.text().await.ok()?;
+        let vd = extract_visitor_data_from_html(&html)?;
+
+        let mut cache = self.visitor_cache.write().await;
+        *cache = (vd.clone(), Instant::now());
+        Some(vd)
+    }
+
+    async fn verify_stream_url(&self, stream_url: &str, dl_ua: &str, content_len: Option<u64>) -> bool {
+        // GoogleVideo can serve chunk 0 (bytes 0..1048575) with HTTP 206 and then reject
+        // subsequent chunks (bytes >= 1048576) with HTTP 403 when poToken is missing.
+        let probe_range = if content_len.map(|len| len > 1_048_576).unwrap_or(true) {
+            "bytes=1048576-1048576"
+        } else {
+            "bytes=0-0"
+        };
+
+        let resp = self
+            .client
+            .get(stream_url)
+            .header("User-Agent", dl_ua)
+            .header("Range", probe_range)
+            .timeout(Duration::from_secs(8))
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status = r.status().as_u16();
+                status == 200 || status == 206
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Resolves direct audio stream URL via InnerTube (VISIONOS with visitorData, then ANDROID_MUSIC / IOS fallback)
     pub async fn resolve_stream(&self, video_id: &str, quality: &str) -> anyhow::Result<String> {
         let vid = extract_video_id(video_id);
         if vid.is_empty() {
             anyhow::bail!("Invalid YouTube video id: {video_id}");
         }
 
-        // 1. Try ANDROID_MUSIC client
+        // 1. Try VISIONOS client with watch-page visitorData (reliable full-track streaming without poToken)
+        for force_refresh in [false, true] {
+            if let Some(visitor_data) = self.get_visitor_data(vid, force_refresh).await {
+                let visionos_body = json!({
+                    "context": {
+                        "client": {
+                            "clientName": "VISIONOS",
+                            "clientVersion": "0.1",
+                            "deviceMake": "Apple",
+                            "deviceModel": "RealityDevice14,1",
+                            "osName": "visionOS",
+                            "osVersion": "2.0",
+                            "hl": "en",
+                            "gl": "US",
+                            "visitorData": visitor_data
+                        }
+                    },
+                    "videoId": vid
+                });
+
+                match self
+                    .query_player(
+                        "https://www.youtube.com/youtubei/v1/player",
+                        &visionos_body,
+                        quality,
+                        VISIONOS_PLAYER_UA,
+                        Some(("101", "0.1", Some(visitor_data.as_str()))),
+                    )
+                    .await
+                {
+                    Ok((url, content_len)) => {
+                        if self.verify_stream_url(&url, WEB_UA, content_len).await {
+                            return Ok(url);
+                        }
+                        debug!("VISIONOS stream URL failed chunk probe for {vid}");
+                    }
+                    Err(e) => debug!("VISIONOS player failed for {vid} (refresh={force_refresh}): {e}"),
+                }
+            } else if force_refresh {
+                break;
+            }
+        }
+
+        // 2. Try ANDROID_MUSIC client
         let android_body = json!({
             "context": {
                 "client": {
@@ -191,12 +305,26 @@ impl YouTubeClient {
             "videoId": vid
         });
 
-        match self.query_player("https://music.youtube.com/youtubei/v1/player", &android_body, quality).await {
-            Ok(url) => return Ok(url),
+        match self
+            .query_player(
+                "https://music.youtube.com/youtubei/v1/player",
+                &android_body,
+                quality,
+                ANDROID_MUSIC_UA,
+                Some(("21", "7.27.52", None)),
+            )
+            .await
+        {
+            Ok((url, content_len)) => {
+                if self.verify_stream_url(&url, ANDROID_MUSIC_UA, content_len).await {
+                    return Ok(url);
+                }
+                debug!("ANDROID_MUSIC stream URL failed chunk probe (403 cutoff) for {vid}");
+            }
             Err(e) => debug!("ANDROID_MUSIC player failed for {vid}: {e}"),
         }
 
-        // 2. Try IOS client as fallback
+        // 3. Try IOS client as fallback (verify past 1MB cutoff so 403-poisoned URLs fall through to yt-dlp / Smart Mirror)
         let ios_body = json!({
             "context": {
                 "client": {
@@ -213,26 +341,56 @@ impl YouTubeClient {
             "videoId": vid
         });
 
-        match self.query_player("https://www.youtube.com/youtubei/v1/player", &ios_body, quality).await {
-            Ok(url) => return Ok(url),
+        match self
+            .query_player(
+                "https://www.youtube.com/youtubei/v1/player",
+                &ios_body,
+                quality,
+                IOS_UA,
+                Some(("5", "20.10.4", None)),
+            )
+            .await
+        {
+            Ok((url, content_len)) => {
+                if self.verify_stream_url(&url, IOS_UA, content_len).await {
+                    return Ok(url);
+                }
+                debug!("IOS stream URL failed chunk probe (403 cutoff) for {vid}");
+            }
             Err(e) => debug!("IOS player failed for {vid}: {e}"),
         }
 
-        anyhow::bail!("Failed to resolve direct audio stream for YouTube ID: {vid}")
+        anyhow::bail!("Failed to resolve playable audio stream for YouTube ID: {vid}")
     }
 
-    async fn query_player(&self, endpoint: &str, body: &Value, quality: &str) -> anyhow::Result<String> {
-        let resp = self
+    async fn query_player(
+        &self,
+        endpoint: &str,
+        body: &Value,
+        quality: &str,
+        user_agent: &str,
+        client_headers: Option<(&str, &str, Option<&str>)>,
+    ) -> anyhow::Result<(String, Option<u64>)> {
+        let mut req = self
             .client
             .post(endpoint)
             .header("Content-Type", "application/json")
-            .header(
-                "User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            )
+            .header("User-Agent", user_agent);
+
+        if let Some((client_name, client_version, visitor_id)) = client_headers {
+            req = req
+                .header("X-YouTube-Client-Name", client_name)
+                .header("X-YouTube-Client-Version", client_version);
+            if let Some(vd) = visitor_id {
+                if !vd.is_empty() {
+                    req = req.header("X-Goog-Visitor-Id", vd);
+                }
+            }
+        }
+
+        let resp = req
             .json(body)
-            .timeout(std::time::Duration::from_secs(8))
+            .timeout(Duration::from_secs(8))
             .send()
             .await?;
 
@@ -288,7 +446,14 @@ impl YouTubeClient {
 
         if let Some(best) = audio_formats.first() {
             if let Some(url) = best.get("url").and_then(|u| u.as_str()) {
-                return Ok(url.to_string());
+                let content_len = best
+                    .get("contentLength")
+                    .and_then(|v| {
+                        v.as_str()
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .or_else(|| v.as_u64())
+                    });
+                return Ok((url.to_string(), content_len));
             }
         }
 
@@ -434,4 +599,59 @@ fn parse_duration_seconds(input: &str) -> f64 {
         }
     }
     total
+}
+
+fn extract_visitor_data_from_html(html: &str) -> Option<String> {
+    for marker in ["\"VISITOR_DATA\":\"", "\"visitorData\":\""] {
+        if let Some(pos) = html.find(marker) {
+            let rest = &html[pos + marker.len()..];
+            if let Some(end) = rest.find('"') {
+                let raw = &rest[..end];
+                if !raw.is_empty() {
+                    return Some(percent_decode_ascii(raw));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn percent_decode_ascii(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex_str) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(val) = u8::from_str_radix(hex_str, 16) {
+                    out.push(val);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_and_decodes_visitor_data() {
+        let html = r#"{"VISITOR_DATA":"CgtUcGNCRENJOElfUSj%3D%3D","other":1}"#;
+        assert_eq!(
+            extract_visitor_data_from_html(html).as_deref(),
+            Some("CgtUcGNCRENJOElfUSj==")
+        );
+
+        let html2 = r#"{"visitorData":"Cgt1UXJWVFgwRFBLSSg%3D"}"#;
+        assert_eq!(
+            extract_visitor_data_from_html(html2).as_deref(),
+            Some("Cgt1UXJWVFgwRFBLSSg=")
+        );
+    }
 }

@@ -99,6 +99,10 @@ impl RiffApi {
         )
     }
 
+    pub fn take_playback_error(&self) -> Option<String> {
+        self.player.take_last_error()
+    }
+
     /// Unified search across YouTube, YouTube Music, SoundCloud, and local SQLite library
     pub async fn search(
         &self,

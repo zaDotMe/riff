@@ -443,13 +443,15 @@ export component TrackRow inherits Rectangle {
                     height: 14px;
                     source: track.platform == "soundcloud"
                         ? @image-url("icons/soundcloud.svg")
-                        : (track.platform == "local"
-                            ? @image-url("icons/cloud_off.svg")
-                            : (track.platform == "history"
-                                ? @image-url("icons/ms_history.svg")
-                                : (track.platform == "favorite"
-                                    ? @image-url("icons/heart_fill.svg")
-                                    : @image-url("icons/ytmusic.svg"))));
+                        : (track.platform == "youtube"
+                            ? @image-url("icons/youtube.svg")
+                            : (track.platform == "local"
+                                ? @image-url("icons/cloud_off.svg")
+                                : (track.platform == "history"
+                                    ? @image-url("icons/ms_history.svg")
+                                    : (track.platform == "favorite"
+                                        ? @image-url("icons/heart_fill.svg")
+                                        : @image-url("icons/ytmusic.svg")))));
                     colorize: track.platform == "soundcloud"
                         ? #ff7700
                         : (track.platform == "local" || track.platform == "history"
@@ -467,9 +469,11 @@ export component TrackRow inherits Rectangle {
                     ? track.album
                     : (track.platform == "ytmusic"
                         ? "YouTube Music"
-                        : (track.platform == "soundcloud"
-                            ? "SoundCloud"
-                            : (track.platform == "local" ? "Local" : track.platform)));
+                        : (track.platform == "youtube"
+                            ? "YouTube"
+                            : (track.platform == "soundcloud"
+                                ? "SoundCloud"
+                                : (track.platform == "local" ? "Local" : track.platform))));
                 color: Theme.text-muted;
                 font-size: 12.5px;
                 vertical-alignment: center;

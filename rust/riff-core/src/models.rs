@@ -75,7 +75,11 @@ pub struct LibraryUpdateRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryRemoveRequest {
-    pub id: String,
+    pub id: Option<String>,
+    #[serde(default)]
+    pub ids: Vec<String>,
+    #[serde(default)]
+    pub clear_all: bool,
 }
 
 #[derive(Debug, Deserialize)]

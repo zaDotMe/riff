@@ -57,6 +57,19 @@ export struct PlaylistData {
     track_count: int,
 }
 
+export struct SearchHistoryItem {
+    key: string,
+    kind: string,
+    title: string,
+    subtitle: string,
+    track_id: string,
+    platform: string,
+    thumbnail: string,
+    duration_sec: float,
+    cover: image,
+    has_cover: bool,
+}
+
 export global Theme {
     in-out property <color> window-bg: #2b2b2e;
     in-out property <color> panel-bg: #0d0d0d;
