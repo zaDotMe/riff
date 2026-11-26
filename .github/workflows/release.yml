@@ -180,10 +180,10 @@ jobs:
           if [ -n "$ANDROID_RELEASE_KEYSTORE_BASE64" ]; then
             echo "$ANDROID_RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/riff-release.keystore"
             export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/riff-release.keystore"
-            cargo apk build --release -p riff-slint
+            cargo apk build --release -p riff-slint --lib
           else
             echo "No release keystore secret; producing a debug-signed Android TV APK."
-            cargo apk build -p riff-slint
+            cargo apk build -p riff-slint --lib
           fi
 
       - name: Package Google TV artifact
