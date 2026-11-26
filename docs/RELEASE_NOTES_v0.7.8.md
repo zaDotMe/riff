@@ -29,4 +29,5 @@ Riff v0.7.8 builds on the pure Slint release with a keyboard shortcut and native
 - Shared Slint sources compile for desktop and Android.
 - Desktop `cargo test -p riff-core -p riff-slint`.
 - Release CI runs `cargo test --release -p riff-core -p riff-slint`.
-- Android TV CI builds a signed-for-debug arm64-v8a APK with Android SDK + NDK and `cargo-apk`.
+- Android TV CI builds an arm64-v8a APK with Android SDK + NDK and `cargo-apk`.
+- Production release signing uses `ANDROID_RELEASE_KEYSTORE_BASE64` + `ANDROID_RELEASE_KEYSTORE_PASSWORD` repository secrets; without them, a debug-signed APK is produced.

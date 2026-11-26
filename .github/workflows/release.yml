@@ -173,13 +173,24 @@ jobs:
         run: cargo install cargo-apk --locked
 
       - name: Build arm64-v8a Google TV APK
-        run: cargo apk build --release -p riff-slint
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_RELEASE_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/riff-release.keystore"
+            export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/riff-release.keystore"
+            cargo apk build --release -p riff-slint
+          else
+            echo "No release keystore secret; producing a debug-signed Android TV APK."
+            cargo apk build -p riff-slint
+          fi
 
       - name: Package Google TV artifact
         run: |
           mkdir -p dist-release
-          APK=$(find target/release/apk -name "*.apk" -print -quit)
-          if [ -z "$APK" ]; then APK=$(find target -name "*.apk" -print -quit); fi
+          APK=$(find target/release/apk -name "*.apk" -print -quit 2>/dev/null || true)
+          if [ -z "$APK" ]; then APK=$(find target -name "*.apk" -print -quit 2>/dev/null || true); fi
           if [ -z "$APK" ]; then echo "No APK produced" >&2; exit 1; fi
           cp "$APK" dist-release/Riff-google-tv-arm64-v8a.apk
 
