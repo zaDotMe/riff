@@ -1,4 +1,4 @@
-import { Theme, TrackData } from "theme.slint";
+import { Theme, TrackData, RemotePlaylistData, ArtistData } from "theme.slint";
 
 export component IconBtn inherits Rectangle {
     in property <image> icon;
@@ -300,16 +300,25 @@ export component TrackRow inherits Rectangle {
     in property <TrackData> track;
     in property <bool> is-current: false;
     in property <bool> is-playing: false;
+    in property <bool> is-buffering: false;
     in property <bool> show-album: true;
+    in property <bool> show-queue-btn: true;
+    in property <bool> show-remove: false;
     callback play-clicked();
     callback toggle-favorite();
     callback add-to-playlist();
+    callback add-to-queue();
+    callback remove-clicked();
+    callback artist-clicked(string);
 
     property <float> eq-t: (is-current && is-playing && !Theme.reduced-motion) ? (animation-tick() / 1s) : 0.0;
+    property <bool> q-hovered: false;
+    property <bool> rm-hovered: false;
+    property <bool> row-hovered: ta.has-hover || fav-ta.has-hover || add-ta.has-hover || q-hovered || rm-hovered || art-ta.has-hover;
 
     height: 64px;
     border-radius: 8px;
-    background: is-current ? Theme.surface-active : (ta.has-hover || fav-ta.has-hover || add-ta.has-hover ? #ffffff0f : transparent);
+    background: is-current ? Theme.surface-active : (row-hovered ? #ffffff0f : transparent);
     animate background { duration: Theme.reduced-motion ? 0ms : 140ms; easing: ease-out; }
 
     ta := TouchArea {
@@ -420,11 +429,19 @@ export component TrackRow inherits Rectangle {
                 overflow: elide;
             }
 
-            Text {
-                text: track.artist;
-                color: Theme.text-secondary;
-                font-size: 12px;
-                overflow: elide;
+            Rectangle {
+                height: 16px;
+                Text {
+                    width: 100%;
+                    text: track.artist;
+                    color: art-ta.has-hover ? Theme.primary : Theme.text-secondary;
+                    font-size: 12px;
+                    overflow: elide;
+                }
+                art-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.artist-clicked(track.artist); }
+                }
             }
         }
 
@@ -481,11 +498,39 @@ export component TrackRow inherits Rectangle {
             }
         }
 
+        // Add to queue button (visible on hover)
+        if show-queue-btn: VerticalLayout {
+            width: 26px;
+            alignment: center;
+            opacity: row-hovered ? 1.0 : 0.0;
+            animate opacity { duration: 140ms; easing: ease-out; }
+
+            Rectangle {
+                width: 26px;
+                height: 26px;
+                border-radius: 13px;
+                background: q-ta.has-hover ? #ffffff18 : transparent;
+                Image {
+                    source: @image-url("icons/ms_queue_music.svg");
+                    width: 15px;
+                    height: 15px;
+                    colorize: q-ta.has-hover ? Theme.primary : Theme.text-secondary;
+                    x: 5.5px;
+                    y: 5.5px;
+                }
+                q-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    changed has-hover => { q-hovered = self.has-hover; }
+                    clicked => { root.add-to-queue(); }
+                }
+            }
+        }
+
         // Add to playlist button (visible on hover)
         VerticalLayout {
             width: 26px;
             alignment: center;
-            opacity: (ta.has-hover || add-ta.has-hover || fav-ta.has-hover) ? 1.0 : 0.0;
+            opacity: row-hovered ? 1.0 : 0.0;
             animate opacity { duration: 140ms; easing: ease-out; }
 
             Rectangle {
@@ -512,7 +557,7 @@ export component TrackRow inherits Rectangle {
         VerticalLayout {
             width: 26px;
             alignment: center;
-            opacity: (track.is_favorite || ta.has-hover || fav-ta.has-hover || add-ta.has-hover) ? 1.0 : 0.0;
+            opacity: (track.is_favorite || row-hovered) ? 1.0 : 0.0;
             animate opacity { duration: 140ms; easing: ease-out; }
 
             Rectangle {
@@ -535,11 +580,39 @@ export component TrackRow inherits Rectangle {
             }
         }
 
-        // Duration
+        // Remove button (used in Queue, Playlist detail, Local files)
+        if show-remove: VerticalLayout {
+            width: 26px;
+            alignment: center;
+            opacity: row-hovered ? 1.0 : 0.0;
+            animate opacity { duration: 140ms; easing: ease-out; }
+
+            Rectangle {
+                width: 26px;
+                height: 26px;
+                border-radius: 13px;
+                background: rm-ta.has-hover ? #f28b8228 : transparent;
+                Image {
+                    source: @image-url("icons/ms_close.svg");
+                    width: 14px;
+                    height: 14px;
+                    colorize: rm-ta.has-hover ? #f28b82 : Theme.text-muted;
+                    x: 6px;
+                    y: 6px;
+                }
+                rm-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    changed has-hover => { rm-hovered = self.has-hover; }
+                    clicked => { root.remove-clicked(); }
+                }
+            }
+        }
+
+        // Duration / Buffering badge
         Text {
             width: 44px;
-            text: track.duration_str;
-            color: Theme.text-muted;
+            text: (is-current && is-buffering) ? "..." : track.duration_str;
+            color: (is-current && is-buffering) ? Theme.primary : Theme.text-muted;
             font-size: 12.5px;
             horizontal-alignment: right;
             vertical-alignment: center;
@@ -655,6 +728,242 @@ export component VolumeBar inherits Rectangle {
             if (self.pressed && self.width > 0px) {
                 value = clamp(self.mouse-x / self.width, 0.0, 1.0);
                 root.changed(value);
+            }
+        }
+    }
+}
+
+export component SearchSkeletonList inherits VerticalLayout {
+    in property <bool> active: false;
+    spacing: 6px;
+
+    property <float> t-sec: active && !Theme.reduced-motion ? (animation-tick() / 1s) : 0.0;
+
+    for idx in [0, 1, 2, 3, 4, 5]: Rectangle {
+        height: 64px;
+        border-radius: 8px;
+        property <float> pulse: 0.45 + 0.35 * Math.sin(t-sec * 3.8rad - idx * 0.55rad);
+        background: #ffffff08;
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            spacing: 12px;
+
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 24px;
+                    height: 12px;
+                    border-radius: 4px;
+                    background: #ffffff14;
+                    opacity: pulse;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 46px;
+                    height: 46px;
+                    border-radius: 6px;
+                    background: #ffffff18;
+                    opacity: pulse;
+                }
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 2;
+                alignment: center;
+                spacing: 7px;
+                Rectangle {
+                    width: idx == 1 || idx == 4 ? 190px : 150px;
+                    height: 13px;
+                    border-radius: 6px;
+                    background: #ffffff1a;
+                    opacity: pulse;
+                }
+                Rectangle {
+                    width: idx == 2 ? 110px : 90px;
+                    height: 10px;
+                    border-radius: 5px;
+                    background: #ffffff12;
+                    opacity: pulse;
+                }
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                Rectangle {
+                    width: 78px;
+                    height: 11px;
+                    border-radius: 5px;
+                    background: #ffffff12;
+                    opacity: pulse;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 36px;
+                    height: 11px;
+                    border-radius: 5px;
+                    background: #ffffff14;
+                    opacity: pulse;
+                }
+            }
+        }
+    }
+}
+
+export component PlaylistResultRow inherits Rectangle {
+    in property <RemotePlaylistData> playlist;
+    callback clicked();
+
+    height: 70px;
+    border-radius: 10px;
+    background: ta.has-hover ? #ffffff10 : #17171a88;
+    animate background { duration: Theme.reduced-motion ? 0ms : 140ms; easing: ease-out; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 14px;
+        spacing: 14px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 50px;
+                height: 50px;
+                border-radius: 8px;
+                background: #23203a;
+                clip: true;
+
+                if playlist.has_cover: Image {
+                    source: playlist.cover;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: cover;
+                }
+                if !playlist.has_cover: Image {
+                    source: @image-url("icons/ms_queue_music.svg");
+                    width: 22px;
+                    height: 22px;
+                    colorize: Theme.primary;
+                    x: 14px;
+                    y: 14px;
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 3px;
+            Text {
+                text: playlist.title;
+                color: Theme.text-primary;
+                font-size: 14.5px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: playlist.track_count_text != ""
+                    ? ("Playlist • " + playlist.author + " • " + playlist.track_count_text)
+                    : ("Playlist • " + playlist.author);
+                color: Theme.text-secondary;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/chev_right.svg");
+                width: 18px;
+                height: 18px;
+                colorize: ta.has-hover ? Theme.text-primary : Theme.text-muted;
+            }
+        }
+    }
+}
+
+export component ArtistResultRow inherits Rectangle {
+    in property <ArtistData> artist;
+    callback clicked();
+
+    height: 70px;
+    border-radius: 10px;
+    background: ta.has-hover ? #ffffff10 : #17171a88;
+    animate background { duration: Theme.reduced-motion ? 0ms : 140ms; easing: ease-out; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 14px;
+        spacing: 14px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 50px;
+                height: 50px;
+                border-radius: 25px;
+                background: #23203a;
+                clip: true;
+
+                if artist.has_avatar: Image {
+                    source: artist.avatar;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: cover;
+                }
+                if !artist.has_avatar: Image {
+                    source: @image-url("icons/avatar_default.svg");
+                    width: 100%;
+                    height: 100%;
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 3px;
+            Text {
+                text: artist.name;
+                color: Theme.text-primary;
+                font-size: 14.5px;
+                font-weight: 700;
+                overflow: elide;
+            }
+            Text {
+                text: artist.subtitle;
+                color: Theme.text-secondary;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/chev_right.svg");
+                width: 18px;
+                height: 18px;
+                colorize: ta.has-hover ? Theme.text-primary : Theme.text-muted;
             }
         }
     }

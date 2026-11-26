@@ -27,6 +27,26 @@ pub struct YouTubeTrack {
     pub is_explicit: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct YouTubePlaylist {
+    pub id: String,
+    pub title: String,
+    pub author: String,
+    #[serde(rename = "trackCountText")]
+    pub track_count_text: String,
+    pub thumbnail: String,
+    pub platform: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct YouTubeArtist {
+    pub id: String,
+    pub name: String,
+    pub subtitle: String,
+    pub thumbnail: String,
+    pub platform: String,
+}
+
 #[derive(Clone)]
 pub struct YouTubeClient {
     client: Client,
@@ -181,6 +201,130 @@ impl YouTubeClient {
         let json_val: Value = resp.json().await?;
         let mut tracks = Vec::new();
         collect_music_items(&json_val, limit, &mut tracks);
+        Ok(tracks)
+    }
+
+    async fn post_ytmusic(&self, endpoint: &str, body: Value) -> anyhow::Result<Value> {
+        let resp = self
+            .client
+            .post(format!("https://music.youtube.com/youtubei/v1/{endpoint}?prettyPrint=false"))
+            .header("Content-Type", "application/json")
+            .header("Origin", "https://music.youtube.com")
+            .header("User-Agent", WEB_UA)
+            .json(&body)
+            .timeout(Duration::from_secs(9))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("YouTube Music {endpoint} failed with HTTP {}", resp.status());
+        }
+        Ok(resp.json().await?)
+    }
+
+    /// Searches YouTube Music playlists via InnerTube WEB_REMIX
+    pub async fn search_music_playlists(&self, query: &str, limit: usize) -> anyhow::Result<Vec<YouTubePlaylist>> {
+        let body = json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": "1.20250310.01.00",
+                    "hl": "en",
+                    "gl": "US"
+                }
+            },
+            "query": query,
+            "params": "EgWKAQIoAWoMEA4QChADEAQQCRAF"
+        });
+        let json_val = self.post_ytmusic("search", body).await?;
+        let mut playlists = Vec::new();
+        collect_music_playlists(&json_val, limit, &mut playlists);
+        Ok(playlists)
+    }
+
+    /// Searches YouTube Music artists via InnerTube WEB_REMIX
+    pub async fn search_music_artists(&self, query: &str, limit: usize) -> anyhow::Result<Vec<YouTubeArtist>> {
+        let body = json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": "1.20250310.01.00",
+                    "hl": "en",
+                    "gl": "US"
+                }
+            },
+            "query": query,
+            "params": "EgWKAQIgAWoMEA4QChADEAQQCRAF"
+        });
+        let json_val = self.post_ytmusic("search", body).await?;
+        let mut artists = Vec::new();
+        collect_music_artists(&json_val, limit, &mut artists);
+        Ok(artists)
+    }
+
+    /// Fetches a YouTube Music playlist (title, cover, tracks) via InnerTube browse
+    pub async fn browse_playlist(&self, browse_id: &str, limit: usize) -> anyhow::Result<(String, String, Vec<YouTubeTrack>)> {
+        let normalized_id = if browse_id.starts_with("VL") {
+            browse_id.to_string()
+        } else {
+            format!("VL{browse_id}")
+        };
+        let body = json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": "1.20250310.01.00",
+                    "hl": "en",
+                    "gl": "US"
+                }
+            },
+            "browseId": normalized_id
+        });
+        let json_val = self.post_ytmusic("browse", body).await?;
+        let title = json_val
+            .pointer("/header/musicDetailHeaderRenderer/title/runs/0/text")
+            .or_else(|| json_val.pointer("/header/musicResponsiveHeaderRenderer/title/runs/0/text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Playlist")
+            .to_string();
+        let cover = json_val
+            .pointer("/header/musicDetailHeaderRenderer/thumbnail/croppedSquareThumbnailRenderer/thumbnail/thumbnails")
+            .or_else(|| json_val.pointer("/header/musicResponsiveHeaderRenderer/thumbnail/musicThumbnailRenderer/thumbnail/thumbnails"))
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.last())
+            .and_then(|t| t.get("url"))
+            .and_then(|u| u.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let mut tracks = Vec::new();
+        collect_music_items(&json_val, limit, &mut tracks);
+        Ok((title, cover, tracks))
+    }
+
+    /// Fetches YouTube Music Up Next / Radio recommendations for a seed video ID
+    pub async fn get_radio_recommendations(&self, video_id: &str, limit: usize) -> anyhow::Result<Vec<YouTubeTrack>> {
+        let vid = extract_video_id(video_id);
+        if vid.is_empty() {
+            return Ok(Vec::new());
+        }
+        let body = json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": "1.20250310.01.00",
+                    "hl": "en",
+                    "gl": "US"
+                }
+            },
+            "videoId": vid,
+            "playlistId": format!("RDAMVM{vid}"),
+            "isAudioOnly": true
+        });
+        let json_val = self.post_ytmusic("next", body).await?;
+        let mut tracks = Vec::new();
+        collect_panel_videos(&json_val, limit, &mut tracks);
+        tracks.retain(|t| t.id != vid && (t.duration == 0.0 || t.duration <= 900.0));
         Ok(tracks)
     }
 
@@ -563,6 +707,269 @@ fn parse_music_item(item: &Value) -> Option<YouTubeTrack> {
         platform: "ytmusic".to_string(),
         is_cached: false,
         is_explicit,
+    })
+}
+
+fn collect_music_playlists(val: &Value, limit: usize, out: &mut Vec<YouTubePlaylist>) {
+    if out.len() >= limit {
+        return;
+    }
+    match val {
+        Value::Object(map) => {
+            if let Some(renderer) = map.get("musicResponsiveListItemRenderer") {
+                if let Some(pl) = parse_music_playlist_item(renderer) {
+                    if !out.iter().any(|p| p.id == pl.id) {
+                        out.push(pl);
+                        if out.len() >= limit {
+                            return;
+                        }
+                    }
+                }
+            }
+            for (_, v) in map {
+                collect_music_playlists(v, limit, out);
+                if out.len() >= limit {
+                    return;
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                collect_music_playlists(item, limit, out);
+                if out.len() >= limit {
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_music_playlist_item(item: &Value) -> Option<YouTubePlaylist> {
+    let browse_id = item
+        .pointer("/navigationEndpoint/browseEndpoint/browseId")
+        .or_else(|| item.pointer("/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchPlaylistEndpoint/playlistId"))
+        .and_then(|v| v.as_str())?
+        .to_string();
+    if !browse_id.starts_with("VL") && !browse_id.starts_with("PL") && !browse_id.starts_with("RD") {
+        return None;
+    }
+
+    let columns = item.get("flexColumns")?.as_array()?;
+    let runs_of = |idx: usize| -> Vec<String> {
+        columns
+            .get(idx)
+            .and_then(|c| c.pointer("/musicResponsiveListItemFlexColumnRenderer/text/runs"))
+            .and_then(|r| r.as_array())
+            .map(|runs| {
+                runs.iter()
+                    .filter_map(|r| r.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let title = runs_of(0).join("");
+    if title.trim().is_empty() {
+        return None;
+    }
+
+    let meta = runs_of(1);
+    let segments: Vec<String> = meta
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "•" && !s.eq_ignore_ascii_case("Playlist"))
+        .collect();
+    let author = segments.first().cloned().unwrap_or_else(|| "YouTube Music".to_string());
+    let track_count_text = segments
+        .iter()
+        .find(|s| s.to_ascii_lowercase().contains("song") || s.to_ascii_lowercase().contains("track") || s.to_ascii_lowercase().contains("view"))
+        .cloned()
+        .unwrap_or_default();
+
+    let thumbnail = item
+        .pointer("/thumbnail/musicThumbnailRenderer/thumbnail/thumbnails")
+        .and_then(|t| t.as_array())
+        .and_then(|arr| arr.last())
+        .and_then(|t| t.get("url"))
+        .and_then(|u| u.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    Some(YouTubePlaylist {
+        id: browse_id,
+        title: title.trim().to_string(),
+        author,
+        track_count_text,
+        thumbnail,
+        platform: "ytmusic".to_string(),
+    })
+}
+
+fn collect_music_artists(val: &Value, limit: usize, out: &mut Vec<YouTubeArtist>) {
+    if out.len() >= limit {
+        return;
+    }
+    match val {
+        Value::Object(map) => {
+            if let Some(renderer) = map.get("musicResponsiveListItemRenderer") {
+                if let Some(art) = parse_music_artist_item(renderer) {
+                    if !out.iter().any(|a| a.id == art.id) {
+                        out.push(art);
+                        if out.len() >= limit {
+                            return;
+                        }
+                    }
+                }
+            }
+            for (_, v) in map {
+                collect_music_artists(v, limit, out);
+                if out.len() >= limit {
+                    return;
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                collect_music_artists(item, limit, out);
+                if out.len() >= limit {
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_music_artist_item(item: &Value) -> Option<YouTubeArtist> {
+    let browse_id = item
+        .pointer("/navigationEndpoint/browseEndpoint/browseId")
+        .and_then(|v| v.as_str())?
+        .to_string();
+    if !browse_id.starts_with("UC") {
+        return None;
+    }
+
+    let columns = item.get("flexColumns")?.as_array()?;
+    let runs_of = |idx: usize| -> Vec<String> {
+        columns
+            .get(idx)
+            .and_then(|c| c.pointer("/musicResponsiveListItemFlexColumnRenderer/text/runs"))
+            .and_then(|r| r.as_array())
+            .map(|runs| {
+                runs.iter()
+                    .filter_map(|r| r.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let name = runs_of(0).join("");
+    if name.trim().is_empty() {
+        return None;
+    }
+
+    let subtitle = runs_of(1)
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "•")
+        .collect::<Vec<_>>()
+        .join(" • ");
+
+    let thumbnail = item
+        .pointer("/thumbnail/musicThumbnailRenderer/thumbnail/thumbnails")
+        .and_then(|t| t.as_array())
+        .and_then(|arr| arr.last())
+        .and_then(|t| t.get("url"))
+        .and_then(|u| u.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    Some(YouTubeArtist {
+        id: browse_id,
+        name: name.trim().to_string(),
+        subtitle: if subtitle.is_empty() { "Artist".to_string() } else { subtitle },
+        thumbnail,
+        platform: "ytmusic".to_string(),
+    })
+}
+
+fn collect_panel_videos(val: &Value, limit: usize, out: &mut Vec<YouTubeTrack>) {
+    if out.len() >= limit {
+        return;
+    }
+    match val {
+        Value::Object(map) => {
+            if let Some(renderer) = map.get("playlistPanelVideoRenderer") {
+                if let Some(track) = parse_panel_video_item(renderer) {
+                    if !out.iter().any(|t| t.id == track.id) {
+                        out.push(track);
+                        if out.len() >= limit {
+                            return;
+                        }
+                    }
+                }
+            }
+            for (_, v) in map {
+                collect_panel_videos(v, limit, out);
+                if out.len() >= limit {
+                    return;
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                collect_panel_videos(item, limit, out);
+                if out.len() >= limit {
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_panel_video_item(item: &Value) -> Option<YouTubeTrack> {
+    let video_id = item.get("videoId").and_then(|v| v.as_str())?.to_string();
+    let title = item
+        .pointer("/title/runs")
+        .and_then(|r| r.as_array())
+        .map(|runs| runs.iter().filter_map(|r| r.get("text").and_then(|t| t.as_str())).collect::<String>())
+        .unwrap_or_default();
+    if title.trim().is_empty() {
+        return None;
+    }
+    let artist = item
+        .pointer("/longBylineText/runs/0/text")
+        .or_else(|| item.pointer("/shortBylineText/runs/0/text"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown Artist")
+        .trim()
+        .to_string();
+    let dur_text = item
+        .pointer("/lengthText/runs/0/text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("0:00");
+    let duration = parse_duration_seconds(dur_text);
+    let thumbnail = item
+        .pointer("/thumbnail/thumbnails")
+        .and_then(|t| t.as_array())
+        .and_then(|arr| arr.last())
+        .and_then(|t| t.get("url"))
+        .and_then(|u| u.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    Some(YouTubeTrack {
+        url: format!("https://music.youtube.com/watch?v={video_id}"),
+        id: video_id,
+        title: title.trim().to_string(),
+        artist,
+        duration,
+        thumbnail,
+        platform: "ytmusic".to_string(),
+        is_cached: false,
+        is_explicit: false,
     })
 }
 

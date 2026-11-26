@@ -1328,13 +1328,165 @@ fn show_toast(w_weak: &slint::Weak<MainWindow>, rt: &tokio::runtime::Handle, msg
     });
 }
 
+async fn json_playlists_to_slint(
+    raw: Vec<serde_json::Value>,
+    http: &reqwest::Client,
+) -> Vec<(String, String, String, String, String, String, Option<(u32, u32, Vec<u8>)>)> {
+    let mut rows: Vec<(String, String, String, String, String, String, Option<(u32, u32, Vec<u8>)>)> = raw
+        .into_iter()
+        .filter_map(|v| {
+            let id = v.get("id").and_then(|x| x.as_str())?.to_string();
+            let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("Playlist").to_string();
+            let author = v.get("author").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let count = v.get("trackCountText").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let platform = v.get("platform").and_then(|x| x.as_str()).unwrap_or("ytmusic").to_string();
+            let thumb = v.get("thumbnail").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            Some((id, title, author, count, platform, thumb, None))
+        })
+        .collect();
+
+    let mut set = tokio::task::JoinSet::new();
+    for (idx, row) in rows.iter().enumerate() {
+        if !row.5.is_empty() {
+            let c = http.clone();
+            let u = row.5.clone();
+            set.spawn(async move { (idx, fetch_cover_rgba(&c, &u).await) });
+        }
+    }
+    while let Some(res) = set.join_next().await {
+        if let Ok((idx, rgba)) = res {
+            if let Some(slot) = rows.get_mut(idx) {
+                slot.6 = rgba;
+            }
+        }
+    }
+    rows
+}
+
+fn remote_playlists_to_model(
+    rows: Vec<(String, String, String, String, String, String, Option<(u32, u32, Vec<u8>)>)>,
+) -> ModelRc<RemotePlaylistData> {
+    let data: Vec<RemotePlaylistData> = rows
+        .into_iter()
+        .map(|(id, title, author, track_count_text, platform, thumbnail, rgba)| {
+            let (cover, has_cover) = match rgba {
+                Some((w, h, raw)) => (rgba_to_slint_image(w, h, raw), true),
+                None => (Image::default(), false),
+            };
+            RemotePlaylistData {
+                id: SharedString::from(id),
+                title: SharedString::from(title),
+                author: SharedString::from(author),
+                track_count_text: SharedString::from(track_count_text),
+                platform: SharedString::from(platform),
+                thumbnail: SharedString::from(thumbnail),
+                cover,
+                has_cover,
+            }
+        })
+        .collect();
+    ModelRc::new(VecModel::from(data))
+}
+
+async fn json_artists_to_rows(
+    raw: Vec<serde_json::Value>,
+    http: &reqwest::Client,
+) -> Vec<(String, String, String, String, String, Option<(u32, u32, Vec<u8>)>)> {
+    let mut rows: Vec<(String, String, String, String, String, Option<(u32, u32, Vec<u8>)>)> = raw
+        .into_iter()
+        .filter_map(|v| {
+            let id = v.get("id").and_then(|x| x.as_str())?.to_string();
+            let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("Artist").to_string();
+            let subtitle = v.get("subtitle").and_then(|x| x.as_str()).unwrap_or("Artist").to_string();
+            let platform = v.get("platform").and_then(|x| x.as_str()).unwrap_or("ytmusic").to_string();
+            let thumb = v.get("thumbnail").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            Some((id, name, subtitle, platform, thumb, None))
+        })
+        .collect();
+
+    let mut set = tokio::task::JoinSet::new();
+    for (idx, row) in rows.iter().enumerate() {
+        if !row.4.is_empty() {
+            let c = http.clone();
+            let u = row.4.clone();
+            set.spawn(async move { (idx, fetch_cover_rgba(&c, &u).await) });
+        }
+    }
+    while let Some(res) = set.join_next().await {
+        if let Ok((idx, rgba)) = res {
+            if let Some(slot) = rows.get_mut(idx) {
+                slot.5 = rgba;
+            }
+        }
+    }
+    rows
+}
+
+fn artists_to_model(
+    rows: Vec<(String, String, String, String, String, Option<(u32, u32, Vec<u8>)>)>,
+) -> ModelRc<ArtistData> {
+    let data: Vec<ArtistData> = rows
+        .into_iter()
+        .map(|(id, name, subtitle, platform, thumbnail, rgba)| {
+            let (avatar, has_avatar) = match rgba {
+                Some((w, h, raw)) => (rgba_to_slint_image(w, h, raw), true),
+                None => (Image::default(), false),
+            };
+            ArtistData {
+                id: SharedString::from(id),
+                name: SharedString::from(name),
+                subtitle: SharedString::from(subtitle),
+                platform: SharedString::from(platform),
+                thumbnail: SharedString::from(thumbnail),
+                avatar,
+                has_avatar,
+            }
+        })
+        .collect();
+    ModelRc::new(VecModel::from(data))
+}
+
+async fn push_search_history_entry(
+    api: &riff_core::api::RiffApi,
+    http: &reqwest::Client,
+    cache: &Arc<Mutex<Vec<SavedSearchEntry>>>,
+    w_weak: &slint::Weak<MainWindow>,
+    entry: SavedSearchEntry,
+) {
+    let snapshot = if let Ok(mut g) = cache.lock() {
+        g.retain(|e| e.key != entry.key);
+        g.insert(0, entry);
+        if g.len() > 20 {
+            g.truncate(20);
+        }
+        g.clone()
+    } else {
+        return;
+    };
+    if let Ok(json_str) = serde_json::to_string(&snapshot) {
+        let _ = api.set_setting("slint_search_history", &json_str).await;
+    }
+    let slots = hydrate_search_history(&snapshot, http).await;
+    let w_c = w_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(w) = w_c.upgrade() {
+            w.set_search_history(to_slint_search_history(slots));
+        }
+    });
+}
+
 async fn load_home_sections(
     api: &riff_core::api::RiffApi,
     http: &reqwest::Client,
     fav_ids: &HashSet<String>,
+    seed_artist: Option<&str>,
 ) -> (Vec<TrackItem>, Vec<TrackItem>) {
+    let for_you_query = match seed_artist.map(str::trim).filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("Unknown Artist")) {
+        Some(art) => format!("{art} songs"),
+        None => "popular pop songs 2026".to_string(),
+    };
     let (fy_res, tr_res) = tokio::join!(
-        api.search("popular pop songs 2026", "ytmusic", 14, 0),
+        api.search(&for_you_query, "ytmusic", 14, 0),
         api.search("trending viral songs 2026", "ytmusic", 14, 0),
     );
     let filter_songs = |tracks: Vec<serde_json::Value>| -> Vec<serde_json::Value> {
@@ -1418,6 +1570,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let all_favorites_cache: Arc<Mutex<Vec<TrackItem>>> = Arc::new(Mutex::new(Vec::new()));
     let fav_filter_query: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let fav_sort_mode: Arc<Mutex<String>> = Arc::new(Mutex::new("Default".to_string()));
+    let autoplay_enabled_state = Arc::new(AtomicBool::new(true));
+    let autoplay_mode_state: Arc<Mutex<String>> = Arc::new(Mutex::new("similar".to_string()));
+    let recommended_cache: Arc<Mutex<Vec<TrackItem>>> = Arc::new(Mutex::new(Vec::new()));
+    let active_remote_playlist_cache: Arc<Mutex<(String, Vec<TrackItem>)>> = Arc::new(Mutex::new((String::new(), Vec::new())));
 
     // 1. Initial Data Load (Library, Favorites, History, Playlists, Home Feed)
     let api_init = api.clone();
@@ -1429,6 +1585,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let sh_init = search_history_cache.clone();
     let all_lib_init = all_library_cache.clone();
     let all_fav_init = all_favorites_cache.clone();
+    let ap_en_init = autoplay_enabled_state.clone();
+    let ap_mode_init = autoplay_mode_state.clone();
 
     rt_handle.spawn(async move {
         let (lib_res, fav_res, hist_res, pls_res, kv_res) = tokio::join!(
@@ -1469,6 +1627,19 @@ pub fn run() -> Result<(), slint::PlatformError> {
             .get("slint_search_history")
             .and_then(|s| serde_json::from_str::<Vec<SavedSearchEntry>>(s).ok())
             .unwrap_or_default();
+        let seed_artist = hist_tracks
+            .first()
+            .or_else(|| fav_tracks.first())
+            .map(|t| t.artist.clone());
+
+        if let Some(v) = kv_map.get("slint_autoplay_enabled") {
+            ap_en_init.store(v != "0", Ordering::SeqCst);
+        }
+        if let Some(v) = kv_map.get("slint_autoplay_mode") {
+            if let Ok(mut m) = ap_mode_init.lock() {
+                *m = v.clone();
+            }
+        }
 
         let (_, _, sh_slots) = tokio::join!(
             hydrate_track_covers(&mut fav_items, &http_init),
@@ -1523,6 +1694,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 }
                 if let Some(v) = kv_map.get("slint_search_platform") {
                     w.set_search_platform(SharedString::from(v.as_str()));
+                }
+                w.set_autoplay_enabled(ap_en_init.load(Ordering::SeqCst));
+                if let Ok(m) = ap_mode_init.lock() {
+                    w.set_autoplay_mode(SharedString::from(m.as_str()));
                 }
                 if let Some(v) = kv_map.get("slint_lyrics_source") {
                     w.set_lyrics_source(SharedString::from(v.as_str()));
@@ -1599,7 +1774,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
 
         // Load Home sections ("For you" & "Trending now") with cover art
-        let (fy_items, tr_items) = load_home_sections(&api_init, &http_init, &fav_ids).await;
+        let (fy_items, tr_items) = load_home_sections(&api_init, &http_init, &fav_ids, seed_artist.as_deref()).await;
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = w_init.upgrade() {
                 w.set_home_for_you(to_slint_model(fy_items));
@@ -1618,9 +1793,15 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let http_r = http_ref.clone();
         let w_r = w_ref.clone();
         rt_ref.spawn(async move {
-            let favs = api_r.get_favorites().await.unwrap_or_default();
+            let (favs, hist) = tokio::join!(api_r.get_favorites(), api_r.get_history());
+            let favs = favs.unwrap_or_default();
+            let hist = hist.unwrap_or_default();
             let fav_ids: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
-            let (fy_items, tr_items) = load_home_sections(&api_r, &http_r, &fav_ids).await;
+            let seed_art = hist
+                .first()
+                .or_else(|| favs.first())
+                .map(|t| t.artist.clone());
+            let (fy_items, tr_items) = load_home_sections(&api_r, &http_r, &fav_ids, seed_art.as_deref()).await;
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = w_r.upgrade() {
                     w.set_home_for_you(to_slint_model(fy_items));
@@ -1640,12 +1821,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let eof_play = eof_handled.clone();
     let gen_play = play_generation.clone();
     let rt_play = rt_handle.clone();
+    let sh_play = search_history_cache.clone();
+    let ap_en_play = autoplay_enabled_state.clone();
+    let ap_mode_play = autoplay_mode_state.clone();
+    let rec_play = recommended_cache.clone();
 
     main_window.on_play_track(move |track| {
         eof_play.store(false, Ordering::SeqCst);
         let my_gen = gen_play.fetch_add(1, Ordering::SeqCst) + 1;
         let t_thumb = track.thumbnail.to_string();
         let has_cov = track.has_cover;
+        let from_search = w_play.upgrade().map(|w| w.get_active_tab() == 1).unwrap_or(false);
 
         if let Some(w) = w_play.upgrade() {
             w.set_current_id(track.id.clone());
@@ -1655,6 +1841,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             w.set_current_platform(track.platform.clone());
             w.set_current_thumbnail(track.thumbnail.clone());
             w.set_current_is_favorite(track.is_favorite);
+            w.set_is_buffering(true);
             w.set_active_lyric_index(-1);
             w.set_current_pos(0.0);
             w.set_pos_text(SharedString::from("0:00"));
@@ -1721,13 +1908,31 @@ pub fn run() -> Result<(), slint::PlatformError> {
         if let (Ok(mut pl), Ok(mut idx)) = (pl_play.lock(), cur_idx_play.lock()) {
             if let Some(pos) = pl.iter().position(|t| t.id == track.id.as_str()) {
                 *idx = pos;
-            } else {
-                pl.insert(0, track_data_to_item(&track));
-                *idx = 0;
-            }
-            let q_clone = pl.clone();
-            if let Some(w) = w_play.upgrade() {
-                w.set_queue_tracks(to_slint_model(q_clone));
+            } else if let Some(w) = w_play.upgrade() {
+                let context_list: Vec<TrackData> = match w.get_active_tab() {
+                    1 => w.get_search_results().iter().collect(),
+                    2 => w.get_library_tracks().iter().collect(),
+                    3 => w.get_favorite_tracks().iter().collect(),
+                    4 => w.get_history_tracks().iter().collect(),
+                    6 => w.get_active_playlist_tracks().iter().collect(),
+                    7 => w.get_artist_view_tracks().iter().collect(),
+                    _ => {
+                        let fy: Vec<TrackData> = w.get_home_for_you().iter().collect();
+                        if fy.iter().any(|t| t.id == track.id) {
+                            fy
+                        } else {
+                            w.get_home_trending().iter().collect()
+                        }
+                    }
+                };
+                if let Some(cpos) = context_list.iter().position(|t| t.id == track.id) {
+                    *pl = context_list.iter().map(track_data_to_item).collect();
+                    *idx = cpos;
+                } else {
+                    pl.insert(0, track_data_to_item(&track));
+                    *idx = 0;
+                }
+                w.set_queue_tracks(to_slint_model(pl.clone()));
             }
         }
 
@@ -1785,9 +1990,87 @@ pub fn run() -> Result<(), slint::PlatformError> {
             word_src,
         );
 
+        // Record played track into persistent Search History when launched from Search
+        if from_search && !track.id.is_empty() {
+            let api_sh = api_play.clone();
+            let http_sh = http_play.clone();
+            let sh_c = sh_play.clone();
+            let w_sh = w_play.clone();
+            let entry = SavedSearchEntry {
+                key: format!("t:{}", track.id),
+                kind: "track".to_string(),
+                title: track.title.to_string(),
+                subtitle: track.artist.to_string(),
+                track_id: track.id.to_string(),
+                platform: track.platform.to_string(),
+                thumbnail: track.thumbnail.to_string(),
+                duration_sec: track.duration_sec as f64,
+            };
+            rt_play.spawn(async move {
+                push_search_history_entry(&api_sh, &http_sh, &sh_c, &w_sh, entry).await;
+            });
+        }
+
+        // Refresh Autoplay recommendations in background
+        if ap_en_play.load(Ordering::SeqCst) && !track.id.starts_with("local_") && !PathBuf::from(track.id.as_str()).is_file() {
+            let api_rec = api_play.clone();
+            let http_rec = http_play.clone();
+            let rec_c = rec_play.clone();
+            let pl_rec = pl_play.clone();
+            let w_rec = w_play.clone();
+            let mode = ap_mode_play.lock().map(|g| g.clone()).unwrap_or_else(|_| "similar".to_string());
+            let s_id = track.id.to_string();
+            let s_title = track.title.to_string();
+            let s_artist = track.artist.to_string();
+            let s_plat = track.platform.to_string();
+            rt_play.spawn(async move {
+                if let Some(w) = w_rec.upgrade() {
+                    let _ = slint::invoke_from_event_loop({
+                        let w_l = w_rec.clone();
+                        move || {
+                            if let Some(w2) = w_l.upgrade() {
+                                w2.set_autoplay_loading(true);
+                            }
+                        }
+                    });
+                    let _ = w;
+                }
+                let mut exclude: Vec<String> = pl_rec
+                    .lock()
+                    .map(|g| g.iter().map(|t| t.id.clone()).collect())
+                    .unwrap_or_default();
+                if let Ok(hist) = api_rec.get_history().await {
+                    for h in hist.into_iter().take(25) {
+                        if !exclude.contains(&h.id) {
+                            exclude.push(h.id);
+                        }
+                    }
+                }
+                let raw = api_rec
+                    .get_recommendations(&s_id, &s_title, &s_artist, &s_plat, &mode, &exclude, 10)
+                    .await
+                    .unwrap_or_default();
+                let favs = api_rec.get_favorites().await.unwrap_or_default();
+                let fav_set: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+                let items = json_tracks_to_items(raw, &http_rec, &fav_set, &s_plat).await;
+                if let Ok(mut g) = rec_c.lock() {
+                    *g = items.clone();
+                }
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_rec.upgrade() {
+                        w.set_autoplay_loading(false);
+                        w.set_recommended_tracks(to_slint_model(items));
+                    }
+                });
+            });
+        }
+
         // Play audio (local file or stream)
         let path = PathBuf::from(track.id.as_str());
         if path.is_file() {
+            if let Some(w) = w_play.upgrade() {
+                w.set_is_buffering(false);
+            }
             api_play.play_file(path, Some(core_track));
             show_toast(&w_play, &rt_play, format!("Playing: {}", track.title));
         } else {
@@ -1855,21 +2138,45 @@ pub fn run() -> Result<(), slint::PlatformError> {
                             match download_stream_bytes(&http_str, url, is_hls).await {
                                 Ok((bytes, hint)) => {
                                     if gen_str.load(Ordering::SeqCst) == my_gen {
+                                        let w_b = w_str.clone();
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            if let Some(w) = w_b.upgrade() {
+                                                w.set_is_buffering(false);
+                                            }
+                                        });
                                         api_str.play_bytes(bytes, hint, Some(ct_clone));
                                         show_toast(&w_str, &rt_str, format!("Playing: {s_title}"));
                                     }
                                 }
                                 Err(err) => {
+                                    let w_b = w_str.clone();
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        if let Some(w) = w_b.upgrade() {
+                                            w.set_is_buffering(false);
+                                        }
+                                    });
                                     tracing::warn!("Stream download failed for '{}': {}", s_title, err);
                                     show_toast(&w_str, &rt_str, format!("Playback error: {err}"));
                                 }
                             }
                         } else {
+                            let w_b = w_str.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(w) = w_b.upgrade() {
+                                    w.set_is_buffering(false);
+                                }
+                            });
                             tracing::warn!("No playable stream URL resolved for '{}'", s_title);
                             show_toast(&w_str, &rt_str, "Playback error: No stream URL found");
                         }
                     }
                     Err(err) => {
+                        let w_b = w_str.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w_b.upgrade() {
+                                w.set_is_buffering(false);
+                            }
+                        });
                         tracing::warn!("resolve_stream failed for '{}': {}", s_title, err);
                         show_toast(&w_str, &rt_str, format!("Stream error: {err}"));
                     }
@@ -1936,13 +2243,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let pl_next = playlist_cache.clone();
     let cur_idx_next = current_index.clone();
     let shuf_next = shuffle_state.clone();
+    let rep_next = repeat_state.clone();
+    let ap_en_next = autoplay_enabled_state.clone();
+    let rec_next = recommended_cache.clone();
     let w_next = window_weak.clone();
 
     main_window.on_play_next(move || {
-        let target = if let (Ok(pl), Ok(mut idx)) = (pl_next.lock(), cur_idx_next.lock()) {
-            if pl.is_empty() {
-                None
-            } else {
+        let rep_mode = rep_next.load(Ordering::SeqCst);
+        let mut target: Option<TrackItem> = None;
+        let mut updated_queue: Option<Vec<TrackItem>> = None;
+
+        if let (Ok(mut pl), Ok(mut idx)) = (pl_next.lock(), cur_idx_next.lock()) {
+            if !pl.is_empty() {
                 if shuf_next.load(Ordering::SeqCst) && pl.len() > 1 {
                     let nanos = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -1953,16 +2265,45 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         next_i = (*idx + 1) % pl.len();
                     }
                     *idx = next_i;
-                } else {
-                    *idx = (*idx + 1) % pl.len();
+                    target = pl.get(*idx).cloned();
+                } else if *idx + 1 < pl.len() {
+                    *idx += 1;
+                    target = pl.get(*idx).cloned();
+                } else if rep_mode == 1 {
+                    *idx = 0;
+                    target = pl.get(0).cloned();
+                } else if ap_en_next.load(Ordering::SeqCst) {
+                    if let Ok(mut rec) = rec_next.lock() {
+                        if !rec.is_empty() {
+                            let next_rec = rec.remove(0);
+                            pl.push(next_rec.clone());
+                            *idx = pl.len() - 1;
+                            target = Some(next_rec);
+                            updated_queue = Some(pl.clone());
+                        }
+                    }
                 }
-                pl.get(*idx).cloned()
+            } else if ap_en_next.load(Ordering::SeqCst) {
+                if let Ok(mut rec) = rec_next.lock() {
+                    if !rec.is_empty() {
+                        let next_rec = rec.remove(0);
+                        pl.push(next_rec.clone());
+                        *idx = 0;
+                        target = Some(next_rec);
+                        updated_queue = Some(pl.clone());
+                    }
+                }
             }
-        } else {
-            None
-        };
-        if let Some(item) = target {
-            if let Some(w) = w_next.upgrade() {
+        }
+
+        if let Some(w) = w_next.upgrade() {
+            if let Some(q) = updated_queue {
+                w.set_queue_tracks(to_slint_model(q));
+            }
+            if let Ok(rec) = rec_next.lock() {
+                w.set_recommended_tracks(to_slint_model(rec.clone()));
+            }
+            if let Some(item) = target {
                 w.invoke_play_track(item.into_slint());
             }
         }
@@ -2101,7 +2442,6 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let api_search = api.clone();
     let http_search = http.clone();
     let w_search = window_weak.clone();
-    let pl_search = playlist_cache.clone();
     let sh_search = search_history_cache.clone();
     let rt_search = rt_handle.clone();
 
@@ -2114,11 +2454,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let api_s = api_search.clone();
         let http_s = http_search.clone();
         let w_s = w_search.clone();
-        let pl_s = pl_search.clone();
         let sh_s = sh_search.clone();
 
         if let Some(w) = w_s.upgrade() {
             w.set_is_searching(true);
+            w.set_has_searched(true);
+            w.set_search_error(SharedString::default());
             w.set_search_history_open(false);
         }
 
@@ -2136,38 +2477,39 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 thumbnail: String::new(),
                 duration_sec: 0.0,
             };
-            let sh_snapshot = if let Ok(mut g) = sh_s.lock() {
-                g.retain(|e| e.key != entry.key);
-                g.insert(0, entry);
-                if g.len() > 20 {
-                    g.truncate(20);
-                }
-                g.clone()
-            } else {
-                Vec::new()
-            };
-            if let Ok(json_str) = serde_json::to_string(&sh_snapshot) {
-                let _ = api_s.set_setting("slint_search_history", &json_str).await;
-            }
-            let sh_slots = hydrate_search_history(&sh_snapshot, &http_s).await;
+            push_search_history_entry(&api_s, &http_s, &sh_s, &w_s, entry).await;
 
-            let items = if let Ok((tracks, _)) = api_s.search(&query, search_platform, 25, 0).await {
+            let (songs_res, pl_res, art_res) = tokio::join!(
+                api_s.search(&query, search_platform, 25, 0),
+                api_s.search_playlists(&query, search_platform, 8),
+                api_s.search_artists(&query, search_platform, 6),
+            );
+
+            let err_msg = match &songs_res {
+                Err(e) => e.to_string(),
+                Ok(_) => String::new(),
+            };
+
+            let items = if let Ok((tracks, _)) = songs_res {
                 let favs = api_s.get_favorites().await.unwrap_or_default();
                 let fav_set: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
-                let items = json_tracks_to_items(tracks, &http_s, &fav_set, search_platform).await;
-                if let Ok(mut pl) = pl_s.lock() {
-                    *pl = items.clone();
-                }
-                items
+                json_tracks_to_items(tracks, &http_s, &fav_set, search_platform).await
             } else {
                 Vec::new()
             };
+
+            let (pl_rows, art_rows) = tokio::join!(
+                json_playlists_to_slint(pl_res.unwrap_or_default(), &http_s),
+                json_artists_to_rows(art_res.unwrap_or_default(), &http_s),
+            );
 
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = w_s.upgrade() {
                     w.set_is_searching(false);
+                    w.set_search_error(SharedString::from(&err_msg));
                     w.set_search_results(to_slint_model(items));
-                    w.set_search_history(to_slint_search_history(sh_slots));
+                    w.set_search_playlist_results(remote_playlists_to_model(pl_rows));
+                    w.set_search_artist_results(artists_to_model(art_rows));
                 }
             });
         });
@@ -2674,6 +3016,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     if let Some(w) = w_o.upgrade() {
                         w.set_active_playlist_id(SharedString::from(&pl_id));
                         w.set_active_playlist_name(SharedString::from(&pl_name));
+                        w.set_active_playlist_is_remote(false);
+                        w.set_active_playlist_loading(false);
                         w.set_active_playlist_tracks(to_slint_model(items));
                         if let Ok(mut nav) = nh.lock() {
                             nav.push(6);
@@ -2789,10 +3133,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
 
     let pl_clrq = playlist_cache.clone();
+    let idx_clrq = current_index.clone();
     let w_clrq = window_weak.clone();
     main_window.on_clear_queue(move || {
         if let Ok(mut pl) = pl_clrq.lock() {
             pl.clear();
+        }
+        if let Ok(mut idx) = idx_clrq.lock() {
+            *idx = 0;
         }
         if let Some(w) = w_clrq.upgrade() {
             w.set_queue_tracks(ModelRc::new(VecModel::from(Vec::new())));
@@ -3107,6 +3455,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     has_cover: entry.has_cover,
                 };
                 w.invoke_play_track(td);
+            } else if entry.kind == "artist" {
+                w.invoke_open_artist_name(entry.title);
             } else {
                 let plat = if entry.platform.is_empty() {
                     w.get_search_platform()
@@ -3312,6 +3662,458 @@ pub fn run() -> Result<(), slint::PlatformError> {
         show_toast(&w_fav_srt, &rt_fav_srt, format!("Sort: {next_mode}"));
     });
 
+    // 13d. Queue Item Add/Remove, Local/Playlist Track Removal, Remote Playlist Open/Save, Artist View & Autoplay
+    let pl_addq = playlist_cache.clone();
+    let w_addq = window_weak.clone();
+    let rt_addq = rt_handle.clone();
+    main_window.on_add_to_queue(move |td| {
+        let title = td.title.to_string();
+        let tid = td.id.to_string();
+        let item = track_data_to_item(&td);
+        let mut already = false;
+        if let Ok(mut pl) = pl_addq.lock() {
+            if pl.iter().any(|t| t.id == tid) {
+                already = true;
+            } else {
+                pl.push(item);
+                let snapshot = pl.clone();
+                if let Some(w) = w_addq.upgrade() {
+                    w.set_queue_tracks(to_slint_model(snapshot));
+                }
+            }
+        }
+        if already {
+            show_toast(&w_addq, &rt_addq, format!("Already in queue: {title}"));
+        } else {
+            show_toast(&w_addq, &rt_addq, format!("Added to queue: {title}"));
+        }
+    });
+
+    let pl_rmq = playlist_cache.clone();
+    let idx_rmq = current_index.clone();
+    let w_rmq = window_weak.clone();
+    main_window.on_remove_queue_at(move |i| {
+        let pos = i as usize;
+        if let (Ok(mut pl), Ok(mut idx)) = (pl_rmq.lock(), idx_rmq.lock()) {
+            if pos < pl.len() {
+                pl.remove(pos);
+                if *idx >= pl.len() && !pl.is_empty() {
+                    *idx = pl.len() - 1;
+                }
+                let snapshot = pl.clone();
+                if let Some(w) = w_rmq.upgrade() {
+                    w.set_queue_tracks(to_slint_model(snapshot));
+                }
+            }
+        }
+    });
+
+    let api_rm_loc = api.clone();
+    let all_lib_rm = all_library_cache.clone();
+    let w_rm_loc = window_weak.clone();
+    let rt_rm_loc = rt_handle.clone();
+    main_window.on_remove_local_track(move |td| {
+        let id = td.id.to_string();
+        let title = td.title.to_string();
+        let api_r = api_rm_loc.clone();
+        let lc = all_lib_rm.clone();
+        let w_r = w_rm_loc.clone();
+        let rt_r = rt_rm_loc.clone();
+        rt_rm_loc.spawn(async move {
+            let tracks = api_r.list_library().await.unwrap_or_default();
+            let target_id = tracks
+                .iter()
+                .find(|t| t.id == id || t.path == id)
+                .map(|t| t.id.clone())
+                .unwrap_or_else(|| id.clone());
+            let _ = api_r.remove_from_library(&target_id).await;
+            let updated = api_r.list_library().await.unwrap_or_default();
+            let favs = api_r.get_favorites().await.unwrap_or_default();
+            let fav_set: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+            let items: Vec<TrackItem> = updated
+                .iter()
+                .map(|t| {
+                    let mut item = TrackItem::from_core(t, "local", fav_set.contains(&t.id));
+                    if !t.path.is_empty() {
+                        item.id = t.path.clone();
+                    }
+                    item
+                })
+                .collect();
+            if let Ok(mut g) = lc.lock() {
+                *g = items.clone();
+            }
+            let w_toast = w_r.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_r.upgrade() {
+                    w.set_library_tracks(to_slint_model(items));
+                }
+            });
+            show_toast(&w_toast, &rt_r, format!("Removed from library: {title}"));
+        });
+    });
+
+    let api_rm_pl = api.clone();
+    let http_rm_pl = http.clone();
+    let all_pls_rm = all_playlists_cache.clone();
+    let w_rm_pl = window_weak.clone();
+    let rt_rm_pl = rt_handle.clone();
+    main_window.on_remove_track_from_playlist(move |pid, tid| {
+        let pid_s = pid.to_string();
+        let tid_s = tid.to_string();
+        let api_r = api_rm_pl.clone();
+        let http_r = http_rm_pl.clone();
+        let apc = all_pls_rm.clone();
+        let w_r = w_rm_pl.clone();
+        let rt_r = rt_rm_pl.clone();
+        rt_rm_pl.spawn(async move {
+            let _ = api_r.remove_track_from_playlist(&pid_s, &tid_s).await;
+            let all = api_r.get_playlists().await.unwrap_or_default();
+            let favs = api_r.get_favorites().await.unwrap_or_default();
+            let fav_ids: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+            if let Ok(mut g) = apc.lock() {
+                *g = all.clone();
+            }
+            let items = if let Some(pl) = all.iter().find(|p| p.id == pid_s) {
+                let mut items: Vec<TrackItem> = pl
+                    .tracks
+                    .iter()
+                    .map(|t| TrackItem::from_core(t, infer_platform_for_track(t), fav_ids.contains(&t.id)))
+                    .collect();
+                hydrate_track_covers(&mut items, &http_r).await;
+                items
+            } else {
+                Vec::new()
+            };
+            let w_toast = w_r.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_r.upgrade() {
+                    w.set_playlists(playlists_to_slint(&all));
+                    w.set_active_playlist_tracks(to_slint_model(items));
+                }
+            });
+            show_toast(&w_toast, &rt_r, "Removed track from playlist");
+        });
+    });
+
+    let api_rpl = api.clone();
+    let http_rpl = http.clone();
+    let w_rpl = window_weak.clone();
+    let nav_rpl = nav_history.clone();
+    let rem_pl_cache = active_remote_playlist_cache.clone();
+    let rt_rpl = rt_handle.clone();
+    main_window.on_open_remote_playlist(move |rpl| {
+        let pid = rpl.id.to_string();
+        let pname = rpl.title.to_string();
+        let plat = rpl.platform.to_string();
+        let api_o = api_rpl.clone();
+        let http_o = http_rpl.clone();
+        let w_o = w_rpl.clone();
+        let nh = nav_rpl.clone();
+        let rc = rem_pl_cache.clone();
+
+        if let Some(w) = w_o.upgrade() {
+            w.set_active_playlist_id(SharedString::from(&pid));
+            w.set_active_playlist_name(SharedString::from(&pname));
+            w.set_active_playlist_is_remote(true);
+            w.set_active_playlist_loading(true);
+            w.set_active_playlist_tracks(ModelRc::new(VecModel::from(Vec::new())));
+            if let Ok(mut nav) = nh.lock() {
+                nav.push(6);
+                w.set_can_go_back(nav.can_back());
+                w.set_can_go_forward(nav.can_forward());
+            }
+            w.set_active_tab(6);
+        }
+
+        rt_rpl.spawn(async move {
+            let (title, _cover, raw_tracks) = api_o
+                .fetch_remote_playlist(&pid, &plat)
+                .await
+                .unwrap_or_else(|_| (pname.clone(), String::new(), Vec::new()));
+            let favs = api_o.get_favorites().await.unwrap_or_default();
+            let fav_ids: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+            let items = json_tracks_to_items(raw_tracks, &http_o, &fav_ids, &plat).await;
+            let final_name = if title.trim().is_empty() { pname } else { title };
+            if let Ok(mut g) = rc.lock() {
+                *g = (final_name.clone(), items.clone());
+            }
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_o.upgrade() {
+                    w.set_active_playlist_name(SharedString::from(&final_name));
+                    w.set_active_playlist_loading(false);
+                    w.set_active_playlist_tracks(to_slint_model(items));
+                }
+            });
+        });
+    });
+
+    let api_spl = api.clone();
+    let rem_spl_cache = active_remote_playlist_cache.clone();
+    let all_pls_spl = all_playlists_cache.clone();
+    let w_spl = window_weak.clone();
+    let rt_spl = rt_handle.clone();
+    main_window.on_save_remote_playlist(move || {
+        let (name, items) = rem_spl_cache
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| ("Playlist".to_string(), Vec::new()));
+        if items.is_empty() {
+            return;
+        }
+        let tracks: Vec<riff_core::models::Track> = items
+            .iter()
+            .map(|i| riff_core::models::Track {
+                id: i.id.clone(),
+                path: i.id.clone(),
+                file: i.title.clone(),
+                title: i.title.clone(),
+                artist: i.artist.clone(),
+                album: if i.album.is_empty() { None } else { Some(i.album.clone()) },
+                duration: i.duration_sec,
+                thumbnail: i.thumbnail.clone(),
+                added_at: 0,
+                updated_at: 0,
+            })
+            .collect();
+        let api_s = api_spl.clone();
+        let apc = all_pls_spl.clone();
+        let w_s = w_spl.clone();
+        let rt_s = rt_spl.clone();
+        rt_spl.spawn(async move {
+            if let Ok(saved) = api_s.save_playlist_with_tracks(&name, tracks).await {
+                let all = api_s.get_playlists().await.unwrap_or_default();
+                if let Ok(mut g) = apc.lock() {
+                    *g = all.clone();
+                }
+                let w_toast = w_s.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_s.upgrade() {
+                        w.set_playlists(playlists_to_slint(&all));
+                        w.set_active_playlist_id(SharedString::from(&saved.id));
+                        w.set_active_playlist_is_remote(false);
+                    }
+                });
+                show_toast(&w_toast, &rt_s, format!("Saved playlist: {name}"));
+            }
+        });
+    });
+
+    let open_artist_impl = {
+        let api_a = api.clone();
+        let http_a = http.clone();
+        let w_a = window_weak.clone();
+        let nav_a = nav_history.clone();
+        let sh_a = search_history_cache.clone();
+        let rt_a = rt_handle.clone();
+        move |name: String, aid: Option<String>, plat: String, from_search: bool| {
+            let clean = name.trim().to_string();
+            if clean.is_empty() || clean.eq_ignore_ascii_case("Unknown Artist") || clean.eq_ignore_ascii_case("Select a track to listen") {
+                return;
+            }
+            if let Some(w) = w_a.upgrade() {
+                w.set_artist_view_name(SharedString::from(&clean));
+                w.set_artist_view_subtitle(SharedString::from("Loading..."));
+                w.set_artist_view_has_avatar(false);
+                w.set_artist_view_loading(true);
+                w.set_artist_view_tracks(ModelRc::new(VecModel::from(Vec::new())));
+                if let Ok(mut nav) = nav_a.lock() {
+                    nav.push(7);
+                    w.set_can_go_back(nav.can_back());
+                    w.set_can_go_forward(nav.can_forward());
+                }
+                w.set_active_tab(7);
+            }
+            let api_c = api_a.clone();
+            let http_c = http_a.clone();
+            let w_c = w_a.clone();
+            let sh_c = sh_a.clone();
+            rt_a.spawn(async move {
+                let (resolved_name, subtitle, avatar_url, raw_tracks) = api_c
+                    .fetch_artist_profile(&clean, aid.as_deref(), &plat)
+                    .await
+                    .unwrap_or_else(|_| (clean.clone(), "Artist".to_string(), String::new(), Vec::new()));
+
+                let (favs, avatar_rgba) = tokio::join!(
+                    api_c.get_favorites(),
+                    fetch_cover_rgba(&http_c, &avatar_url),
+                );
+                let favs = favs.unwrap_or_default();
+                let fav_set: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+                let items = json_tracks_to_items(raw_tracks, &http_c, &fav_set, &plat).await;
+
+                if from_search {
+                    let entry = SavedSearchEntry {
+                        key: format!("a:{}", resolved_name.to_ascii_lowercase()),
+                        kind: "artist".to_string(),
+                        title: resolved_name.clone(),
+                        subtitle: subtitle.clone(),
+                        track_id: String::new(),
+                        platform: plat.clone(),
+                        thumbnail: avatar_url.clone(),
+                        duration_sec: 0.0,
+                    };
+                    push_search_history_entry(&api_c, &http_c, &sh_c, &w_c, entry).await;
+                }
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_c.upgrade() {
+                        w.set_artist_view_name(SharedString::from(&resolved_name));
+                        w.set_artist_view_subtitle(SharedString::from(&subtitle));
+                        if let Some((aw, ah, araw)) = avatar_rgba {
+                            w.set_artist_view_avatar(rgba_to_slint_image(aw, ah, araw));
+                            w.set_artist_view_has_avatar(true);
+                        }
+                        w.set_artist_view_loading(false);
+                        w.set_artist_view_tracks(to_slint_model(items));
+                    }
+                });
+            });
+        }
+    };
+
+    let oa_card = open_artist_impl.clone();
+    main_window.on_open_artist(move |art| {
+        oa_card(
+            art.name.to_string(),
+            Some(art.id.to_string()),
+            art.platform.to_string(),
+            true,
+        );
+    });
+
+    let oa_name = open_artist_impl;
+    let w_oan = window_weak.clone();
+    main_window.on_open_artist_name(move |name| {
+        let (plat, from_search) = w_oan
+            .upgrade()
+            .map(|w| (w.get_search_platform().to_string(), w.get_active_tab() == 1))
+            .unwrap_or_else(|| ("ytmusic".to_string(), false));
+        oa_name(name.to_string(), None, plat, from_search);
+    });
+
+    let pl_art_all = playlist_cache.clone();
+    let idx_art_all = current_index.clone();
+    let shuf_art_all = shuffle_state.clone();
+    let w_art_all = window_weak.clone();
+    main_window.on_play_artist_all(move |shuffle| {
+        if let Some(w) = w_art_all.upgrade() {
+            let tracks: Vec<TrackData> = w.get_artist_view_tracks().iter().collect();
+            if tracks.is_empty() {
+                return;
+            }
+            shuf_art_all.store(shuffle, Ordering::SeqCst);
+            w.set_shuffle_on(shuffle);
+            let items: Vec<TrackItem> = tracks.iter().map(track_data_to_item).collect();
+            if let Ok(mut pl) = pl_art_all.lock() {
+                *pl = items.clone();
+            }
+            if let Ok(mut idx) = idx_art_all.lock() {
+                *idx = 0;
+            }
+            w.set_queue_tracks(to_slint_model(items));
+            w.invoke_play_track(tracks[0].clone());
+        }
+    });
+
+    let ap_en_cb = autoplay_enabled_state.clone();
+    let api_ap_en = api.clone();
+    let rt_ap_en = rt_handle.clone();
+    let w_ap_en = window_weak.clone();
+    main_window.on_toggle_autoplay(move |on| {
+        ap_en_cb.store(on, Ordering::SeqCst);
+        if let Some(w) = w_ap_en.upgrade() {
+            w.set_autoplay_enabled(on);
+        }
+        let api_s = api_ap_en.clone();
+        let val = if on { "1" } else { "0" };
+        rt_ap_en.spawn(async move {
+            let _ = api_s.set_setting("slint_autoplay_enabled", val).await;
+        });
+        if on {
+            if let Some(w) = w_ap_en.upgrade() {
+                w.invoke_refresh_recommendations();
+            }
+        }
+    });
+
+    let ap_mode_cb = autoplay_mode_state.clone();
+    let api_ap_mode = api.clone();
+    let rt_ap_mode = rt_handle.clone();
+    let w_ap_mode = window_weak.clone();
+    main_window.on_change_autoplay_mode(move |mode| {
+        let m = mode.to_string();
+        if let Ok(mut g) = ap_mode_cb.lock() {
+            *g = m.clone();
+        }
+        if let Some(w) = w_ap_mode.upgrade() {
+            w.set_autoplay_mode(mode);
+        }
+        let api_s = api_ap_mode.clone();
+        rt_ap_mode.spawn(async move {
+            let _ = api_s.set_setting("slint_autoplay_mode", &m).await;
+        });
+        if let Some(w) = w_ap_mode.upgrade() {
+            w.invoke_refresh_recommendations();
+        }
+    });
+
+    let api_ref_rec = api.clone();
+    let http_ref_rec = http.clone();
+    let rec_ref_c = recommended_cache.clone();
+    let pl_ref_rec = playlist_cache.clone();
+    let ap_mode_ref = autoplay_mode_state.clone();
+    let w_ref_rec = window_weak.clone();
+    let rt_ref_rec = rt_handle.clone();
+    main_window.on_refresh_recommendations(move || {
+        let Some(w) = w_ref_rec.upgrade() else {
+            return;
+        };
+        let s_id = w.get_current_id().to_string();
+        let s_title = w.get_current_title().to_string();
+        let s_artist = w.get_current_artist().to_string();
+        let s_plat = w.get_current_platform().to_string();
+        if s_id.is_empty() {
+            return;
+        }
+        w.set_autoplay_loading(true);
+        let api_r = api_ref_rec.clone();
+        let http_r = http_ref_rec.clone();
+        let rec_c = rec_ref_c.clone();
+        let pl_r = pl_ref_rec.clone();
+        let w_r = w_ref_rec.clone();
+        let mode = ap_mode_ref.lock().map(|g| g.clone()).unwrap_or_else(|_| "similar".to_string());
+        rt_ref_rec.spawn(async move {
+            let mut exclude: Vec<String> = pl_r
+                .lock()
+                .map(|g| g.iter().map(|t| t.id.clone()).collect())
+                .unwrap_or_default();
+            if let Ok(hist) = api_r.get_history().await {
+                for h in hist.into_iter().take(25) {
+                    if !exclude.contains(&h.id) {
+                        exclude.push(h.id);
+                    }
+                }
+            }
+            let raw = api_r
+                .get_recommendations(&s_id, &s_title, &s_artist, &s_plat, &mode, &exclude, 10)
+                .await
+                .unwrap_or_default();
+            let favs = api_r.get_favorites().await.unwrap_or_default();
+            let fav_set: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+            let items = json_tracks_to_items(raw, &http_r, &fav_set, &s_plat).await;
+            if let Ok(mut g) = rec_c.lock() {
+                *g = items.clone();
+            }
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_r.upgrade() {
+                    w.set_autoplay_loading(false);
+                    w.set_recommended_tracks(to_slint_model(items));
+                }
+            });
+        });
+    });
+
     // 14. Sleep Timer Background Ticker (1s)
     let sd_tick = sleep_deadline.clone();
     let api_sleep_tick = api.clone();
@@ -3405,7 +4207,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                                 if rep_mode == 2 {
                                     api_e.seek(0.0);
                                     api_e.resume();
-                                } else if rep_mode == 1 {
+                                } else {
                                     w.invoke_play_next();
                                 }
                             }
@@ -3439,6 +4241,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = w_err.upgrade() {
                             w.set_is_playing(false);
+                            w.set_is_buffering(false);
                         }
                     });
                     show_toast(&w_opt, &rt_err, format!("Playback error: {message}"));

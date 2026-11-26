@@ -131,3 +131,47 @@ async fn test_scan_subfolder_and_serve_track() {
     handle.abort();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_live_ux_search_playlist_artist_and_autoplay() {
+    let base = std::env::temp_dir().join(format!("riff_live_ux_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&base).unwrap();
+    let db = db::open(&base.join("test.sqlite3")).unwrap();
+    let cfg = Arc::new(
+        Config::new(0, None, Some(base.clone()), Some(base.join("lib")), None, None).unwrap(),
+    );
+    let http = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Riff/0.7.8")
+        .build()
+        .unwrap();
+    let sc = SoundCloudClient::new(http.clone());
+    let yt = Arc::new(YouTubeClient::new(http.clone()));
+    let lyr = Arc::new(LyricsService::new(http.clone(), base.clone()));
+    let ev = Arc::new(EventBus::default());
+    let pl = Arc::new(AudioPlayer::new(ev.clone()));
+    let api = RiffApi::new(db, cfg, sc, yt, lyr, ev, pl);
+
+    let pls = api.search_playlists("chill lofi", "ytmusic", 5).await.unwrap();
+    assert!(!pls.is_empty(), "search_playlists returned empty");
+    let pl_id = pls[0]["id"].as_str().unwrap();
+    let (pl_name, _cov, pl_tracks) = api.fetch_remote_playlist(pl_id, "ytmusic").await.unwrap();
+    assert!(!pl_name.is_empty() && !pl_tracks.is_empty(), "remote playlist empty");
+
+    let arts = api.search_artists("The Weeknd", "ytmusic", 5).await.unwrap();
+    assert!(!arts.is_empty(), "search_artists returned empty");
+    let (aname, _asub, _aava, atracks) = api
+        .fetch_artist_profile("The Weeknd", arts[0]["id"].as_str(), "ytmusic")
+        .await
+        .unwrap();
+    assert_eq!(aname, "The Weeknd");
+    assert!(!atracks.is_empty(), "artist top tracks empty");
+
+    let recs = api
+        .get_recommendations("J7p4bzqLvCw", "Blinding Lights", "The Weeknd", "ytmusic", "similar", &[], 6)
+        .await
+        .unwrap();
+    assert!(!recs.is_empty(), "autoplay recommendations empty");
+
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -711,4 +711,255 @@ impl RiffApi {
         }
         Ok(())
     }
+
+    /// Save a remote playlist with tracks into the local user playlists list
+    pub async fn save_playlist_with_tracks(
+        &self,
+        name: &str,
+        tracks: Vec<Track>,
+    ) -> Result<crate::models::Playlist> {
+        let mut list = self.get_playlists().await?;
+        let id = format!("pl_{}", db::now_millis());
+        let pl = crate::models::Playlist {
+            id,
+            name: name.trim().to_string(),
+            tracks,
+        };
+        list.push(pl.clone());
+        self.save_playlists(&list).await?;
+        Ok(pl)
+    }
+
+    /// Search playlists on YouTube Music or SoundCloud
+    pub async fn search_playlists(&self, query: &str, platform: &str, limit: usize) -> Result<Vec<Value>> {
+        let q = query.trim();
+        if q.is_empty() || platform == "local" {
+            return Ok(Vec::new());
+        }
+        if platform == "soundcloud" {
+            return self.soundcloud.search_playlists(q, limit).await;
+        }
+        let pls = self.youtube.search_music_playlists(q, limit).await.unwrap_or_default();
+        Ok(pls
+            .into_iter()
+            .map(|p| serde_json::to_value(p).unwrap_or_default())
+            .collect())
+    }
+
+    /// Search artists on YouTube Music or SoundCloud
+    pub async fn search_artists(&self, query: &str, platform: &str, limit: usize) -> Result<Vec<Value>> {
+        let q = query.trim();
+        if q.is_empty() || platform == "local" {
+            return Ok(Vec::new());
+        }
+        if platform == "soundcloud" {
+            return self.soundcloud.search_artists(q, limit).await;
+        }
+        let artists = self.youtube.search_music_artists(q, limit).await.unwrap_or_default();
+        Ok(artists
+            .into_iter()
+            .map(|a| serde_json::to_value(a).unwrap_or_default())
+            .collect())
+    }
+
+    /// Fetch remote playlist details + tracks
+    pub async fn fetch_remote_playlist(
+        &self,
+        id: &str,
+        platform: &str,
+    ) -> Result<(String, String, Vec<Value>)> {
+        if platform == "soundcloud" {
+            return self.soundcloud.fetch_playlist_tracks(id).await;
+        }
+        let (title, cover, tracks) = self.youtube.browse_playlist(id, 50).await?;
+        let values = tracks
+            .into_iter()
+            .map(|t| serde_json::to_value(t).unwrap_or_default())
+            .collect();
+        Ok((title, cover, values))
+    }
+
+    /// Fetch artist profile (name, subtitle, avatar_url, top tracks)
+    pub async fn fetch_artist_profile(
+        &self,
+        name: &str,
+        artist_id: Option<&str>,
+        platform: &str,
+    ) -> Result<(String, String, String, Vec<Value>)> {
+        let clean_name = name
+            .replace(" - Topic", "")
+            .replace("VEVO", "")
+            .trim()
+            .to_string();
+
+        if platform == "soundcloud" {
+            if let Some(uid) = artist_id.filter(|s| !s.is_empty()) {
+                if let Ok(tracks) = self.soundcloud.fetch_artist_tracks(uid, 20).await {
+                    if !tracks.is_empty() {
+                        let thumb = tracks
+                            .first()
+                            .and_then(|t| t.get("thumbnail"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        return Ok((clean_name, "SoundCloud Artist".to_string(), thumb, tracks));
+                    }
+                }
+            }
+            let tracks = self.soundcloud.search(&clean_name, 20).await.unwrap_or_default();
+            let thumb = tracks
+                .first()
+                .and_then(|t| t.get("thumbnail"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            return Ok((clean_name, "SoundCloud Artist".to_string(), thumb, tracks));
+        }
+
+        // YouTube Music songs by artist + Deezer artist avatar/fan enrichment
+        let search_q = format!("{clean_name} songs");
+        let tracks_fut = self.youtube.search_music(&search_q, 20);
+        let dz_url = format!(
+            "https://api.deezer.com/search/artist?q={}&limit=3",
+            url_encode(&clean_name)
+        );
+        let http = reqwest::Client::new();
+        let dz_fut = async {
+            if let Ok(resp) = http.get(&dz_url).timeout(std::time::Duration::from_secs(4)).send().await {
+                if resp.status().is_success() {
+                    return resp.json::<Value>().await.ok();
+                }
+            }
+            None
+        };
+
+        let (yt_res, dz_opt) = tokio::join!(tracks_fut, dz_fut);
+        let mut yt_tracks = yt_res.unwrap_or_default();
+        yt_tracks.retain(|t| t.duration == 0.0 || t.duration <= 900.0);
+
+        let mut avatar = String::new();
+        let mut subtitle = "YouTube Music Artist".to_string();
+        if let Some(dz) = dz_opt {
+            if let Some(first) = dz.pointer("/data/0") {
+                if let Some(pic) = first
+                    .get("picture_xl")
+                    .or_else(|| first.get("picture_big"))
+                    .or_else(|| first.get("picture_medium"))
+                    .and_then(|v| v.as_str())
+                {
+                    avatar = pic.to_string();
+                }
+                if let Some(fans) = first.get("nb_fan").and_then(|v| v.as_u64()) {
+                    if fans > 0 {
+                        subtitle = if fans >= 1_000_000 {
+                            format!("{:.1}M fans", fans as f64 / 1_000_000.0)
+                        } else if fans >= 1_000 {
+                            format!("{}K fans", fans / 1_000)
+                        } else {
+                            format!("{fans} fans")
+                        };
+                    }
+                }
+            }
+        }
+        if avatar.is_empty() {
+            if let Some(first) = yt_tracks.first() {
+                avatar = first.thumbnail.clone();
+            }
+        }
+
+        let values = yt_tracks
+            .into_iter()
+            .map(|t| serde_json::to_value(t).unwrap_or_default())
+            .collect();
+
+        Ok((clean_name, subtitle, avatar, values))
+    }
+
+    /// Generate Autoplay recommendations based on seed track & mode ("similar" | "artist" | "discovery")
+    pub async fn get_recommendations(
+        &self,
+        seed_id: &str,
+        title: &str,
+        artist: &str,
+        platform: &str,
+        mode: &str,
+        exclude_ids: &[String],
+        limit: usize,
+    ) -> Result<Vec<Value>> {
+        let mut out: Vec<Value> = Vec::new();
+        let is_excluded = |id: &str| id.is_empty() || id == seed_id || exclude_ids.iter().any(|e| e == id);
+
+        if platform == "soundcloud" {
+            let q = match mode {
+                "artist" if !artist.is_empty() => artist.to_string(),
+                "discovery" => "trending electronic indie chill".to_string(),
+                _ if !artist.is_empty() => format!("{artist} {title}"),
+                _ => title.to_string(),
+            };
+            if let Ok(sc) = self.soundcloud.search(&q, limit + 8).await {
+                for t in sc {
+                    let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let dur = t.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    if !is_excluded(id) && (dur == 0.0 || dur <= 900.0) {
+                        out.push(t);
+                        if out.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+            return Ok(out);
+        }
+
+        // Mode: "similar" tries YouTube Music RDAMVM radio mix first
+        if mode == "similar" && seed_id.len() == 11 {
+            if let Ok(radio) = self.youtube.get_radio_recommendations(seed_id, limit + 8).await {
+                for t in radio {
+                    if !is_excluded(&t.id) && (t.duration == 0.0 || t.duration <= 900.0) {
+                        out.push(serde_json::to_value(t).unwrap_or_default());
+                        if out.len() >= limit {
+                            return Ok(out);
+                        }
+                    }
+                }
+            }
+        }
+
+        let query = match mode {
+            "artist" if !artist.is_empty() => format!("{artist} top songs"),
+            "discovery" => {
+                if artist.is_empty() {
+                    "viral indie pop songs 2026".to_string()
+                } else {
+                    format!("artists similar to {artist} songs")
+                }
+            }
+            _ => {
+                if !artist.is_empty() {
+                    format!("{artist} {title} songs")
+                } else if !title.is_empty() {
+                    format!("{title} songs")
+                } else {
+                    "popular pop songs 2026".to_string()
+                }
+            }
+        };
+
+        if let Ok(tracks) = self.youtube.search_music(&query, limit + 10).await {
+            for t in tracks {
+                if !is_excluded(&t.id)
+                    && (t.duration == 0.0 || t.duration <= 900.0)
+                    && !out.iter().any(|x| x.get("id").and_then(|v| v.as_str()) == Some(&t.id))
+                {
+                    out.push(serde_json::to_value(t).unwrap_or_default());
+                    if out.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(out)
+    }
 }

@@ -70,6 +70,27 @@ export struct SearchHistoryItem {
     has_cover: bool,
 }
 
+export struct RemotePlaylistData {
+    id: string,
+    title: string,
+    author: string,
+    track_count_text: string,
+    platform: string,
+    thumbnail: string,
+    cover: image,
+    has_cover: bool,
+}
+
+export struct ArtistData {
+    id: string,
+    name: string,
+    subtitle: string,
+    platform: string,
+    thumbnail: string,
+    avatar: image,
+    has_avatar: bool,
+}
+
 export global Theme {
     in-out property <color> window-bg: #2b2b2e;
     in-out property <color> panel-bg: #0d0d0d;

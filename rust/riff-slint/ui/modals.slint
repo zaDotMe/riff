@@ -339,6 +339,7 @@ export component RightPanel inherits Rectangle {
     callback set-lyrics-offset(float);
     callback clear-custom-lyrics();
     callback save-setting(string, string);
+    callback open-artist(string);
     callback close();
 
     property <bool> source-picker-open: false;
@@ -691,12 +692,21 @@ export component RightPanel inherits Rectangle {
                         font-weight: 800;
                         wrap: word-wrap;
                     }
-                    Text {
-                        text: current-artist;
-                        color: Theme.text-secondary;
-                        font-size: 19px;
-                        font-weight: 500;
-                        wrap: word-wrap;
+                    Rectangle {
+                        height: 26px;
+                        Text {
+                            width: 100%;
+                            text: current-artist;
+                            color: rp-art-ta1.has-hover && current-id != "" ? Theme.primary : Theme.text-secondary;
+                            font-size: 19px;
+                            font-weight: 500;
+                            overflow: elide;
+                        }
+                        rp-art-ta1 := TouchArea {
+                            enabled: current-id != "";
+                            mouse-cursor: current-id != "" ? pointer : default;
+                            clicked => { root.open-artist(current-artist); }
+                        }
                     }
                 }
                 if current-id != "": VerticalLayout {
@@ -750,7 +760,21 @@ export component RightPanel inherits Rectangle {
                     alignment: center;
                     spacing: 2px;
                     Text { text: current-title; color: Theme.text-primary; font-size: 15px; font-weight: 700; overflow: elide; }
-                    Text { text: current-artist; color: Theme.text-secondary; font-size: 13px; overflow: elide; }
+                    Rectangle {
+                        height: 18px;
+                        Text {
+                            width: 100%;
+                            text: current-artist;
+                            color: rp-art-ta2.has-hover && current-id != "" ? Theme.primary : Theme.text-secondary;
+                            font-size: 13px;
+                            overflow: elide;
+                        }
+                        rp-art-ta2 := TouchArea {
+                            enabled: current-id != "";
+                            mouse-cursor: current-id != "" ? pointer : default;
+                            clicked => { root.open-artist(current-artist); }
+                        }
+                    }
                 }
 
                 VerticalLayout {
@@ -890,6 +914,8 @@ export component SettingsModal inherits Rectangle {
     in-out property <bool> rp-gradient-enabled: true;
     in-out property <bool> tvk-blobs-enabled: true;
     in-out property <string> search-platform: "ytmusic";
+    in-out property <bool> autoplay-enabled: true;
+    in-out property <string> autoplay-mode: "similar";
 
     // Lyrics Settings
     in-out property <string> lyrics-source: "auto";
@@ -926,6 +952,8 @@ export component SettingsModal inherits Rectangle {
     callback open-audio-editor();
     callback open-fullscreen-lyrics();
     callback toggle-mini-mode();
+    callback toggle-autoplay(bool);
+    callback change-autoplay-mode(string);
     callback save-setting(string, string);
     callback close();
 
@@ -1282,6 +1310,50 @@ export component SettingsModal inherits Rectangle {
                                             ToggleSwitch {
                                                 checked <=> show-timestamps;
                                                 toggled(on) => { root.save-setting("slint_show_timestamps", on ? "1" : "0"); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Autoplay & Recommendations
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 10px;
+                                        HorizontalLayout {
+                                            spacing: 16px;
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                spacing: 3px;
+                                                Text { text: "Autoplay recommendations"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                                Text { text: "Automatically queue and play recommended songs after a track ends"; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                            }
+                                            VerticalLayout {
+                                                alignment: center;
+                                                ToggleSwitch {
+                                                    checked <=> autoplay-enabled;
+                                                    toggled(on) => { root.toggle-autoplay(on); }
+                                                }
+                                            }
+                                        }
+                                        if autoplay-enabled: HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
+                                            for apm in [
+                                                { id: "similar", label: "Similar Vibe" },
+                                                { id: "artist", label: "Artist Mix" },
+                                                { id: "discovery", label: "Discovery" },
+                                            ]: PillBtn {
+                                                label: apm.label;
+                                                btn-height: 28px;
+                                                h-pad: 11px;
+                                                primary: autoplay-mode == apm.id;
+                                                clicked => {
+                                                    autoplay-mode = apm.id;
+                                                    root.change-autoplay-mode(apm.id);
+                                                }
                                             }
                                         }
                                     }

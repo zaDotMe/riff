@@ -235,6 +235,216 @@ impl SoundCloudClient {
         Ok(Vec::new())
     }
 
+    pub async fn search_playlists(&self, query: &str, limit: usize) -> Result<Vec<Value>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut cid = self.get_client_id(false).await;
+        for attempt in 0..2 {
+            let url = format!(
+                "https://api-v2.soundcloud.com/search/playlists?q={}&client_id={}&limit={}",
+                url_encode(query),
+                cid,
+                limit.clamp(1, 30)
+            );
+            if let Ok(resp) = self.http.get(&url).header("User-Agent", USER_AGENT).send().await {
+                let status = resp.status();
+                if (status == 401 || status == 403) && attempt == 0 {
+                    cid = self.get_client_id(true).await;
+                    continue;
+                }
+                if status.is_success() {
+                    let json: Value = resp.json().await.unwrap_or_default();
+                    let coll = json.get("collection").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    let out = coll
+                        .into_iter()
+                        .filter_map(|p| {
+                            let id = p.get("id")?.as_u64()?.to_string();
+                            let title = p.get("title")?.as_str()?.to_string();
+                            let author = p
+                                .pointer("/user/username")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("SoundCloud")
+                                .to_string();
+                            let count = p.get("track_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let raw_thumb = p
+                                .get("artwork_url")
+                                .or_else(|| p.pointer("/tracks/0/artwork_url"))
+                                .or_else(|| p.pointer("/user/avatar_url"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let thumbnail = if raw_thumb.is_empty() {
+                                String::new()
+                            } else {
+                                raw_thumb.replace("-large", "-t500x500")
+                            };
+                            Some(json!({
+                                "id": id,
+                                "title": title,
+                                "author": author,
+                                "trackCountText": format!("{count} tracks"),
+                                "thumbnail": thumbnail,
+                                "platform": "soundcloud",
+                            }))
+                        })
+                        .collect();
+                    return Ok(out);
+                }
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    pub async fn search_artists(&self, query: &str, limit: usize) -> Result<Vec<Value>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut cid = self.get_client_id(false).await;
+        for attempt in 0..2 {
+            let url = format!(
+                "https://api-v2.soundcloud.com/search/users?q={}&client_id={}&limit={}",
+                url_encode(query),
+                cid,
+                limit.clamp(1, 30)
+            );
+            if let Ok(resp) = self.http.get(&url).header("User-Agent", USER_AGENT).send().await {
+                let status = resp.status();
+                if (status == 401 || status == 403) && attempt == 0 {
+                    cid = self.get_client_id(true).await;
+                    continue;
+                }
+                if status.is_success() {
+                    let json: Value = resp.json().await.unwrap_or_default();
+                    let coll = json.get("collection").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    let out = coll
+                        .into_iter()
+                        .filter_map(|u| {
+                            let id = u.get("id")?.as_u64()?.to_string();
+                            let name = u.get("username")?.as_str()?.to_string();
+                            let followers = u.get("followers_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let raw_thumb = u.get("avatar_url").and_then(|v| v.as_str()).unwrap_or("");
+                            let thumbnail = if raw_thumb.is_empty() {
+                                String::new()
+                            } else {
+                                raw_thumb.replace("-large", "-t500x500")
+                            };
+                            Some(json!({
+                                "id": id,
+                                "name": name,
+                                "subtitle": format!("{followers} followers"),
+                                "thumbnail": thumbnail,
+                                "platform": "soundcloud",
+                            }))
+                        })
+                        .collect();
+                    return Ok(out);
+                }
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    pub async fn fetch_playlist_tracks(&self, playlist_id: &str) -> Result<(String, String, Vec<Value>)> {
+        let mut cid = self.get_client_id(false).await;
+        for attempt in 0..2 {
+            let url = format!(
+                "https://api-v2.soundcloud.com/playlists/{}?client_id={}",
+                url_encode(playlist_id),
+                cid
+            );
+            if let Ok(resp) = self.http.get(&url).header("User-Agent", USER_AGENT).send().await {
+                let status = resp.status();
+                if (status == 401 || status == 403) && attempt == 0 {
+                    cid = self.get_client_id(true).await;
+                    continue;
+                }
+                if status.is_success() {
+                    let json: Value = resp.json().await.unwrap_or_default();
+                    let title = json.get("title").and_then(|v| v.as_str()).unwrap_or("Playlist").to_string();
+                    let cover = json
+                        .get("artwork_url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .replace("-large", "-t500x500");
+                    let tracks_arr = json.get("tracks").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    let tracks: Vec<Value> = tracks_arr
+                        .into_iter()
+                        .filter(|t| t.get("id").is_some() && t.get("title").is_some())
+                        .map(|t| {
+                            let id = t.get("id").and_then(|v| v.as_u64()).map(|n| n.to_string()).unwrap_or_default();
+                            let title = t.get("title").and_then(|v| v.as_str()).unwrap_or("untitled");
+                            let artist = t.pointer("/user/username").and_then(|v| v.as_str()).unwrap_or("unknown artist");
+                            let raw_thumb = t.get("artwork_url").or_else(|| t.pointer("/user/avatar_url")).and_then(|v| v.as_str()).unwrap_or("");
+                            let thumb = if raw_thumb.is_empty() { cover.clone() } else { raw_thumb.replace("-large", "-t500x500") };
+                            let dur = t.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0) / 1000.0;
+                            let url = t.get("permalink_url").and_then(|v| v.as_str()).unwrap_or("");
+                            json!({
+                                "id": id,
+                                "title": title,
+                                "artist": artist,
+                                "duration": dur.round(),
+                                "thumbnail": thumb,
+                                "url": url,
+                                "platform": "soundcloud",
+                            })
+                        })
+                        .collect();
+                    return Ok((title, cover, tracks));
+                }
+            }
+        }
+        Ok(("Playlist".to_string(), String::new(), Vec::new()))
+    }
+
+    pub async fn fetch_artist_tracks(&self, user_id: &str, limit: usize) -> Result<Vec<Value>> {
+        let mut cid = self.get_client_id(false).await;
+        for attempt in 0..2 {
+            let url = format!(
+                "https://api-v2.soundcloud.com/users/{}/tracks?client_id={}&limit={}",
+                url_encode(user_id),
+                cid,
+                limit.clamp(1, 30)
+            );
+            if let Ok(resp) = self.http.get(&url).header("User-Agent", USER_AGENT).send().await {
+                let status = resp.status();
+                if (status == 401 || status == 403) && attempt == 0 {
+                    cid = self.get_client_id(true).await;
+                    continue;
+                }
+                if status.is_success() {
+                    let json: Value = resp.json().await.unwrap_or_default();
+                    let coll = json.get("collection").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    let tracks: Vec<Value> = coll
+                        .into_iter()
+                        .filter(|t| t.get("id").is_some() && t.get("title").is_some())
+                        .map(|t| {
+                            let id = t.get("id").and_then(|v| v.as_u64()).map(|n| n.to_string()).unwrap_or_default();
+                            let title = t.get("title").and_then(|v| v.as_str()).unwrap_or("untitled");
+                            let artist = t.pointer("/user/username").and_then(|v| v.as_str()).unwrap_or("unknown artist");
+                            let raw_thumb = t.get("artwork_url").or_else(|| t.pointer("/user/avatar_url")).and_then(|v| v.as_str()).unwrap_or("");
+                            let thumb = if raw_thumb.is_empty() { String::new() } else { raw_thumb.replace("-large", "-t500x500") };
+                            let dur = t.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0) / 1000.0;
+                            let url = t.get("permalink_url").and_then(|v| v.as_str()).unwrap_or("");
+                            json!({
+                                "id": id,
+                                "title": title,
+                                "artist": artist,
+                                "duration": dur.round(),
+                                "thumbnail": thumb,
+                                "url": url,
+                                "platform": "soundcloud",
+                            })
+                        })
+                        .collect();
+                    return Ok(tracks);
+                }
+            }
+        }
+        Ok(Vec::new())
+    }
+
     pub async fn resolve_smart_mirror(
         &self,
         title: &str,

@@ -1,10 +1,10 @@
 import { ScrollView } from "std-widgets.slint";
-import { Theme, TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem } from "theme.slint";
+import { Theme, TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData } from "theme.slint";
 import { IconBtn, PillBtn, ScrubberBar, VolumeBar } from "components.slint";
-import { HomeView, SearchView, LocalFilesView, FavoritesView, HistoryView, QueueView, PlaylistDetailView } from "views.slint";
+import { HomeView, SearchView, LocalFilesView, FavoritesView, HistoryView, QueueView, PlaylistDetailView, ArtistView } from "views.slint";
 import { Titlebar, PresetsDrawer, RightPanel, SettingsModal, FullscreenLyricsOverlay, CustomLyricsModal, SyncLyricsModal, AudioEditorModal, CreatePlaylistModal, AddToPlaylistModal } from "modals.slint";
 
-export { TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, Theme }
+export { TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData, Theme }
 
 export component MainWindow inherits Window {
     title: "Riff";
@@ -20,15 +20,26 @@ export component MainWindow inherits Window {
     // Data Models
     in-out property <[TrackData]> library_tracks: [];
     in-out property <[TrackData]> search_results: [];
+    in-out property <[RemotePlaylistData]> search_playlist_results: [];
+    in-out property <[ArtistData]> search_artist_results: [];
     in-out property <[TrackData]> history_tracks: [];
     in-out property <[TrackData]> favorite_tracks: [];
     in-out property <[TrackData]> home_for_you: [];
     in-out property <[TrackData]> home_trending: [];
     in-out property <[TrackData]> queue_tracks: [];
+    in-out property <[TrackData]> recommended_tracks: [];
     in-out property <[PlaylistData]> playlists: [];
     in-out property <string> active_playlist_id: "";
     in-out property <string> active_playlist_name: "Playlist";
+    in-out property <bool> active_playlist_is_remote: false;
+    in-out property <bool> active_playlist_loading: false;
     in-out property <[TrackData]> active_playlist_tracks: [];
+    in-out property <string> artist_view_name: "Artist";
+    in-out property <string> artist_view_subtitle: "Artist";
+    in-out property <image> artist_view_avatar;
+    in-out property <bool> artist_view_has_avatar: false;
+    in-out property <bool> artist_view_loading: false;
+    in-out property <[TrackData]> artist_view_tracks: [];
     in-out property <[LyricLineData]> lyrics_lines: [];
     in-out property <int> active_lyric_index: -1;
 
@@ -52,6 +63,7 @@ export component MainWindow inherits Window {
 
     // Playback State
     in-out property <bool> is_playing: false;
+    in-out property <bool> is_buffering: false;
     in-out property <float> current_pos: 0.0;
     in-out property <float> current_duration: 1.0;
     in-out property <string> pos_text: "0:00";
@@ -62,7 +74,7 @@ export component MainWindow inherits Window {
     in-out property <[float]> spectrum_bands: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
 
     // Navigation & UI State
-    in-out property <int> active_tab: 0; // 0: Home, 1: Search, 2: My files, 3: Liked Songs, 4: History, 5: Queue, 6: Playlist
+    in-out property <int> active_tab: 0; // 0: Home, 1: Search, 2: My files, 3: Liked Songs, 4: History, 5: Queue, 6: Playlist, 7: Artist
     in-out property <bool> can_go_back: false;
     in-out property <bool> can_go_forward: false;
     in-out property <bool> sidebar_collapsed: false;
@@ -73,6 +85,12 @@ export component MainWindow inherits Window {
     in-out property <[SearchHistoryItem]> search_history: [];
     in-out property <bool> search_history_open: false;
     in-out property <bool> is_searching: false;
+    in-out property <bool> has_searched: false;
+    in-out property <string> search_error: "";
+    in-out property <string> search_type: "all";
+    in-out property <bool> autoplay_enabled: true;
+    in-out property <string> autoplay_mode: "similar";
+    in-out property <bool> autoplay_loading: false;
     in-out property <bool> lyrics_open: true;
     in-out property <bool> fullscreen_lyrics_open: false;
     in-out property <bool> custom_lyrics_open: false;
@@ -189,6 +207,18 @@ export component MainWindow inherits Window {
     callback shuffle_favorites();
     callback filter_favorites(string);
     callback sort_favorites();
+    callback add_to_queue(TrackData);
+    callback remove_queue_at(int);
+    callback remove_local_track(TrackData);
+    callback remove_track_from_playlist(string, string);
+    callback open_remote_playlist(RemotePlaylistData);
+    callback save_remote_playlist();
+    callback open_artist(ArtistData);
+    callback open_artist_name(string);
+    callback play_artist_all(bool);
+    callback toggle_autoplay(bool);
+    callback change_autoplay_mode(string);
+    callback refresh_recommendations();
     callback window_minimize();
     callback window_maximize();
     callback window_close();
@@ -218,12 +248,12 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Keyboard shortcuts (ESC closes modals/fullscreen, Space pauses/resumes, F11 toggles fullscreen lyrics)
+    // Keyboard shortcuts (ESC, Space, /, Ctrl+F, Left/Right seek, Up/Down volume, M mute, F11 fullscreen)
     FocusScope {
         width: 100%;
         height: 100%;
         key-pressed(event) => {
-            if (event.text == Key.Escape) {
+            if (event.text == Key.Escape || event.text == Key.Back) {
                 if (search_history_open) { search_history_open = false; return accept; }
                 if (sb_create_menu_open) { sb_create_menu_open = false; return accept; }
                 if (sync_lyrics_open) { sync_lyrics_open = false; return accept; }
@@ -233,13 +263,50 @@ export component MainWindow inherits Window {
                 if (add_to_playlist_open) { add_to_playlist_open = false; return accept; }
                 if (settings_open) { settings_open = false; return accept; }
                 if (fullscreen_lyrics_open) { fullscreen_lyrics_open = false; return accept; }
+                if (can_go_back) { root.nav_back(); return accept; }
             }
             if (event.text == " " && sync_lyrics_open) {
                 root.tap_sync_next();
                 return accept;
             }
-            if (event.text == " ") {
+            if (event.text == " " || event.text == Key.Pause) {
                 root.toggle_play_pause();
+                return accept;
+            }
+            if (event.text == Key.Stop) {
+                if (is_playing) {
+                    root.toggle_play_pause();
+                }
+                return accept;
+            }
+            if (!search_input.has-focus && (event.text == "/" || (event.modifiers.control && (event.text == "f" || event.text == "F")))) {
+                search_input.focus();
+                if (search_history.length > 0) {
+                    search_history_open = true;
+                }
+                return accept;
+            }
+            if (!search_input.has-focus && event.text == Key.RightArrow && current_id != "" && !settings_open && !custom_lyrics_open && !create_playlist_open) {
+                root.seek_to(min(current_duration, current_pos + 5.0));
+                return accept;
+            }
+            if (!search_input.has-focus && event.text == Key.LeftArrow && current_id != "" && !settings_open && !custom_lyrics_open && !create_playlist_open) {
+                root.seek_to(max(0.0, current_pos - 5.0));
+                return accept;
+            }
+            if (!search_input.has-focus && event.text == Key.UpArrow && !settings_open && !custom_lyrics_open && !create_playlist_open) {
+                volume = min(1.0, volume + 0.05);
+                root.set_volume(volume);
+                return accept;
+            }
+            if (!search_input.has-focus && event.text == Key.DownArrow && !settings_open && !custom_lyrics_open && !create_playlist_open) {
+                volume = max(0.0, volume - 0.05);
+                root.set_volume(volume);
+                return accept;
+            }
+            if (!search_input.has-focus && (event.text == "m" || event.text == "M") && !settings_open && !custom_lyrics_open && !create_playlist_open) {
+                volume = volume > 0.0 ? 0.0 : 1.0;
+                root.set_volume(volume);
                 return accept;
             }
             if (event.text == Key.F11) {
@@ -1385,6 +1452,7 @@ export component MainWindow inherits Window {
                         animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         for-you-tracks: root.home_for_you;
                         trending-tracks: root.home_trending;
+                        jump-back-tracks: root.history_tracks;
                         fav-count: root.favorite_tracks.length;
                         local-count: root.library_tracks.length;
                         hist-count: root.history_tracks.length;
@@ -1402,13 +1470,28 @@ export component MainWindow inherits Window {
                         animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         tracks: root.search_results;
+                        playlists: root.search_playlist_results;
+                        artists: root.search_artist_results;
                         current-id: root.current_id;
                         is-playing: root.is_playing;
+                        is-buffering: root.is_buffering;
                         is-searching: root.is_searching;
+                        has-searched: root.has_searched;
+                        search-error: root.search_error;
                         search-platform <=> root.search_platform;
+                        search-type <=> root.search_type;
                         play-track(t) => { root.play_track(t); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
+                        add-to-queue(t) => { root.add_to_queue(t); }
+                        open-remote-playlist(p) => { root.open_remote_playlist(p); }
+                        open-artist(a) => { root.open_artist(a); }
+                        open-artist-name(name) => { root.open_artist_name(name); }
+                        retry-search => {
+                            if (search_query != "") {
+                                root.trigger_search(search_query, search_platform);
+                            }
+                        }
                         platform-changed(p) => {
                             root.save_setting("slint_search_platform", p);
                             if (search_query != "") {
@@ -1432,6 +1515,9 @@ export component MainWindow inherits Window {
                         shuffle-play => { root.shuffle_local(); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
+                        add-to-queue(t) => { root.add_to_queue(t); }
+                        remove-local-track(t) => { root.remove_local_track(t); }
+                        open-artist-name(name) => { root.open_artist_name(name); }
                         add-files => { root.add_local_files(); }
                         scan-folder => { root.scan_local_folder(); }
                         filter-changed(q) => { root.filter_local(q); }
@@ -1453,6 +1539,8 @@ export component MainWindow inherits Window {
                         shuffle-play => { root.shuffle_favorites(); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
+                        add-to-queue(t) => { root.add_to_queue(t); }
+                        open-artist-name(name) => { root.open_artist_name(name); }
                         filter-changed(q) => { root.filter_favorites(q); }
                         cycle-sort => { root.sort_favorites(); }
                     }
@@ -1471,6 +1559,8 @@ export component MainWindow inherits Window {
                         play-track(t) => { root.play_track(t); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
+                        add-to-queue(t) => { root.add_to_queue(t); }
+                        open-artist-name(name) => { root.open_artist_name(name); }
                         clear-history => { root.clear_play_history(); }
                     }
 
@@ -1483,11 +1573,22 @@ export component MainWindow inherits Window {
                         animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         tracks: root.queue_tracks;
+                        recommended-tracks: root.recommended_tracks;
                         current-id: root.current_id;
                         is-playing: root.is_playing;
+                        is-buffering: root.is_buffering;
+                        autoplay-enabled <=> root.autoplay_enabled;
+                        autoplay-mode <=> root.autoplay_mode;
+                        autoplay-loading: root.autoplay_loading;
                         play-track(t) => { root.play_track(t); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
+                        add-to-queue(t) => { root.add_to_queue(t); }
+                        remove-queue-at(i) => { root.remove_queue_at(i); }
+                        toggle-autoplay(on) => { root.toggle_autoplay(on); }
+                        change-autoplay-mode(m) => { root.change_autoplay_mode(m); }
+                        refresh-recommendations => { root.refresh_recommendations(); }
+                        open-artist-name(name) => { root.open_artist_name(name); }
                         clear-queue => { root.clear_queue(); }
                     }
 
@@ -1501,6 +1602,8 @@ export component MainWindow inherits Window {
                         animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
                         playlist-id: root.active_playlist_id;
                         playlist-name: root.active_playlist_name;
+                        is-remote: root.active_playlist_is_remote;
+                        is-loading: root.active_playlist_loading;
                         tracks: root.active_playlist_tracks;
                         current-id: root.current_id;
                         is-playing: root.is_playing;
@@ -1508,8 +1611,37 @@ export component MainWindow inherits Window {
                         play-all => { root.play_playlist_all(false); }
                         shuffle-play => { root.play_playlist_all(true); }
                         delete-playlist(id) => { root.delete_playlist(id); }
+                        save-remote-playlist => { root.save_remote_playlist(); }
+                        remove-track-from-playlist(pid, tid) => { root.remove_track_from_playlist(pid, tid); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
+                        add-to-queue(t) => { root.add_to_queue(t); }
+                        open-artist-name(name) => { root.open_artist_name(name); }
+                        go-back => { root.nav_back(); }
+                    }
+
+                    ArtistView {
+                        width: 100%;
+                        height: 100%;
+                        y: active_tab == 7 ? 0px : 18px;
+                        opacity: active_tab == 7 ? 1.0 : 0.0;
+                        visible: self.opacity > 0.01;
+                        animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                        animate y { duration: Theme.reduced-motion ? 0ms : 260ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+                        artist-name: root.artist_view_name;
+                        artist-subtitle: root.artist_view_subtitle;
+                        artist-avatar: root.artist_view_avatar;
+                        has-avatar: root.artist_view_has_avatar;
+                        is-loading: root.artist_view_loading;
+                        tracks: root.artist_view_tracks;
+                        current-id: root.current_id;
+                        is-playing: root.is_playing;
+                        play-track(t) => { root.play_track(t); }
+                        play-all => { root.play_artist_all(false); }
+                        shuffle-play => { root.play_artist_all(true); }
+                        toggle-favorite(t) => { root.toggle_favorite_track(t); }
+                        add-to-playlist(t) => { root.request_add_to_playlist(t); }
+                        add-to-queue(t) => { root.add_to_queue(t); }
                         go-back => { root.nav_back(); }
                     }
 
@@ -1595,6 +1727,7 @@ export component MainWindow inherits Window {
                         set-lyrics-offset(ms) => { root.set_lyrics_offset(ms); }
                         clear-custom-lyrics => { root.clear_custom_lyrics(); }
                         save-setting(k, v) => { root.save_setting(k, v); }
+                        open-artist(name) => { root.open_artist_name(name); }
                         close => { lyrics_open = false; }
                     }
                 }
@@ -1677,17 +1810,26 @@ export component MainWindow inherits Window {
                             spacing: 2px;
 
                             Text {
-                                text: current_title;
-                                color: Theme.text-primary;
+                                text: is_buffering ? (current_title + " • Loading...") : current_title;
+                                color: is_buffering ? Theme.primary : Theme.text-primary;
                                 font-size: 15.5px;
                                 font-weight: 500;
                                 overflow: elide;
                             }
-                            Text {
-                                text: current_artist;
-                                color: Theme.text-secondary;
-                                font-size: 13.5px;
-                                overflow: elide;
+                            Rectangle {
+                                height: 18px;
+                                Text {
+                                    width: 100%;
+                                    text: current_artist;
+                                    color: pb-art-ta.has-hover && current_id != "" ? Theme.primary : Theme.text-secondary;
+                                    font-size: 13.5px;
+                                    overflow: elide;
+                                }
+                                pb-art-ta := TouchArea {
+                                    enabled: current_id != "";
+                                    mouse-cursor: current_id != "" ? pointer : default;
+                                    clicked => { root.open_artist_name(current_artist); }
+                                }
                             }
                         }
 
@@ -2371,6 +2513,8 @@ export component MainWindow inherits Window {
         rp-gradient-enabled <=> root.rp_gradient_enabled;
         tvk-blobs-enabled <=> root.tvk_blobs_enabled;
         search-platform <=> root.search_platform;
+        autoplay-enabled <=> root.autoplay_enabled;
+        autoplay-mode <=> root.autoplay_mode;
         lyrics-source <=> root.lyrics_source;
         lyrics-word-source <=> root.lyrics_word_source;
         lyrics-mode <=> root.lyrics_mode;
@@ -2400,6 +2544,8 @@ export component MainWindow inherits Window {
         open-audio-editor => { audio_editor_open = true; }
         open-fullscreen-lyrics => { fullscreen_lyrics_open = true; }
         toggle-mini-mode => { root.toggle_mini_mode(); }
+        toggle-autoplay(on) => { root.toggle_autoplay(on); }
+        change-autoplay-mode(m) => { root.change_autoplay_mode(m); }
         change-lyrics-source(s) => { root.change_lyrics_source(s); }
         change-word-source(s) => { root.change_word_source(s); }
         set-lyrics-offset(ms) => { root.set_lyrics_offset(ms); }

@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
-import { Theme, TrackData } from "theme.slint";
-import { IconBtn, PillBtn, HomeCard, TrackRow } from "components.slint";
+import { Theme, TrackData, RemotePlaylistData, ArtistData } from "theme.slint";
+import { IconBtn, PillBtn, ToggleSwitch, HomeCard, TrackRow, SearchSkeletonList, PlaylistResultRow, ArtistResultRow } from "components.slint";
 
 component TableHeader inherits Rectangle {
     in property <bool> show-album: true;
@@ -40,6 +40,7 @@ component TableHeader inherits Rectangle {
 export component HomeView inherits ScrollView {
     in property <[TrackData]> for-you-tracks: [];
     in property <[TrackData]> trending-tracks: [];
+    in property <[TrackData]> jump-back-tracks: [];
     in property <int> fav-count: 0;
     in property <int> local-count: 0;
     in property <int> hist-count: 0;
@@ -308,26 +309,77 @@ export component HomeView inherits ScrollView {
                 }
             }
         }
+
+        // Section: Jump back in > (recent history shelf)
+        if jump-back-tracks.length > 0: VerticalLayout {
+            spacing: 12px;
+
+            HorizontalLayout {
+                height: 36px;
+                spacing: 8px;
+
+                VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/ms_history.svg"); width: 20px; height: 20px; colorize: Theme.text-primary; }
+                }
+                Text {
+                    text: "Jump back in";
+                    color: Theme.text-primary;
+                    font-size: 22px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                IconBtn {
+                    icon: @image-url("icons/chev_right.svg");
+                    icon-size: 18px;
+                    clicked => { root.open-tab(4); }
+                }
+            }
+
+            ScrollView {
+                height: 244px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    alignment: start;
+                    for t in jump-back-tracks: HomeCard {
+                        track: t;
+                        clicked => { root.play-track(t); }
+                    }
+                }
+            }
+        }
     }
 }
 
 export component SearchView inherits ScrollView {
     in property <[TrackData]> tracks: [];
+    in property <[RemotePlaylistData]> playlists: [];
+    in property <[ArtistData]> artists: [];
     in property <string> current-id: "";
     in property <bool> is-playing: false;
+    in property <bool> is-buffering: false;
     in property <bool> is-searching: false;
+    in property <bool> has-searched: false;
+    in property <string> search-error: "";
     in-out property <string> search-platform: "ytmusic";
+    in-out property <string> search-type: "all"; // "all" | "songs" | "playlists" | "artists"
     callback play-track(TrackData);
     callback platform-changed(string);
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
+    callback add-to-queue(TrackData);
+    callback open-remote-playlist(RemotePlaylistData);
+    callback open-artist(ArtistData);
+    callback open-artist-name(string);
+    callback retry-search();
 
     VerticalLayout {
         padding: 16px;
-        spacing: 14px;
+        spacing: 12px;
         alignment: start;
 
-        // Filter chips (search-filter-chips)
+        // Platform filter chips (search-filter-chips)
         HorizontalLayout {
             spacing: 8px;
             height: 34px;
@@ -367,47 +419,142 @@ export component SearchView inherits ScrollView {
             }
         }
 
-        if tracks.length > 0: TableHeader { show-album: root.width >= 460px; }
+        // Result Type chips (All / Songs / Playlists / Artists)
+        HorizontalLayout {
+            spacing: 6px;
+            height: 30px;
+            alignment: start;
 
-        if is-searching && tracks.length == 0: Rectangle {
-            height: 180px;
-            Text {
-                width: parent.width - 32px;
-                x: 16px;
-                text: "Searching...";
-                color: Theme.text-secondary;
-                font-size: 14.5px;
-                font-weight: 600;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            for tchip in [
+                { id: "all", label: "All" },
+                { id: "songs", label: "Songs" },
+                { id: "playlists", label: "Playlists" },
+                { id: "artists", label: "Artists" },
+            ]: Rectangle {
+                height: 28px;
+                border-radius: 14px;
+                background: search-type == tchip.id ? Theme.primary-dim : (st-ta.has-hover ? #ffffff14 : #ffffff0a);
+                animate background { duration: 120ms; easing: ease-out; }
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    Text {
+                        text: tchip.label;
+                        color: search-type == tchip.id ? Theme.primary-dim-text : Theme.text-secondary;
+                        font-size: 12px;
+                        font-weight: search-type == tchip.id ? 700 : 500;
+                        vertical-alignment: center;
+                    }
+                }
+
+                st-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { search-type = tchip.id; }
+                }
             }
         }
 
-        if !is-searching && tracks.length == 0: Rectangle {
-            height: 180px;
+        // Animated Shimmer Loading Skeleton while searching
+        if is-searching: SearchSkeletonList {
+            active: is-searching;
+        }
+
+        if !is-searching && search-error != "": VerticalLayout {
+            padding-top: 28px;
+            spacing: 12px;
+            alignment: center;
             Text {
-                width: parent.width - 32px;
-                x: 16px;
-                text: "Type in the search bar above and press Enter to search tracks.";
+                text: search-error;
+                color: #f28b82;
+                font-size: 13.5px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: center;
+                PillBtn {
+                    label: "Retry search";
+                    primary: true;
+                    clicked => { root.retry-search(); }
+                }
+            }
+        }
+
+        if !is-searching && search-error == "" && tracks.length == 0 && playlists.length == 0 && artists.length == 0: VerticalLayout {
+            padding-top: 36px;
+            spacing: 12px;
+            alignment: center;
+            Text {
+                text: has-searched
+                    ? "No results found. Try another keyword or switch platform."
+                    : "Type in the search bar above and press Enter to search tracks, playlists, or artists.";
                 color: Theme.text-muted;
                 font-size: 14px;
                 horizontal-alignment: center;
-                vertical-alignment: center;
                 wrap: word-wrap;
+            }
+            if has-searched: HorizontalLayout {
+                alignment: center;
+                PillBtn {
+                    label: "Retry";
+                    clicked => { root.retry-search(); }
+                }
             }
         }
 
-        VerticalLayout {
-            spacing: 2px;
+        // Artists section
+        if !is-searching && (search-type == "all" || search-type == "artists") && artists.length > 0: VerticalLayout {
+            spacing: 6px;
+            Text {
+                text: "Artists";
+                color: Theme.text-primary;
+                font-size: 16px;
+                font-weight: 700;
+            }
+            for a in artists: ArtistResultRow {
+                artist: a;
+                clicked => { root.open-artist(a); }
+            }
+        }
+
+        // Playlists section
+        if !is-searching && (search-type == "all" || search-type == "playlists") && playlists.length > 0: VerticalLayout {
+            spacing: 6px;
+            Text {
+                text: "Playlists";
+                color: Theme.text-primary;
+                font-size: 16px;
+                font-weight: 700;
+            }
+            for p in playlists: PlaylistResultRow {
+                playlist: p;
+                clicked => { root.open-remote-playlist(p); }
+            }
+        }
+
+        // Songs section
+        if !is-searching && (search-type == "all" || search-type == "songs") && tracks.length > 0: VerticalLayout {
+            spacing: 4px;
+            if search-type == "all" && (artists.length > 0 || playlists.length > 0): Text {
+                text: "Songs";
+                color: Theme.text-primary;
+                font-size: 16px;
+                font-weight: 700;
+            }
+            TableHeader { show-album: root.width >= 460px; }
             for t[idx] in tracks: TrackRow {
                 index: idx;
                 track: t;
                 is-current: t.id == current-id && current-id != "";
                 is-playing: root.is-playing;
+                is-buffering: root.is-buffering;
                 show-album: root.width >= 460px;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
+                add-to-queue => { root.add-to-queue(t); }
+                artist-clicked(name) => { root.open-artist-name(name); }
             }
         }
     }
@@ -425,6 +572,9 @@ export component LocalFilesView inherits ScrollView {
     callback scan-folder();
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
+    callback add-to-queue(TrackData);
+    callback remove-local-track(TrackData);
+    callback open-artist-name(string);
     callback filter-changed(string);
     callback cycle-sort();
 
@@ -663,9 +813,13 @@ export component LocalFilesView inherits ScrollView {
                 is-current: t.id == current-id && current-id != "";
                 is-playing: root.is-playing;
                 show-album: root.width >= 460px;
+                show-remove: true;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
+                add-to-queue => { root.add-to-queue(t); }
+                remove-clicked => { root.remove-local-track(t); }
+                artist-clicked(name) => { root.open-artist-name(name); }
             }
         }
     }
@@ -681,6 +835,8 @@ export component FavoritesView inherits ScrollView {
     callback shuffle-play();
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
+    callback add-to-queue(TrackData);
+    callback open-artist-name(string);
     callback filter-changed(string);
     callback cycle-sort();
 
@@ -878,6 +1034,8 @@ export component FavoritesView inherits ScrollView {
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
+                add-to-queue => { root.add-to-queue(t); }
+                artist-clicked(name) => { root.open-artist-name(name); }
             }
         }
     }
@@ -891,6 +1049,8 @@ export component HistoryView inherits ScrollView {
     callback clear-history();
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
+    callback add-to-queue(TrackData);
+    callback open-artist-name(string);
 
     property <bool> is-narrow: root.width < 540px;
     property <length> hero-cover: root.width < 520px ? 112px : 168px;
@@ -1009,6 +1169,8 @@ export component HistoryView inherits ScrollView {
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
+                add-to-queue => { root.add-to-queue(t); }
+                artist-clicked(name) => { root.open-artist-name(name); }
             }
         }
     }
@@ -1016,12 +1178,23 @@ export component HistoryView inherits ScrollView {
 
 export component QueueView inherits ScrollView {
     in property <[TrackData]> tracks: [];
+    in property <[TrackData]> recommended-tracks: [];
     in property <string> current-id: "";
     in property <bool> is-playing: false;
+    in property <bool> is-buffering: false;
+    in-out property <bool> autoplay-enabled: true;
+    in-out property <string> autoplay-mode: "similar"; // "similar" | "artist" | "discovery"
+    in property <bool> autoplay-loading: false;
     callback play-track(TrackData);
     callback clear-queue();
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
+    callback add-to-queue(TrackData);
+    callback remove-queue-at(int);
+    callback toggle-autoplay(bool);
+    callback change-autoplay-mode(string);
+    callback refresh-recommendations();
+    callback open-artist-name(string);
 
     VerticalLayout {
         padding: 24px;
@@ -1048,16 +1221,89 @@ export component QueueView inherits ScrollView {
             }
         }
 
+        // Autoplay & Recommendations control card
+        Rectangle {
+            border-radius: 12px;
+            background: #17171c;
+            border-width: 1px;
+            border-color: #ffffff10;
+
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+                        Text {
+                            text: "Autoplay";
+                            color: Theme.text-primary;
+                            font-size: 14px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: autoplay-enabled
+                                ? "Automatically queue & play recommended songs after the current track"
+                                : "Playback stops when the queue finishes";
+                            color: Theme.text-muted;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        ToggleSwitch {
+                            checked <=> autoplay-enabled;
+                            toggled(on) => { root.toggle-autoplay(on); }
+                        }
+                    }
+                }
+
+                if autoplay-enabled: HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+
+                    for m in [
+                        { id: "similar", label: "Similar Vibe" },
+                        { id: "artist", label: "Artist Mix" },
+                        { id: "discovery", label: "Discovery" },
+                    ]: PillBtn {
+                        label: m.label;
+                        btn-height: 28px;
+                        h-pad: 11px;
+                        primary: autoplay-mode == m.id;
+                        clicked => {
+                            autoplay-mode = m.id;
+                            root.change-autoplay-mode(m.id);
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    IconBtn {
+                        width: 28px;
+                        height: 28px;
+                        base-bg: #ffffff12;
+                        icon: @image-url("icons/refresh.svg");
+                        icon-size: 14px;
+                        clicked => { root.refresh-recommendations(); }
+                    }
+                }
+            }
+        }
+
         if tracks.length > 0: TableHeader { show-album: root.width >= 460px; }
 
         if tracks.length == 0: Rectangle {
-            height: 160px;
+            height: 110px;
             Text {
                 width: parent.width - 24px;
                 x: 12px;
                 text: "Queue is empty. Play a track or playlist to populate the queue.";
                 color: Theme.text-muted;
-                font-size: 14.5px;
+                font-size: 14px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 wrap: word-wrap;
@@ -1071,10 +1317,61 @@ export component QueueView inherits ScrollView {
                 track: t;
                 is-current: t.id == current-id && current-id != "";
                 is-playing: root.is-playing;
+                is-buffering: root.is-buffering;
                 show-album: root.width >= 460px;
+                show-queue-btn: false;
+                show-remove: true;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
+                remove-clicked => { root.remove-queue-at(idx); }
+                artist-clicked(name) => { root.open-artist-name(name); }
+            }
+        }
+
+        // Up Next • Recommended section
+        if autoplay-enabled: VerticalLayout {
+            padding-top: 8px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "Recommended next";
+                    color: Theme.text-primary;
+                    font-size: 16px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                if autoplay-loading: Text {
+                    text: "Loading...";
+                    color: Theme.primary;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+
+            if autoplay-loading && recommended-tracks.length == 0: SearchSkeletonList {
+                active: autoplay-loading;
+            }
+
+            if !autoplay-loading && recommended-tracks.length == 0: Text {
+                text: "Play a song to generate Up Next recommendations.";
+                color: Theme.text-muted;
+                font-size: 13px;
+            }
+
+            for rt[ridx] in recommended-tracks: TrackRow {
+                index: ridx;
+                track: rt;
+                is-current: rt.id == current-id && current-id != "";
+                is-playing: root.is-playing;
+                show-album: root.width >= 460px;
+                play-clicked => { root.play-track(rt); }
+                toggle-favorite => { root.toggle-favorite(rt); }
+                add-to-playlist => { root.add-to-playlist(rt); }
+                add-to-queue => { root.add-to-queue(rt); }
+                artist-clicked(name) => { root.open-artist-name(name); }
             }
         }
     }
@@ -1083,6 +1380,8 @@ export component QueueView inherits ScrollView {
 export component PlaylistDetailView inherits ScrollView {
     in property <string> playlist-id: "";
     in property <string> playlist-name: "Playlist";
+    in property <bool> is-remote: false;
+    in property <bool> is-loading: false;
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
     in property <bool> is-playing: false;
@@ -1090,8 +1389,12 @@ export component PlaylistDetailView inherits ScrollView {
     callback play-all();
     callback shuffle-play();
     callback delete-playlist(string);
+    callback save-remote-playlist();
+    callback remove-track-from-playlist(string, string);
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
+    callback add-to-queue(TrackData);
+    callback open-artist-name(string);
     callback go-back();
 
     property <bool> is-narrow: root.width < 540px;
@@ -1148,7 +1451,7 @@ export component PlaylistDetailView inherits ScrollView {
                         padding-bottom: is-narrow ? 2px : 8px;
 
                         Text {
-                            text: "Playlist";
+                            text: is-remote ? "Remote Playlist" : "Playlist";
                             color: Theme.text-secondary;
                             font-size: 12px;
                             font-weight: 600;
@@ -1198,9 +1501,17 @@ export component PlaylistDetailView inherits ScrollView {
                         clicked => { root.shuffle-play(); }
                     }
 
+                    if is-remote && tracks.length > 0: PillBtn {
+                        label: "Save to Library";
+                        icon: @image-url("icons/ms_add.svg");
+                        has-icon: true;
+                        primary: true;
+                        clicked => { root.save-remote-playlist(); }
+                    }
+
                     Rectangle { horizontal-stretch: 1; }
 
-                    IconBtn {
+                    if !is-remote: IconBtn {
                         icon: @image-url("icons/trash.svg");
                         icon-size: 18px;
                         icon-color: #f28b82;
@@ -1216,9 +1527,11 @@ export component PlaylistDetailView inherits ScrollView {
             padding-bottom: 24px;
             spacing: 4px;
 
-            TableHeader { show-album: root.width >= 460px; }
+            if is-loading: SearchSkeletonList { active: is-loading; }
 
-            if tracks.length == 0: Rectangle {
+            if !is-loading: TableHeader { show-album: root.width >= 460px; }
+
+            if !is-loading && tracks.length == 0: Rectangle {
                 height: 100px;
                 Text {
                     width: parent.width - 24px;
@@ -1232,15 +1545,180 @@ export component PlaylistDetailView inherits ScrollView {
                 }
             }
 
-            for t[idx] in tracks: TrackRow {
-                index: idx;
-                track: t;
-                is-current: t.id == current-id && current-id != "";
-                is-playing: root.is-playing;
-                show-album: root.width >= 460px;
-                play-clicked => { root.play-track(t); }
-                toggle-favorite => { root.toggle-favorite(t); }
-                add-to-playlist => { root.add-to-playlist(t); }
+            if !is-loading: VerticalLayout {
+                spacing: 2px;
+                for t[idx] in tracks: TrackRow {
+                    index: idx;
+                    track: t;
+                    is-current: t.id == current-id && current-id != "";
+                    is-playing: root.is-playing;
+                    show-album: root.width >= 460px;
+                    show-remove: !is-remote;
+                    play-clicked => { root.play-track(t); }
+                    toggle-favorite => { root.toggle-favorite(t); }
+                    add-to-playlist => { root.add-to-playlist(t); }
+                    add-to-queue => { root.add-to-queue(t); }
+                    remove-clicked => { root.remove-track-from-playlist(playlist-id, t.id); }
+                    artist-clicked(name) => { root.open-artist-name(name); }
+                }
+            }
+        }
+    }
+}
+
+export component ArtistView inherits ScrollView {
+    in property <string> artist-name: "Artist";
+    in property <string> artist-subtitle: "Artist";
+    in property <image> artist-avatar;
+    in property <bool> has-avatar: false;
+    in property <bool> is-loading: false;
+    in property <[TrackData]> tracks: [];
+    in property <string> current-id: "";
+    in property <bool> is-playing: false;
+    callback play-track(TrackData);
+    callback play-all();
+    callback shuffle-play();
+    callback toggle-favorite(TrackData);
+    callback add-to-playlist(TrackData);
+    callback add-to-queue(TrackData);
+    callback go-back();
+
+    property <bool> is-narrow: root.width < 540px;
+    property <length> hero-cover: root.width < 520px ? 104px : (root.width < 680px ? 148px : 184px);
+    property <length> hero-pad: is-narrow ? 16px : 24px;
+
+    VerticalLayout {
+        spacing: 0px;
+        alignment: start;
+
+        Rectangle {
+            background: @linear-gradient(180deg, #322b57 0%, #191826 54%, #0d0d0d00 100%);
+
+            VerticalLayout {
+                spacing: 0px;
+
+                HorizontalLayout {
+                    padding: hero-pad;
+                    spacing: is-narrow ? 16px : 24px;
+                    alignment: start;
+
+                    Rectangle {
+                        width: hero-cover;
+                        height: hero-cover;
+                        border-radius: hero-cover / 2;
+                        background: #23203a;
+                        drop-shadow-blur: 24px;
+                        drop-shadow-offset-y: 8px;
+                        drop-shadow-color: #00000066;
+                        clip: true;
+
+                        if has-avatar: Image {
+                            source: artist-avatar;
+                            width: 100%;
+                            height: 100%;
+                            image-fit: cover;
+                        }
+                        if !has-avatar: Image {
+                            source: @image-url("icons/avatar_default.svg");
+                            width: 100%;
+                            height: 100%;
+                        }
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: end;
+                        spacing: 6px;
+                        padding-bottom: is-narrow ? 2px : 8px;
+
+                        Text {
+                            text: "Artist";
+                            color: Theme.text-secondary;
+                            font-size: 12px;
+                            font-weight: 600;
+                        }
+
+                        Text {
+                            text: artist-name;
+                            color: Theme.text-primary;
+                            font-size: root.width < 520px ? 30px : (root.width < 680px ? 44px : 58px);
+                            font-weight: 800;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: artist-subtitle + " • " + tracks.length + " songs";
+                            color: Theme.text-secondary;
+                            font-size: is-narrow ? 13px : 14px;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: is-narrow ? 14px : 24px;
+                    padding-right: is-narrow ? 14px : 24px;
+                    padding-top: 8px;
+                    padding-bottom: 14px;
+                    spacing: 10px;
+
+                    IconBtn {
+                        icon: @image-url("icons/chev_left.svg");
+                        icon-size: 18px;
+                        clicked => { root.go-back(); }
+                    }
+
+                    IconBtn {
+                        icon: @image-url("icons/play_fill.svg");
+                        icon-size: 20px;
+                        disabled: tracks.length == 0;
+                        clicked => { root.play-all(); }
+                    }
+
+                    IconBtn {
+                        icon: @image-url("icons/shuffle.svg");
+                        icon-size: 18px;
+                        disabled: tracks.length == 0;
+                        clicked => { root.shuffle-play(); }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-bottom: 24px;
+            spacing: 4px;
+
+            if is-loading: SearchSkeletonList { active: is-loading; }
+
+            if !is-loading && tracks.length > 0: TableHeader { show-album: root.width >= 460px; }
+
+            if !is-loading && tracks.length == 0: Rectangle {
+                height: 120px;
+                Text {
+                    text: "No songs found for this artist.";
+                    color: Theme.text-muted;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            if !is-loading: VerticalLayout {
+                spacing: 2px;
+                for t[idx] in tracks: TrackRow {
+                    index: idx;
+                    track: t;
+                    is-current: t.id == current-id && current-id != "";
+                    is-playing: root.is-playing;
+                    show-album: root.width >= 460px;
+                    play-clicked => { root.play-track(t); }
+                    toggle-favorite => { root.toggle-favorite(t); }
+                    add-to-playlist => { root.add-to-playlist(t); }
+                    add-to-queue => { root.add-to-queue(t); }
+                }
             }
         }
     }
