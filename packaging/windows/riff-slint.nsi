@@ -3,7 +3,7 @@
 !include "FileFunc.nsh"
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.7.6"
+  !define APP_VERSION "0.7.7"
 !endif
 
 !define APP_NAME "Riff"

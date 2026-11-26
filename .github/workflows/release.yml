@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.7.6)"
+        description: "Release tag (e.g. v0.7.7)"
         required: false
-        default: "v0.7.6"
+        default: "v0.7.7"
 
 permissions:
   contents: write
@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist-release | Out-Null
-          $ver = if ($env:GITHUB_REF_NAME -and $env:GITHUB_REF_NAME.StartsWith("v")) { $env:GITHUB_REF_NAME.Substring(1) } else { "0.7.6" }
+          $ver = if ($env:GITHUB_REF_NAME -and $env:GITHUB_REF_NAME.StartsWith("v")) { $env:GITHUB_REF_NAME.Substring(1) } else { "0.7.7" }
           $makensis = (Get-Command makensis -ErrorAction SilentlyContinue)?.Source
           if (-not $makensis -and (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
             $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
@@ -123,7 +123,7 @@ jobs:
           cp target/release/riff-slint dist-release/riff-slint-linux-x86_64
 
           VER="${GITHUB_REF_NAME#v}"
-          if [ -z "$VER" ] || [ "$VER" = "$GITHUB_REF_NAME" ]; then VER="0.7.6"; fi
+          if [ -z "$VER" ] || [ "$VER" = "$GITHUB_REF_NAME" ]; then VER="0.7.7"; fi
           mkdir -p deb-pkg/DEBIAN deb-pkg/usr/bin deb-pkg/usr/share/applications deb-pkg/usr/share/icons/hicolor/512x512/apps
           cp target/release/riff-slint deb-pkg/usr/bin/riff-slint
           cp target/release/riff-core deb-pkg/usr/bin/riff-core
@@ -171,15 +171,15 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${{ github.event.inputs.tag || 'v0.7.6' }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ github.event.inputs.tag || 'v0.7.7' }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
-          name: "Riff ${{ steps.meta.outputs.tag }} (Windows & Linux)"
-          body_path: docs/RELEASE_NOTES_v0.7.6.md
+          name: "Riff ${{ steps.meta.outputs.tag }} (Pure Slint • Windows & Linux)"
+          body_path: docs/RELEASE_NOTES_v0.7.7.md
           files: release-assets/*
           draft: false
           prerelease: false

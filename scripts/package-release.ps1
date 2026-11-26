@@ -25,7 +25,7 @@ if (-not $makensis -and (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) 
 }
 if ($makensis) {
     $setupOut = Join-Path (Resolve-Path $OutDir) "Riff-Setup-windows-x64.exe"
-    & $makensis "/DAPP_VERSION=0.7.6" "/XOutFile $setupOut" "packaging\windows\riff-slint.nsi"
+    & $makensis "/DAPP_VERSION=0.7.7" "/XOutFile $setupOut" "packaging\windows\riff-slint.nsi"
 }
 
 Get-ChildItem $OutDir | Select-Object Name, Length
