@@ -19,8 +19,8 @@ RequestExecutionLevel user
 Unicode true
 SetCompressor /SOLID lzma
 
-!define MUI_ICON "..\..\src-tauri\icons\icon.ico"
-!define MUI_UNICON "..\..\src-tauri\icons\icon.ico"
+!define MUI_ICON "..\..\assets\icon.ico"
+!define MUI_UNICON "..\..\assets\icon.ico"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch Riff"
@@ -40,7 +40,7 @@ Section "Riff (Slint Native)" SecMain
 
   File "..\..\target\release\riff-slint.exe"
   File "..\..\target\release\riff-core.exe"
-  File "..\..\src-tauri\icons\icon.ico"
+  File "..\..\assets\icon.ico"
 
   WriteRegStr HKCU "Software\Riff" "InstallDir" "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"

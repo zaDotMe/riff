@@ -12,7 +12,7 @@ $stage = Join-Path $OutDir "portable-stage"
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item "target\release\riff-slint.exe" "$stage\riff-slint.exe" -Force
 Copy-Item "target\release\riff-core.exe" "$stage\riff-core.exe" -Force
-Copy-Item "src-tauri\icons\icon.ico" "$stage\icon.ico" -Force
+Copy-Item "assets\icon.ico" "$stage\icon.ico" -Force
 
 $zipPath = Join-Path $OutDir "Riff-windows-x64-portable.zip"
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["rust/riff-core", "src-tauri", "rust/riff-slint"]
+members = ["rust/riff-core", "rust/riff-slint"]
 
 [profile.release]
 opt-level = "s"

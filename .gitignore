@@ -15,3 +15,10 @@ yt-cookies.txt
 .DS_Store
 target/
 
+# Legacy Electron/Web UI & Tauri archived on branch legacy-web-archive (kept locally only)
+/src/
+/src-tauri/
+/assets/hls.min.js
+/package.json
+/package-lock.json
+

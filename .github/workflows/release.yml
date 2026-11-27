@@ -27,14 +27,6 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install npm dependencies
-        run: npm ci || npm install
-
       - name: Run tests
         run: cargo test --release -p riff-core -p riff-slint
 
@@ -61,7 +53,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist-release | Out-Null
           Copy-Item target\release\riff-slint.exe dist-release\Riff-Slint-windows-x64.exe
-          Compress-Archive -Path target\release\riff-slint.exe, target\release\riff-core.exe, src-tauri\icons\icon.ico -DestinationPath dist-release\Riff-windows-x64-portable.zip -Force
+          Compress-Archive -Path target\release\riff-slint.exe, target\release\riff-core.exe, assets\icon.ico -DestinationPath dist-release\Riff-windows-x64-portable.zip -Force
 
       - uses: actions/upload-artifact@v4
         with:
@@ -96,14 +88,6 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install npm dependencies
-        run: npm ci || npm install
-
       - name: Run tests
         run: cargo test --release -p riff-core -p riff-slint
 
@@ -115,7 +99,7 @@ jobs:
           mkdir -p dist-release stage-linux
           cp target/release/riff-slint stage-linux/riff-slint
           cp target/release/riff-core stage-linux/riff-core
-          cp src-tauri/icons/icon.png stage-linux/riff.png
+          cp assets/icon.png stage-linux/riff.png
           cp packaging/linux/riff.desktop stage-linux/riff.desktop
           cp packaging/linux/install.sh stage-linux/install.sh
           chmod +x stage-linux/riff-slint stage-linux/riff-core stage-linux/install.sh
@@ -129,7 +113,7 @@ jobs:
           cp target/release/riff-core deb-pkg/usr/bin/riff-core
           chmod 755 deb-pkg/usr/bin/riff-slint deb-pkg/usr/bin/riff-core
           cp packaging/linux/riff.desktop deb-pkg/usr/share/applications/riff.desktop
-          cp src-tauri/icons/icon.png deb-pkg/usr/share/icons/hicolor/512x512/apps/riff.png
+          cp assets/icon.png deb-pkg/usr/share/icons/hicolor/512x512/apps/riff.png
           cat > deb-pkg/DEBIAN/control <<EOF
           Package: riff
           Version: ${VER}
