@@ -1,6 +1,6 @@
 [package]
 name = "riff-slint"
-version = "0.7.84"
+version = "0.7.85"
 edition = "2021"
 authors = ["rootscripts"]
 license = "MIT"
@@ -44,8 +44,18 @@ required = false
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
 
+[[package.metadata.android.uses_permission]]
+name = "android.permission.WAKE_LOCK"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.FOREGROUND_SERVICE"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+
 [package.metadata.android.application.activity]
 orientation = "landscape"
+launch_mode = "singleTask"
 
 [[package.metadata.android.application.activity.intent_filter]]
 actions = ["android.intent.action.MAIN"]
@@ -73,3 +83,4 @@ tracing = "0.1"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.15"
+open = "5"

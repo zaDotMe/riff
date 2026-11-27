@@ -2,7 +2,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme, TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData } from "theme.slint";
 import { IconBtn, PillBtn, ScrubberBar, VolumeBar } from "components.slint";
 import { HomeView, SearchView, LocalFilesView, FavoritesView, HistoryView, QueueView, PlaylistDetailView, ArtistView } from "views.slint";
-import { Titlebar, PresetsDrawer, RightPanel, SettingsModal, FullscreenLyricsOverlay, CustomLyricsModal, SyncLyricsModal, AudioEditorModal, CreatePlaylistModal, AddToPlaylistModal, ToolsSetupModal } from "modals.slint";
+import { Titlebar, PresetsDrawer, RightPanel, SettingsModal, FullscreenLyricsOverlay, CustomLyricsModal, SyncLyricsModal, AudioEditorModal, CreatePlaylistModal, AddToPlaylistModal, ToolsSetupModal, ImportPlaylistModal } from "modals.slint";
 
 export { TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData, Theme }
 
@@ -91,7 +91,14 @@ export component MainWindow inherits Window {
     in-out property <bool> autoplay_enabled: true;
     in-out property <string> autoplay_mode: "similar";
     in-out property <bool> autoplay_loading: false;
-    in-out property <string> app_version: "0.7.84";
+    in-out property <string> perf_mode: "high";
+    in-out property <bool> gapless_enabled: true;
+    in-out property <bool> crossfade_enabled: false;
+    in-out property <float> crossfade_secs: 3.0;
+    in-out property <bool> import_playlist_open: false;
+    in-out property <bool> import_playlist_loading: false;
+    in-out property <string> import_playlist_error: "";
+    in-out property <string> app_version: "0.7.85";
     in-out property <bool> auto_check_updates: true;
     in-out property <string> update_status: "idle";
     in-out property <string> update_latest_version: "";
@@ -235,6 +242,14 @@ export component MainWindow inherits Window {
     callback toggle_autoplay(bool);
     callback change_autoplay_mode(string);
     callback refresh_recommendations();
+    callback set_perf_mode(string);
+    callback set_gapless(bool);
+    callback set_crossfade(bool, float);
+    callback play_next_track(TrackData);
+    callback download_track(TrackData);
+    callback move_queue_item(int, int);
+    callback rename_playlist(string, string);
+    callback import_playlist_url(string);
     callback check_for_updates();
     callback install_update();
     callback open_release_page();
@@ -285,6 +300,7 @@ export component MainWindow inherits Window {
                 if (create_playlist_open) { create_playlist_open = false; return accept; }
                 if (add_to_playlist_open) { add_to_playlist_open = false; return accept; }
                 if (settings_open) { settings_open = false; return accept; }
+                if (import_playlist_open && !import_playlist_loading) { import_playlist_open = false; return accept; }
                 if (tools_setup_open && !tools_installing) { tools_setup_open = false; return accept; }
                 if (fullscreen_lyrics_open) { fullscreen_lyrics_open = false; return accept; }
                 if (can_go_back) { root.nav_back(); return accept; }
@@ -1508,6 +1524,8 @@ export component MainWindow inherits Window {
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         add-to-queue(t) => { root.add_to_queue(t); }
+                        play-next(t) => { root.play_next_track(t); }
+                        download-track(t) => { root.download_track(t); }
                         open-remote-playlist(p) => { root.open_remote_playlist(p); }
                         open-artist(a) => { root.open_artist(a); }
                         open-artist-name(name) => { root.open_artist_name(name); }
@@ -1540,6 +1558,7 @@ export component MainWindow inherits Window {
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         add-to-queue(t) => { root.add_to_queue(t); }
+                        play-next(t) => { root.play_next_track(t); }
                         remove-local-track(t) => { root.remove_local_track(t); }
                         open-artist-name(name) => { root.open_artist_name(name); }
                         add-files => { root.add_local_files(); }
@@ -1564,6 +1583,8 @@ export component MainWindow inherits Window {
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         add-to-queue(t) => { root.add_to_queue(t); }
+                        play-next(t) => { root.play_next_track(t); }
+                        download-track(t) => { root.download_track(t); }
                         open-artist-name(name) => { root.open_artist_name(name); }
                         filter-changed(q) => { root.filter_favorites(q); }
                         cycle-sort => { root.sort_favorites(); }
@@ -1584,6 +1605,8 @@ export component MainWindow inherits Window {
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         add-to-queue(t) => { root.add_to_queue(t); }
+                        play-next(t) => { root.play_next_track(t); }
+                        download-track(t) => { root.download_track(t); }
                         open-artist-name(name) => { root.open_artist_name(name); }
                         clear-history => { root.clear_play_history(); }
                     }
@@ -1608,6 +1631,9 @@ export component MainWindow inherits Window {
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         add-to-queue(t) => { root.add_to_queue(t); }
+                        play-next(t) => { root.play_next_track(t); }
+                        download-track(t) => { root.download_track(t); }
+                        move-queue-item(from, to) => { root.move_queue_item(from, to); }
                         remove-queue-at(i) => { root.remove_queue_at(i); }
                         toggle-autoplay(on) => { root.toggle_autoplay(on); }
                         change-autoplay-mode(m) => { root.change_autoplay_mode(m); }
@@ -1635,11 +1661,14 @@ export component MainWindow inherits Window {
                         play-all => { root.play_playlist_all(false); }
                         shuffle-play => { root.play_playlist_all(true); }
                         delete-playlist(id) => { root.delete_playlist(id); }
+                        rename-playlist(id, name) => { root.rename_playlist(id, name); }
                         save-remote-playlist => { root.save_remote_playlist(); }
                         remove-track-from-playlist(pid, tid) => { root.remove_track_from_playlist(pid, tid); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         add-to-queue(t) => { root.add_to_queue(t); }
+                        play-next(t) => { root.play_next_track(t); }
+                        download-track(t) => { root.download_track(t); }
                         open-artist-name(name) => { root.open_artist_name(name); }
                         go-back => { root.nav_back(); }
                     }
@@ -1666,6 +1695,8 @@ export component MainWindow inherits Window {
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
                         add-to-queue(t) => { root.add_to_queue(t); }
+                        play-next(t) => { root.play_next_track(t); }
+                        download-track(t) => { root.download_track(t); }
                         go-back => { root.nav_back(); }
                     }
 
@@ -2235,7 +2266,7 @@ export component MainWindow inherits Window {
     // 3a2. FLOATING SIDEBAR CREATE POPOVER (#sb-create-popover 1:1)
     if sb_create_menu_open && !sidebar_collapsed && !mini_mode: Rectangle {
         width: 248px;
-        height: 184px;
+        height: 242px;
         x: 76px;
         y: 118px;
         border-radius: 12px;
@@ -2366,6 +2397,45 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+
+            // Import playlist from URL
+            Rectangle {
+                height: 56px;
+                border-radius: 8px;
+                background: cp4.has-hover ? #ffffff16 : transparent;
+                HorizontalLayout {
+                    padding: 8px;
+                    spacing: 12px;
+                    Rectangle {
+                        width: 38px;
+                        height: 38px;
+                        border-radius: 19px;
+                        background: #3a3b42;
+                        Image {
+                            source: @image-url("icons/download.svg");
+                            width: 18px;
+                            height: 18px;
+                            colorize: Theme.text-primary;
+                            x: 10px;
+                            y: 10px;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text { text: "Import playlist URL"; color: Theme.text-primary; font-size: 13.5px; font-weight: 700; }
+                        Text { text: "YouTube, SoundCloud, or Spotify"; color: Theme.text-muted; font-size: 11.5px; overflow: elide; }
+                    }
+                }
+                cp4 := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        sb_create_menu_open = false;
+                        import_playlist_error = "";
+                        import_playlist_open = true;
+                    }
+                }
+            }
         }
     }
 
@@ -2444,6 +2514,9 @@ export component MainWindow inherits Window {
         speed <=> root.audio_speed;
         reverb <=> root.audio_reverb;
         distortion <=> root.audio_distortion;
+        gapless-enabled <=> root.gapless_enabled;
+        crossfade-enabled <=> root.crossfade_enabled;
+        crossfade-secs <=> root.crossfade_secs;
         eq-bass <=> root.eq_bass;
         eq-mid <=> root.eq_mid;
         eq-treble <=> root.eq_treble;
@@ -2452,6 +2525,8 @@ export component MainWindow inherits Window {
         sleep-active: root.sleep_active;
         set-speed(s) => { root.set_audio_speed(s); }
         set-effects(r, d) => { root.set_audio_effects(r, d); }
+        set-gapless(on) => { root.set_gapless(on); }
+        set-crossfade(on, s) => { root.set_crossfade(on, s); }
         set-eq(b, m, t) => { root.set_equalizer(b, m, t); }
         apply-preset(p) => { root.apply_eq_preset(p); }
         set-sleep-minutes(m) => { root.set_sleep_minutes(m); }
@@ -2541,6 +2616,7 @@ export component MainWindow inherits Window {
         search-platform <=> root.search_platform;
         autoplay-enabled <=> root.autoplay_enabled;
         autoplay-mode <=> root.autoplay_mode;
+        perf-mode <=> root.perf_mode;
         app-version: root.app_version;
         auto-check-updates <=> root.auto_check_updates;
         update-status: root.update_status;
@@ -2584,6 +2660,7 @@ export component MainWindow inherits Window {
         toggle-mini-mode => { root.toggle_mini_mode(); }
         toggle-autoplay(on) => { root.toggle_autoplay(on); }
         change-autoplay-mode(m) => { root.change_autoplay_mode(m); }
+        set-perf-mode(m) => { root.set_perf_mode(m); }
         check-for-updates => { root.check_for_updates(); }
         install-update => { root.install_update(); }
         open-release-page => { root.open_release_page(); }
@@ -2610,6 +2687,17 @@ export component MainWindow inherits Window {
         install-tool(t) => { root.install_tool(t); }
         recheck-tools => { root.recheck_tools(); }
         dismiss(forever) => { root.dismiss_tools_setup(forever); }
+    }
+
+    // 4h. IMPORT PLAYLIST URL MODAL
+    ImportPlaylistModal {
+        width: 100%;
+        height: 100%;
+        open: import_playlist_open;
+        is-importing: root.import_playlist_loading;
+        error-text: root.import_playlist_error;
+        import-url(u) => { root.import_playlist_url(u); }
+        close => { import_playlist_open = false; }
     }
 
     // 5. AUTO-REVEAL TOP TITLEBAR (appears when pointer touches top edge)

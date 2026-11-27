@@ -305,18 +305,29 @@ export component TrackRow inherits Rectangle {
     in property <bool> is-buffering: false;
     in property <bool> show-album: true;
     in property <bool> show-queue-btn: true;
+    in property <bool> show-play-next: true;
+    in property <bool> show-download: true;
+    in property <bool> show-reorder: false;
     in property <bool> show-remove: false;
     callback play-clicked();
     callback toggle-favorite();
     callback add-to-playlist();
     callback add-to-queue();
+    callback play-next-clicked();
+    callback download-clicked();
+    callback move-up-clicked();
+    callback move-down-clicked();
     callback remove-clicked();
     callback artist-clicked(string);
 
     property <float> eq-t: (is-current && is-playing && !Theme.reduced-motion) ? (animation-tick() / 1s) : 0.0;
     property <bool> q-hovered: false;
+    property <bool> pn-hovered: false;
+    property <bool> dl-hovered: false;
+    property <bool> up-hovered: false;
+    property <bool> dn-hovered: false;
     property <bool> rm-hovered: false;
-    property <bool> row-hovered: ta.has-hover || fav-ta.has-hover || add-ta.has-hover || q-hovered || rm-hovered || art-ta.has-hover;
+    property <bool> row-hovered: ta.has-hover || fav-ta.has-hover || add-ta.has-hover || q-hovered || pn-hovered || dl-hovered || up-hovered || dn-hovered || rm-hovered || art-ta.has-hover;
 
     height: 64px;
     border-radius: 8px;
@@ -497,6 +508,117 @@ export component TrackRow inherits Rectangle {
                 font-size: 12.5px;
                 vertical-alignment: center;
                 overflow: elide;
+            }
+        }
+
+        // Move Up / Down buttons (used in Queue)
+        if show-reorder: HorizontalLayout {
+            spacing: 2px;
+            opacity: row-hovered ? 1.0 : 0.0;
+            animate opacity { duration: 140ms; easing: ease-out; }
+
+            VerticalLayout {
+                width: 24px;
+                alignment: center;
+                Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: up-ta.has-hover ? #ffffff18 : transparent;
+                    Image {
+                        source: @image-url("icons/chev_up.svg");
+                        width: 13px;
+                        height: 13px;
+                        colorize: up-ta.has-hover ? Theme.primary : Theme.text-secondary;
+                        x: 5.5px;
+                        y: 5.5px;
+                    }
+                    up-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        changed has-hover => { up-hovered = self.has-hover; }
+                        clicked => { root.move-up-clicked(); }
+                    }
+                }
+            }
+
+            VerticalLayout {
+                width: 24px;
+                alignment: center;
+                Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: dn-ta.has-hover ? #ffffff18 : transparent;
+                    Image {
+                        source: @image-url("icons/chev_down.svg");
+                        width: 13px;
+                        height: 13px;
+                        colorize: dn-ta.has-hover ? Theme.primary : Theme.text-secondary;
+                        x: 5.5px;
+                        y: 5.5px;
+                    }
+                    dn-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        changed has-hover => { dn-hovered = self.has-hover; }
+                        clicked => { root.move-down-clicked(); }
+                    }
+                }
+            }
+        }
+
+        // Play Next button (visible on hover)
+        if show-play-next: VerticalLayout {
+            width: 26px;
+            alignment: center;
+            opacity: row-hovered ? 1.0 : 0.0;
+            animate opacity { duration: 140ms; easing: ease-out; }
+
+            Rectangle {
+                width: 26px;
+                height: 26px;
+                border-radius: 13px;
+                background: pn-ta.has-hover ? #ffffff18 : transparent;
+                Image {
+                    source: @image-url("icons/play_next.svg");
+                    width: 14px;
+                    height: 14px;
+                    colorize: pn-ta.has-hover ? Theme.primary : Theme.text-secondary;
+                    x: 6px;
+                    y: 6px;
+                }
+                pn-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    changed has-hover => { pn-hovered = self.has-hover; }
+                    clicked => { root.play-next-clicked(); }
+                }
+            }
+        }
+
+        // Offline Download button (visible on hover for non-local tracks)
+        if show-download && track.platform != "local": VerticalLayout {
+            width: 26px;
+            alignment: center;
+            opacity: row-hovered ? 1.0 : 0.0;
+            animate opacity { duration: 140ms; easing: ease-out; }
+
+            Rectangle {
+                width: 26px;
+                height: 26px;
+                border-radius: 13px;
+                background: dl-ta.has-hover ? #ffffff18 : transparent;
+                Image {
+                    source: @image-url("icons/download.svg");
+                    width: 14px;
+                    height: 14px;
+                    colorize: dl-ta.has-hover ? Theme.primary : Theme.text-secondary;
+                    x: 6px;
+                    y: 6px;
+                }
+                dl-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    changed has-hover => { dl-hovered = self.has-hover; }
+                    clicked => { root.download-clicked(); }
+                }
             }
         }
 

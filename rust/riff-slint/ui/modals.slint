@@ -923,7 +923,8 @@ export component SettingsModal inherits Rectangle {
     in-out property <string> search-platform: "ytmusic";
     in-out property <bool> autoplay-enabled: true;
     in-out property <string> autoplay-mode: "similar";
-    in property <string> app-version: "0.7.84";
+    in-out property <string> perf-mode: "high"; // "standard" | "medium" | "high"
+    in property <string> app-version: "0.7.85";
     in-out property <bool> auto-check-updates: true;
     in property <string> update-status: "idle";
     in property <string> update-latest-version: "";
@@ -970,6 +971,7 @@ export component SettingsModal inherits Rectangle {
     callback toggle-mini-mode();
     callback toggle-autoplay(bool);
     callback change-autoplay-mode(string);
+    callback set-perf-mode(string);
     callback check-for-updates();
     callback install-update();
     callback open-release-page();
@@ -1330,6 +1332,48 @@ export component SettingsModal inherits Rectangle {
                                             ToggleSwitch {
                                                 checked <=> show-timestamps;
                                                 toggled(on) => { root.save-setting("slint_show_timestamps", on ? "1" : "0"); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Performance Mode (Standard / Medium / High)
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 10px;
+                                        VerticalLayout {
+                                            spacing: 3px;
+                                            Text { text: "Performance mode"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                            Text {
+                                                text: perf-mode == "standard"
+                                                    ? "Standard: Disables blur, ambient blobs & heavy animations for low-end devices / Google TV"
+                                                    : (perf-mode == "medium"
+                                                        ? "Medium: Disables heavy backdrop blur while keeping smooth UI motion"
+                                                        : "High: Full Liquid Glass blur, ambient blobs & 30 FPS visualizer");
+                                                color: Theme.text-muted;
+                                                font-size: 12px;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
+                                            for pm in [
+                                                { id: "standard", label: "Standard" },
+                                                { id: "medium", label: "Medium" },
+                                                { id: "high", label: "High" },
+                                            ]: PillBtn {
+                                                label: pm.label;
+                                                btn-height: 28px;
+                                                h-pad: 12px;
+                                                primary: perf-mode == pm.id;
+                                                clicked => {
+                                                    perf-mode = pm.id;
+                                                    root.set-perf-mode(pm.id);
+                                                }
                                             }
                                         }
                                     }
@@ -3633,6 +3677,9 @@ export component AudioEditorModal inherits Rectangle {
     in-out property <float> speed: 1.0;
     in-out property <float> reverb: 0.0;
     in-out property <float> distortion: 0.0;
+    in-out property <bool> gapless-enabled: true;
+    in-out property <bool> crossfade-enabled: false;
+    in-out property <float> crossfade-secs: 3.0;
     in-out property <float> eq-bass: 0.0;
     in-out property <float> eq-mid: 0.0;
     in-out property <float> eq-treble: 0.0;
@@ -3642,6 +3689,8 @@ export component AudioEditorModal inherits Rectangle {
 
     callback set-speed(float);
     callback set-effects(float, float);
+    callback set-gapless(bool);
+    callback set-crossfade(bool, float);
     callback set-eq(float, float, float);
     callback apply-preset(string);
     callback set-sleep-minutes(int); // -1: track end, 0: off, >0: minutes
@@ -3829,6 +3878,65 @@ export component AudioEditorModal inherits Rectangle {
                                     Text { text: Math.round(distortion) + "%"; color: Theme.primary; font-size: 13.5px; font-weight: 700; }
                                 }
                                 Slider { height: 32px; minimum: 0.0; maximum: 100.0; value <=> distortion; changed(v) => { root.set-effects(reverb, v); } }
+                            }
+                        }
+
+                        // Gapless & Crossfade transitions
+                        Rectangle {
+                            border-radius: 16px;
+                            background: #24252c;
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 12px;
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text { text: "Gapless playback"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                        Text { text: "Eliminate silence gap between consecutive tracks"; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        ToggleSwitch {
+                                            checked <=> gapless-enabled;
+                                            toggled(on) => { root.set-gapless(on); }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text { text: "Crossfade"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+                                        Text { text: "Smoothly fade out/in between tracks"; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        ToggleSwitch {
+                                            checked <=> crossfade-enabled;
+                                            toggled(on) => { root.set-crossfade(on, crossfade-secs); }
+                                        }
+                                    }
+                                }
+
+                                if crossfade-enabled: VerticalLayout {
+                                    spacing: 6px;
+                                    HorizontalLayout {
+                                        Text { text: "Crossfade duration"; color: Theme.text-secondary; font-size: 13px; horizontal-stretch: 1; }
+                                        Text { text: Math.round(crossfade-secs * 10) / 10 + " s"; color: Theme.primary; font-size: 13px; font-weight: 700; }
+                                    }
+                                    Slider {
+                                        height: 30px;
+                                        minimum: 1.0;
+                                        maximum: 8.0;
+                                        value <=> crossfade-secs;
+                                        changed(v) => { root.set-crossfade(crossfade-enabled, v); }
+                                    }
+                                }
                             }
                         }
                     }
@@ -4334,6 +4442,98 @@ export component ToolsSetupModal inherits Rectangle {
                     primary: true;
                     disabled: is-installing;
                     clicked => { root.dismiss(false); }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// IMPORT PLAYLIST FROM URL MODAL (YouTube / YTMusic / SoundCloud / Spotify)
+// ============================================================================
+export component ImportPlaylistModal inherits Rectangle {
+    in property <bool> open: false;
+    in property <bool> is-importing: false;
+    in property <string> error-text: "";
+    in-out property <string> url-text: "";
+    callback import-url(string);
+    callback close();
+
+    opacity: open ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
+    background: #00000085;
+    animate opacity { duration: Theme.reduced-motion ? 0ms : 200ms; easing: ease-out; }
+
+    TouchArea {
+        clicked => {
+            if (!is-importing) { root.close(); }
+        }
+    }
+
+    Rectangle {
+        width: min(460px, parent.width - 32px);
+        height: 230px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2 + (open ? 0px : 12px);
+        border-radius: 18px;
+        background: #1b1b20;
+        border-width: 1px;
+        border-color: #ffffff14;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        animate y { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+
+            Text { text: "Import playlist from URL"; color: Theme.text-primary; font-size: 16.5px; font-weight: 700; }
+            Text { text: "Supports YouTube, YouTube Music, SoundCloud sets, and Spotify playlist links"; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+
+            Rectangle {
+                height: 40px;
+                border-radius: 10px;
+                background: #121216;
+                border-width: 1px;
+                border-color: url-input.has-focus ? Theme.primary : #ffffff1f;
+
+                url-input := TextInput {
+                    x: 12px;
+                    y: 9px;
+                    width: parent.width - 24px;
+                    height: 22px;
+                    text <=> url-text;
+                    color: Theme.text-primary;
+                    font-size: 13.5px;
+                    single-line: true;
+                    accepted => {
+                        if (!is-importing && url-text != "") {
+                            root.import-url(url-text);
+                        }
+                    }
+                }
+            }
+
+            if error-text != "": Text {
+                text: error-text;
+                color: #f28b82;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                PillBtn { label: "Cancel"; disabled: is-importing; clicked => { root.close(); } }
+                PillBtn {
+                    label: is-importing ? "Importing..." : "Import";
+                    primary: true;
+                    disabled: is-importing || url-text == "";
+                    clicked => { root.import-url(url-text); }
                 }
             }
         }

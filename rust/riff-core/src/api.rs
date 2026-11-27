@@ -90,6 +90,14 @@ impl RiffApi {
         self.player.set_effects(reverb, distortion);
     }
 
+    pub fn set_gapless(&self, enabled: bool) {
+        self.player.set_gapless(enabled);
+    }
+
+    pub fn set_crossfade(&self, enabled: bool, secs: f32) {
+        self.player.set_crossfade(enabled, secs);
+    }
+
     pub fn get_playback_state(&self) -> (bool, f64, f64, f32) {
         (
             self.player.is_playing(),
@@ -735,6 +743,203 @@ impl RiffApi {
         Ok(pl)
     }
 
+    /// Save downloaded audio bytes to `<library_dir>` and register in local SQLite library
+    pub async fn save_offline_track(
+        &self,
+        title: &str,
+        artist: &str,
+        thumbnail: &str,
+        duration: f64,
+        bytes: &[u8],
+        ext: &str,
+    ) -> Result<Track> {
+        let sanitize = |s: &str| -> String {
+            s.chars()
+                .map(|c| {
+                    if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '(' | ')') {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect::<String>()
+                .trim()
+                .to_string()
+        };
+        let safe_artist = sanitize(if artist.is_empty() { "Unknown" } else { artist });
+        let safe_title = sanitize(if title.is_empty() { "Track" } else { title });
+        let clean_ext = ext.trim_start_matches('.').to_ascii_lowercase();
+        let final_ext = if clean_ext.is_empty() { "m4a" } else { &clean_ext };
+        let file_name = format!("{safe_artist} - {safe_title}.{final_ext}");
+
+        tokio::fs::create_dir_all(&self.config.library_dir).await?;
+        let dest = self.config.library_dir.join(&file_name);
+        tokio::fs::write(&dest, bytes).await?;
+
+        let path_str = dest.to_string_lossy().to_string();
+        let id = library::local_id(&dest);
+        let now = db::now_millis();
+        let track = Track {
+            id,
+            path: path_str,
+            file: file_name,
+            title: title.to_string(),
+            artist: artist.to_string(),
+            album: None,
+            duration,
+            thumbnail: thumbnail.to_string(),
+            added_at: now,
+            updated_at: now,
+        };
+        let db = self.db.clone();
+        let t_clone = track.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let conn = db.lock().map_err(|_| anyhow::anyhow!("db mutex poisoned"))?;
+            db::upsert_track(&conn, &t_clone)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("db task failed: {e}"))??;
+
+        Ok(track)
+    }
+
+    /// Import a playlist from YouTube, YouTube Music, SoundCloud, or Spotify URL
+    pub async fn import_playlist_from_url(&self, raw_url: &str) -> Result<crate::models::Playlist> {
+        let url = raw_url.trim();
+        if url.is_empty() {
+            anyhow::bail!("Playlist URL is empty");
+        }
+
+        // 1. YouTube / YouTube Music playlist URL (?list=...)
+        if url.contains("youtube.com") || url.contains("youtu.be") {
+            let list_id = url
+                .split(['?', '&'])
+                .find_map(|p| p.strip_prefix("list="))
+                .map(|s| s.split('&').next().unwrap_or(s).to_string())
+                .unwrap_or_default();
+            if list_id.is_empty() {
+                anyhow::bail!("Missing 'list=' playlist ID in YouTube URL");
+            }
+            let (title, _cov, raw_tracks) = self.fetch_remote_playlist(&list_id, "ytmusic").await?;
+            let tracks = values_to_core_tracks(raw_tracks);
+            if tracks.is_empty() {
+                anyhow::bail!("No tracks found in YouTube playlist");
+            }
+            let name = if title.trim().is_empty() { "Imported YouTube Playlist".to_string() } else { title };
+            return self.save_playlist_with_tracks(&name, tracks).await;
+        }
+
+        // 2. SoundCloud set URL
+        if url.contains("soundcloud.com") {
+            let http = reqwest::Client::new();
+            let cid = self.soundcloud.get_client_id(false).await;
+            let resolve_url = format!(
+                "https://api-v2.soundcloud.com/resolve?url={}&client_id={}",
+                url_encode(url),
+                cid
+            );
+            let resp = http
+                .get(&resolve_url)
+                .header("User-Agent", "Mozilla/5.0")
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await?;
+            let json: Value = resp.json().await.unwrap_or_default();
+            let pid = json
+                .get("id")
+                .and_then(|v| v.as_u64())
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            if pid.is_empty() {
+                anyhow::bail!("Could not resolve SoundCloud playlist URL");
+            }
+            let (title, _cov, raw_tracks) = self.soundcloud.fetch_playlist_tracks(&pid).await?;
+            let tracks = values_to_core_tracks(raw_tracks);
+            if tracks.is_empty() {
+                anyhow::bail!("No tracks found in SoundCloud playlist");
+            }
+            return self.save_playlist_with_tracks(&title, tracks).await;
+        }
+
+        // 3. Spotify public playlist URL (open.spotify.com/playlist/<id>)
+        if url.contains("spotify.com/playlist/") {
+            let pid = url
+                .split("playlist/")
+                .nth(1)
+                .and_then(|s| s.split(['?', '/']).next())
+                .unwrap_or("")
+                .trim();
+            if pid.is_empty() {
+                anyhow::bail!("Invalid Spotify playlist URL");
+            }
+            let embed_url = format!("https://open.spotify.com/embed/playlist/{pid}");
+            let html = reqwest::Client::new()
+                .get(&embed_url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await?
+                .text()
+                .await?;
+
+            // Extract __NEXT_DATA__ JSON from embed page
+            let start_marker = "<script id=\"__NEXT_DATA__\" type=\"application/json\">";
+            let json_str = html
+                .split(start_marker)
+                .nth(1)
+                .and_then(|s| s.split("</script>").next())
+                .ok_or_else(|| anyhow::anyhow!("Could not parse Spotify playlist embed page"))?;
+            let parsed: Value = serde_json::from_str(json_str)?;
+            let entity = parsed
+                .pointer("/props/pageProps/state/data/entity")
+                .ok_or_else(|| anyhow::anyhow!("Spotify playlist entity missing"))?;
+            let pl_name = entity
+                .get("name")
+                .or_else(|| entity.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Imported Spotify Playlist")
+                .to_string();
+            let track_list = entity
+                .get("trackList")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut tracks = Vec::new();
+            for item in track_list.into_iter().take(25) {
+                let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("").trim();
+                let artist = item.get("subtitle").and_then(|v| v.as_str()).unwrap_or("").trim();
+                if title.is_empty() {
+                    continue;
+                }
+                let q = format!("{artist} {title}");
+                if let Ok(mut found) = self.youtube.search_music(&q, 1).await {
+                    if let Some(yt) = found.pop() {
+                        tracks.push(Track {
+                            id: yt.id.clone(),
+                            path: yt.id,
+                            file: yt.title.clone(),
+                            title: yt.title,
+                            artist: yt.artist,
+                            album: None,
+                            duration: yt.duration,
+                            thumbnail: yt.thumbnail,
+                            added_at: 0,
+                            updated_at: 0,
+                        });
+                    }
+                }
+            }
+            if tracks.is_empty() {
+                anyhow::bail!("No matching tracks resolved from Spotify playlist");
+            }
+            return self.save_playlist_with_tracks(&pl_name, tracks).await;
+        }
+
+        anyhow::bail!("Unsupported playlist URL (use YouTube, SoundCloud, or Spotify)")
+    }
+
     /// Search playlists on YouTube Music or SoundCloud
     pub async fn search_playlists(&self, query: &str, platform: &str, limit: usize) -> Result<Vec<Value>> {
         let q = query.trim();
@@ -967,4 +1172,28 @@ impl RiffApi {
 
         Ok(out)
     }
+}
+
+fn values_to_core_tracks(raw: Vec<Value>) -> Vec<Track> {
+    raw.into_iter()
+        .filter_map(|v| {
+            let id = v.get("id").and_then(|x| x.as_str())?.to_string();
+            let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("Untitled").to_string();
+            let artist = v.get("artist").and_then(|x| x.as_str()).unwrap_or("Unknown Artist").to_string();
+            let duration = v.get("duration").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let thumbnail = v.get("thumbnail").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            Some(Track {
+                id: id.clone(),
+                path: id,
+                file: title.clone(),
+                title,
+                artist,
+                album: None,
+                duration,
+                thumbnail,
+                added_at: 0,
+                updated_at: 0,
+            })
+        })
+        .collect()
 }

@@ -1655,6 +1655,19 @@ pub fn run() -> Result<(), slint::PlatformError> {
             .map(|v| v == "1")
             .unwrap_or(false);
         let tools_status = riff_core::tools::check_tools_status(&api_init.config.data_dir);
+        let gapless_init = kv_map.get("slint_gapless").map(|v| v != "0").unwrap_or(true);
+        let cf_en_init = kv_map.get("slint_crossfade_enabled").map(|v| v == "1").unwrap_or(false);
+        let cf_secs_init = kv_map
+            .get("slint_crossfade_secs")
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(3.0)
+            .clamp(1.0, 8.0);
+        api_init.set_gapless(gapless_init);
+        api_init.set_crossfade(cf_en_init, cf_secs_init);
+        let perf_mode_init = kv_map
+            .get("slint_perf_mode")
+            .cloned()
+            .unwrap_or_else(|| if cfg!(target_os = "android") { "medium".to_string() } else { "high".to_string() });
 
         let (_, _, sh_slots) = tokio::join!(
             hydrate_track_covers(&mut fav_items, &http_init),
@@ -1763,6 +1776,22 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 }
                 if let Some(v) = kv_map.get("slint_reduced_motion") {
                     theme.set_reduced_motion(v == "1");
+                }
+                w.set_gapless_enabled(gapless_init);
+                w.set_crossfade_enabled(cf_en_init);
+                w.set_crossfade_secs(cf_secs_init);
+                w.set_perf_mode(SharedString::from(perf_mode_init.as_str()));
+                match perf_mode_init.as_str() {
+                    "standard" => {
+                        theme.set_ambient_blur_enabled(false);
+                        theme.set_reduced_motion(true);
+                        w.set_tvk_blobs_enabled(false);
+                        w.set_show_visualizer(false);
+                    }
+                    "medium" => {
+                        theme.set_ambient_blur_enabled(false);
+                    }
+                    _ => {}
                 }
                 if let Some(v) = kv_map.get("slint_panel_opacity").and_then(|s| s.parse::<f32>().ok()) {
                     theme.set_panel_opacity((v / 100.0).clamp(0.50, 1.0));
@@ -4169,21 +4198,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     // 13e. Auto-Update Checker, Downloader & Installer Callbacks
     fn open_external_url(url: &str) -> bool {
-        #[cfg(target_os = "windows")]
+        #[cfg(not(target_os = "android"))]
         {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            std::process::Command::new("cmd")
-                .args(["/C", "start", "", url])
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn()
-                .is_ok()
+            open::that(url).is_ok()
         }
-        #[cfg(target_os = "linux")]
-        {
-            std::process::Command::new("xdg-open").arg(url).spawn().is_ok()
-        }
-        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        #[cfg(target_os = "android")]
         {
             let _ = url;
             false
@@ -4266,16 +4285,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         {
             let existing = dl_inst.lock().ok().and_then(|g| g.clone()).filter(|p| p.is_file());
             if let Some(path) = existing {
-                #[cfg(target_os = "windows")]
-                {
-                    if std::process::Command::new(&path).spawn().is_ok() {
-                        std::process::exit(0);
-                    }
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    let _ = open_external_url(&info.html_url);
-                }
+                let _ = open::that(&path);
                 return;
             }
 
@@ -4324,7 +4334,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
                         #[cfg(target_os = "windows")]
                         {
-                            if std::process::Command::new(&path).spawn().is_ok() {
+                            if open::that(&path).is_ok() {
                                 tokio::time::sleep(Duration::from_millis(350)).await;
                                 std::process::exit(0);
                             }
@@ -4345,9 +4355,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                                     let _ = std::fs::remove_file(&backup);
                                     if std::fs::rename(&cur_exe, &backup).is_ok() {
                                         if std::fs::copy(&path, &cur_exe).is_ok() {
-                                            if std::process::Command::new(&cur_exe).spawn().is_ok() {
-                                                std::process::exit(0);
-                                            }
+                                            show_toast(&w_d, &_rt_d, "Update installed — please restart Riff");
                                         } else {
                                             let _ = std::fs::rename(&backup, &cur_exe);
                                         }
@@ -4550,6 +4558,283 @@ pub fn run() -> Result<(), slint::PlatformError> {
             });
             if err_msg.is_empty() {
                 show_toast(&w_t, &rt_t, "Optional streaming tools installed!");
+            }
+        });
+    });
+
+    // 13g. Performance Mode, Gapless/Crossfade, Play Next, Reorder Queue, Rename Playlist, Offline Download & Import URL
+    let api_perf = api.clone();
+    let w_perf = window_weak.clone();
+    let rt_perf = rt_handle.clone();
+    main_window.on_set_perf_mode(move |mode| {
+        let m = mode.to_string();
+        if let Some(w) = w_perf.upgrade() {
+            w.set_perf_mode(mode);
+            let theme = Theme::get(&w);
+            match m.as_str() {
+                "standard" => {
+                    theme.set_ambient_blur_enabled(false);
+                    theme.set_reduced_motion(true);
+                    w.set_tvk_blobs_enabled(false);
+                    w.set_show_visualizer(false);
+                }
+                "medium" => {
+                    theme.set_ambient_blur_enabled(false);
+                    theme.set_reduced_motion(false);
+                    w.set_tvk_blobs_enabled(true);
+                    w.set_show_visualizer(true);
+                }
+                _ => {
+                    theme.set_ambient_blur_enabled(true);
+                    theme.set_reduced_motion(false);
+                    w.set_tvk_blobs_enabled(true);
+                    w.set_show_visualizer(true);
+                }
+            }
+        }
+        let api_s = api_perf.clone();
+        rt_perf.spawn(async move {
+            let _ = api_s.set_setting("slint_perf_mode", &m).await;
+        });
+    });
+
+    let api_gap = api.clone();
+    let rt_gap = rt_handle.clone();
+    main_window.on_set_gapless(move |on| {
+        api_gap.set_gapless(on);
+        let api_s = api_gap.clone();
+        let val = if on { "1" } else { "0" };
+        rt_gap.spawn(async move {
+            let _ = api_s.set_setting("slint_gapless", val).await;
+        });
+    });
+
+    let api_cf = api.clone();
+    let rt_cf = rt_handle.clone();
+    main_window.on_set_crossfade(move |on, secs| {
+        api_cf.set_crossfade(on, secs);
+        let api_s = api_cf.clone();
+        let en_val = if on { "1" } else { "0" };
+        let secs_val = format!("{secs:.1}");
+        rt_cf.spawn(async move {
+            let _ = api_s.set_setting("slint_crossfade_enabled", en_val).await;
+            let _ = api_s.set_setting("slint_crossfade_secs", &secs_val).await;
+        });
+    });
+
+    let pl_pn = playlist_cache.clone();
+    let idx_pn = current_index.clone();
+    let w_pn = window_weak.clone();
+    let rt_pn = rt_handle.clone();
+    main_window.on_play_next_track(move |td| {
+        let title = td.title.to_string();
+        let tid = td.id.to_string();
+        let item = track_data_to_item(&td);
+        if let (Ok(mut pl), Ok(idx)) = (pl_pn.lock(), idx_pn.lock()) {
+            pl.retain(|t| t.id != tid);
+            let insert_at = if pl.is_empty() { 0 } else { (*idx + 1).min(pl.len()) };
+            pl.insert(insert_at, item);
+            let snapshot = pl.clone();
+            if let Some(w) = w_pn.upgrade() {
+                w.set_queue_tracks(to_slint_model(snapshot));
+            }
+        }
+        show_toast(&w_pn, &rt_pn, format!("Playing next: {title}"));
+    });
+
+    let pl_mv = playlist_cache.clone();
+    let idx_mv = current_index.clone();
+    let w_mv = window_weak.clone();
+    main_window.on_move_queue_item(move |from_i, to_i| {
+        if let (Ok(mut pl), Ok(mut idx)) = (pl_mv.lock(), idx_mv.lock()) {
+            let len = pl.len() as i32;
+            if from_i < 0 || to_i < 0 || from_i >= len || to_i >= len || from_i == to_i {
+                return;
+            }
+            let f = from_i as usize;
+            let t = to_i as usize;
+            let cur_id = pl.get(*idx).map(|x| x.id.clone());
+            let item = pl.remove(f);
+            pl.insert(t, item);
+            if let Some(cid) = cur_id {
+                if let Some(new_pos) = pl.iter().position(|x| x.id == cid) {
+                    *idx = new_pos;
+                }
+            }
+            let snapshot = pl.clone();
+            if let Some(w) = w_mv.upgrade() {
+                w.set_queue_tracks(to_slint_model(snapshot));
+            }
+        }
+    });
+
+    let api_rnm = api.clone();
+    let all_pls_rnm = all_playlists_cache.clone();
+    let w_rnm = window_weak.clone();
+    let rt_rnm = rt_handle.clone();
+    main_window.on_rename_playlist(move |pid, new_name| {
+        let pid_s = pid.to_string();
+        let name_s = new_name.trim().to_string();
+        if pid_s.is_empty() || name_s.is_empty() {
+            return;
+        }
+        let api_r = api_rnm.clone();
+        let apc = all_pls_rnm.clone();
+        let w_r = w_rnm.clone();
+        let rt_r = rt_rnm.clone();
+        rt_rnm.spawn(async move {
+            if api_r.rename_playlist(&pid_s, &name_s).await.is_ok() {
+                let all = api_r.get_playlists().await.unwrap_or_default();
+                if let Ok(mut g) = apc.lock() {
+                    *g = all.clone();
+                }
+                let w_ui = w_r.clone();
+                let n_ui = name_s.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_ui.upgrade() {
+                        w.set_playlists(playlists_to_slint(&all));
+                        w.set_active_playlist_name(SharedString::from(&n_ui));
+                    }
+                });
+                show_toast(&w_r, &rt_r, format!("Renamed playlist to: {name_s}"));
+            }
+        });
+    });
+
+    let api_dl = api.clone();
+    let http_dl = http.clone();
+    let all_lib_dl = all_library_cache.clone();
+    let w_dl = window_weak.clone();
+    let rt_dl = rt_handle.clone();
+    main_window.on_download_track(move |td| {
+        let tid = td.id.to_string();
+        let title = td.title.to_string();
+        let artist = td.artist.to_string();
+        let plat = td.platform.to_string();
+        let thumb = td.thumbnail.to_string();
+        let dur = td.duration_sec as f64;
+        if tid.is_empty() || plat == "local" {
+            return;
+        }
+        show_toast(&w_dl, &rt_dl, format!("Downloading offline: {title}..."));
+
+        let api_d = api_dl.clone();
+        let http_d = http_dl.clone();
+        let lc = all_lib_dl.clone();
+        let w_d = w_dl.clone();
+        let rt_d = rt_dl.clone();
+        rt_dl.spawn(async move {
+            let q = riff_core::models::StreamQuery {
+                id: Some(tid),
+                title: Some(title.clone()),
+                artist: Some(artist.clone()),
+                platform: Some(plat),
+                duration: Some(dur),
+                url: None,
+                thumbnail: None,
+                timeout: None,
+                quality: None,
+                q: None,
+            };
+            let res = api_d.resolve_stream(&q, 0).await;
+            match res {
+                Ok(val) => {
+                    let is_hls = val.get("isHls").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let raw_url = val
+                        .get("rawStreamUrl")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| val.get("streamUrl").and_then(|v| v.as_str()));
+                    if let Some(url) = raw_url {
+                        match download_stream_bytes(&http_d, url, is_hls).await {
+                            Ok((bytes, hint)) => {
+                                let ext = hint.as_deref().unwrap_or("m4a");
+                                match api_d.save_offline_track(&title, &artist, &thumb, dur, &bytes, ext).await {
+                                    Ok(_) => {
+                                        let updated = api_d.list_library().await.unwrap_or_default();
+                                        let favs = api_d.get_favorites().await.unwrap_or_default();
+                                        let fav_set: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+                                        let items: Vec<TrackItem> = updated
+                                            .iter()
+                                            .map(|t| {
+                                                let mut item = TrackItem::from_core(t, "local", fav_set.contains(&t.id));
+                                                if !t.path.is_empty() {
+                                                    item.id = t.path.clone();
+                                                }
+                                                item
+                                            })
+                                            .collect();
+                                        if let Ok(mut g) = lc.lock() {
+                                            *g = items.clone();
+                                        }
+                                        let w_ui = w_d.clone();
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            if let Some(w) = w_ui.upgrade() {
+                                                w.set_library_tracks(to_slint_model(items));
+                                            }
+                                        });
+                                        show_toast(&w_d, &rt_d, format!("Saved offline: {title}"));
+                                    }
+                                    Err(e) => show_toast(&w_d, &rt_d, format!("Save failed: {e}")),
+                                }
+                            }
+                            Err(e) => show_toast(&w_d, &rt_d, format!("Download failed: {e}")),
+                        }
+                    } else {
+                        show_toast(&w_d, &rt_d, "Download failed: no stream URL");
+                    }
+                }
+                Err(e) => show_toast(&w_d, &rt_d, format!("Download failed: {e}")),
+            }
+        });
+    });
+
+    let api_imp = api.clone();
+    let all_pls_imp = all_playlists_cache.clone();
+    let w_imp = window_weak.clone();
+    let rt_imp = rt_handle.clone();
+    main_window.on_import_playlist_url(move |url| {
+        let url_s = url.trim().to_string();
+        if url_s.is_empty() {
+            return;
+        }
+        if let Some(w) = w_imp.upgrade() {
+            w.set_import_playlist_loading(true);
+            w.set_import_playlist_error(SharedString::default());
+        }
+        let api_i = api_imp.clone();
+        let apc = all_pls_imp.clone();
+        let w_i = w_imp.clone();
+        let rt_i = rt_imp.clone();
+        rt_imp.spawn(async move {
+            match api_i.import_playlist_from_url(&url_s).await {
+                Ok(pl) => {
+                    let all = api_i.get_playlists().await.unwrap_or_default();
+                    if let Ok(mut g) = apc.lock() {
+                        *g = all.clone();
+                    }
+                    let pl_id = pl.id.clone();
+                    let pl_name = pl.name.clone();
+                    let w_ui = w_i.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = w_ui.upgrade() {
+                            w.set_import_playlist_loading(false);
+                            w.set_import_playlist_open(false);
+                            w.set_playlists(playlists_to_slint(&all));
+                            w.invoke_open_playlist(SharedString::from(&pl_id));
+                        }
+                    });
+                    show_toast(&w_i, &rt_i, format!("Imported playlist: {pl_name}"));
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let w_ui = w_i.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = w_ui.upgrade() {
+                            w.set_import_playlist_loading(false);
+                            w.set_import_playlist_error(SharedString::from(&msg));
+                        }
+                    });
+                }
             }
         });
     });

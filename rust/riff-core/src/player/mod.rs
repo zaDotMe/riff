@@ -27,6 +27,8 @@ enum PlayerCommand {
     SetEq { bass: f32, mid: f32, treble: f32 },
     SetSpeed(f32),
     SetEffects { reverb: f32, distortion: f32 },
+    SetGapless(bool),
+    SetCrossfade { enabled: bool, secs: f32 },
 }
 
 pub struct AudioPlayer {
@@ -79,6 +81,10 @@ impl AudioPlayer {
             let mut is_active = false;
             let mut vol_factor = 1.0f32;
             let mut speed_factor = 1.0f32;
+            let mut gapless_enabled = true;
+            let mut crossfade_enabled = false;
+            let mut crossfade_secs = 3.0f32;
+            let mut at_eof = false;
 
             let mut last_spectrum_emit = Instant::now();
             let mut last_state_emit = Instant::now();
@@ -165,9 +171,12 @@ impl AudioPlayer {
                                     is_active = true;
                                     t_playing.store(true, Ordering::SeqCst);
 
-                                    if let Some(s) = sink.as_mut() {
-                                        s.clear();
+                                    if !(gapless_enabled && at_eof) {
+                                        if let Some(s) = sink.as_mut() {
+                                            s.clear();
+                                        }
                                     }
+                                    at_eof = false;
                                     if let Ok(mut cur) = t_track.lock() {
                                         *cur = track.clone();
                                     }
@@ -257,6 +266,13 @@ impl AudioPlayer {
                         PlayerCommand::SetEffects { reverb, distortion } => {
                             fx.set_params(reverb, distortion);
                         }
+                        PlayerCommand::SetGapless(enabled) => {
+                            gapless_enabled = enabled;
+                        }
+                        PlayerCommand::SetCrossfade { enabled, secs } => {
+                            crossfade_enabled = enabled;
+                            crossfade_secs = secs.clamp(0.0, 10.0);
+                        }
                     }
                 }
 
@@ -303,6 +319,20 @@ impl AudioPlayer {
                             let frames = raw_samples.len() / step;
                             let resample_ratio = speed_factor * (dec_sr as f32 / sink_sample_rate.max(1.0));
 
+                            // Compute crossfade gain envelope (fade-in at start, fade-out near end)
+                            let mut cf_gain = 1.0f32;
+                            if crossfade_enabled && crossfade_secs > 0.1 {
+                                let fade_in = (current_position as f32 / crossfade_secs.min(2.0)).clamp(0.0, 1.0);
+                                let fade_out = if current_duration > crossfade_secs as f64 {
+                                    let rem = (current_duration - current_position).max(0.0) as f32;
+                                    (rem / crossfade_secs).clamp(0.0, 1.0)
+                                } else {
+                                    1.0
+                                };
+                                cf_gain = fade_in.min(fade_out);
+                            }
+                            let eff_vol = vol_factor * cf_gain;
+
                             if (resample_ratio - 1.0).abs() < 0.005 || frames < 2 {
                                 // Process samples through EQ, FX & Volume at 1.0x
                                 for chunk in raw_samples.chunks(step) {
@@ -312,8 +342,8 @@ impl AudioPlayer {
                                     let eq_l = eq.process(left);
                                     let eq_r = eq.process(right);
                                     let (fx_l, fx_r) = fx.process_stereo(eq_l, eq_r);
-                                    let out_l = fx_l * vol_factor;
-                                    let out_r = fx_r * vol_factor;
+                                    let out_l = fx_l * eff_vol;
+                                    let out_r = fx_r * eff_vol;
 
                                     processed.push(out_l);
                                     if sink_channels >= 2 {
@@ -341,8 +371,8 @@ impl AudioPlayer {
                                     let eq_l = eq.process(left);
                                     let eq_r = eq.process(right);
                                     let (fx_l, fx_r) = fx.process_stereo(eq_l, eq_r);
-                                    let out_l = fx_l * vol_factor;
-                                    let out_r = fx_r * vol_factor;
+                                    let out_l = fx_l * eff_vol;
+                                    let out_r = fx_r * eff_vol;
 
                                     processed.push(out_l);
                                     if sink_channels >= 2 {
@@ -376,6 +406,7 @@ impl AudioPlayer {
 
                 if reached_eof {
                     is_active = false;
+                    at_eof = true;
                     t_playing.store(false, Ordering::SeqCst);
                     t_events.emit(RiffEvent::PlaybackState {
                         is_playing: false,
@@ -462,6 +493,14 @@ impl AudioPlayer {
 
     pub fn set_effects(&self, reverb: f32, distortion: f32) {
         let _ = self.cmd_tx.send(PlayerCommand::SetEffects { reverb, distortion });
+    }
+
+    pub fn set_gapless(&self, enabled: bool) {
+        let _ = self.cmd_tx.send(PlayerCommand::SetGapless(enabled));
+    }
+
+    pub fn set_crossfade(&self, enabled: bool, secs: f32) {
+        let _ = self.cmd_tx.send(PlayerCommand::SetCrossfade { enabled, secs });
     }
 
     pub fn is_playing(&self) -> bool {

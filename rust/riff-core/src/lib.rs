@@ -702,64 +702,28 @@ async fn set_state(
 }
 
 async fn tools_status(State(state): State<AppState>) -> Json<Value> {
-    let ytdlp = binary_status(
-        state.config.ytdlp.as_deref(),
-        if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" },
-        "--version",
-    )
-    .await;
-    let ffmpeg = binary_status(
-        state.config.ffmpeg.as_deref(),
-        if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" },
-        "-version",
-    )
-    .await;
+    let yt_path = state
+        .config
+        .ytdlp
+        .clone()
+        .or_else(|| tools::resolve_binary_path(&state.config.data_dir, "yt-dlp"));
+    let ff_path = state
+        .config
+        .ffmpeg
+        .clone()
+        .or_else(|| tools::resolve_binary_path(&state.config.data_dir, "ffmpeg"));
 
     Json(json!({
         "success": true,
-        "ytdlp": ytdlp,
-        "ffmpeg": ffmpeg,
+        "ytdlp": {
+            "found": yt_path.is_some(),
+            "path": yt_path.map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+        },
+        "ffmpeg": {
+            "found": ff_path.is_some(),
+            "path": ff_path.map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+        },
     }))
-}
-
-async fn binary_status(configured: Option<&Path>, fallback: &str, version_flag: &str) -> Value {
-    let binary = configured
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(fallback));
-
-    let mut command = tokio::process::Command::new(&binary);
-    command.arg(version_flag);
-    #[cfg(windows)]
-    {
-        command.creation_flags(0x0800_0000);
-    }
-
-    match command.output().await {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let raw = if stdout.trim().is_empty() {
-                stderr.as_ref()
-            } else {
-                stdout.as_ref()
-            };
-            let version = raw
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            json!({
-                "found": true,
-                "path": binary.to_string_lossy(),
-                "version": version,
-            })
-        }
-        _ => json!({
-            "found": false,
-            "path": binary.to_string_lossy(),
-        }),
-    }
 }
 
 async fn run_db<T, F>(db: &db::Db, operation: F) -> Result<T, ApiError>

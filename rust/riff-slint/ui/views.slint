@@ -369,6 +369,8 @@ export component SearchView inherits ScrollView {
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
     callback add-to-queue(TrackData);
+    callback play-next(TrackData);
+    callback download-track(TrackData);
     callback open-remote-playlist(RemotePlaylistData);
     callback open-artist(ArtistData);
     callback open-artist-name(string);
@@ -554,6 +556,8 @@ export component SearchView inherits ScrollView {
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
                 add-to-queue => { root.add-to-queue(t); }
+                play-next-clicked => { root.play-next(t); }
+                download-clicked => { root.download-track(t); }
                 artist-clicked(name) => { root.open-artist-name(name); }
             }
         }
@@ -573,6 +577,7 @@ export component LocalFilesView inherits ScrollView {
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
     callback add-to-queue(TrackData);
+    callback play-next(TrackData);
     callback remove-local-track(TrackData);
     callback open-artist-name(string);
     callback filter-changed(string);
@@ -818,6 +823,7 @@ export component LocalFilesView inherits ScrollView {
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
                 add-to-queue => { root.add-to-queue(t); }
+                play-next-clicked => { root.play-next(t); }
                 remove-clicked => { root.remove-local-track(t); }
                 artist-clicked(name) => { root.open-artist-name(name); }
             }
@@ -836,6 +842,8 @@ export component FavoritesView inherits ScrollView {
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
     callback add-to-queue(TrackData);
+    callback play-next(TrackData);
+    callback download-track(TrackData);
     callback open-artist-name(string);
     callback filter-changed(string);
     callback cycle-sort();
@@ -1035,6 +1043,8 @@ export component FavoritesView inherits ScrollView {
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
                 add-to-queue => { root.add-to-queue(t); }
+                play-next-clicked => { root.play-next(t); }
+                download-clicked => { root.download-track(t); }
                 artist-clicked(name) => { root.open-artist-name(name); }
             }
         }
@@ -1050,6 +1060,8 @@ export component HistoryView inherits ScrollView {
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
     callback add-to-queue(TrackData);
+    callback play-next(TrackData);
+    callback download-track(TrackData);
     callback open-artist-name(string);
 
     property <bool> is-narrow: root.width < 540px;
@@ -1170,6 +1182,8 @@ export component HistoryView inherits ScrollView {
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
                 add-to-queue => { root.add-to-queue(t); }
+                play-next-clicked => { root.play-next(t); }
+                download-clicked => { root.download-track(t); }
                 artist-clicked(name) => { root.open-artist-name(name); }
             }
         }
@@ -1190,6 +1204,9 @@ export component QueueView inherits ScrollView {
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
     callback add-to-queue(TrackData);
+    callback play-next(TrackData);
+    callback download-track(TrackData);
+    callback move-queue-item(int, int);
     callback remove-queue-at(int);
     callback toggle-autoplay(bool);
     callback change-autoplay-mode(string);
@@ -1320,10 +1337,15 @@ export component QueueView inherits ScrollView {
                 is-buffering: root.is-buffering;
                 show-album: root.width >= 460px;
                 show-queue-btn: false;
+                show-play-next: false;
+                show-reorder: true;
                 show-remove: true;
                 play-clicked => { root.play-track(t); }
                 toggle-favorite => { root.toggle-favorite(t); }
                 add-to-playlist => { root.add-to-playlist(t); }
+                download-clicked => { root.download-track(t); }
+                move-up-clicked => { root.move-queue-item(idx, idx - 1); }
+                move-down-clicked => { root.move-queue-item(idx, idx + 1); }
                 remove-clicked => { root.remove-queue-at(idx); }
                 artist-clicked(name) => { root.open-artist-name(name); }
             }
@@ -1371,6 +1393,8 @@ export component QueueView inherits ScrollView {
                 toggle-favorite => { root.toggle-favorite(rt); }
                 add-to-playlist => { root.add-to-playlist(rt); }
                 add-to-queue => { root.add-to-queue(rt); }
+                play-next-clicked => { root.play-next(rt); }
+                download-clicked => { root.download-track(rt); }
                 artist-clicked(name) => { root.open-artist-name(name); }
             }
         }
@@ -1389,13 +1413,19 @@ export component PlaylistDetailView inherits ScrollView {
     callback play-all();
     callback shuffle-play();
     callback delete-playlist(string);
+    callback rename-playlist(string, string);
     callback save-remote-playlist();
     callback remove-track-from-playlist(string, string);
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
     callback add-to-queue(TrackData);
+    callback play-next(TrackData);
+    callback download-track(TrackData);
     callback open-artist-name(string);
     callback go-back();
+
+    property <bool> rename-open: false;
+    property <string> rename-draft: "";
 
     property <bool> is-narrow: root.width < 540px;
     property <length> hero-cover: root.width < 520px ? 112px : (root.width < 680px ? 164px : 220px);
@@ -1509,6 +1539,15 @@ export component PlaylistDetailView inherits ScrollView {
                         clicked => { root.save-remote-playlist(); }
                     }
 
+                    if !is-remote: IconBtn {
+                        icon: @image-url("icons/ms_edit.svg");
+                        icon-size: 17px;
+                        clicked => {
+                            rename-draft = playlist-name;
+                            rename-open = !rename-open;
+                        }
+                    }
+
                     Rectangle { horizontal-stretch: 1; }
 
                     if !is-remote: IconBtn {
@@ -1516,6 +1555,54 @@ export component PlaylistDetailView inherits ScrollView {
                         icon-size: 18px;
                         icon-color: #f28b82;
                         clicked => { root.delete-playlist(playlist-id); }
+                    }
+                }
+
+                if !is-remote && rename-open: HorizontalLayout {
+                    padding-left: is-narrow ? 14px : 24px;
+                    padding-right: is-narrow ? 14px : 24px;
+                    padding-bottom: 14px;
+                    spacing: 8px;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 36px;
+                        border-radius: 10px;
+                        background: #141418;
+                        border-width: 1px;
+                        border-color: Theme.primary;
+                        TextInput {
+                            x: 12px;
+                            y: 8px;
+                            width: parent.width - 24px;
+                            height: 20px;
+                            text <=> rename-draft;
+                            color: Theme.text-primary;
+                            font-size: 13.5px;
+                            single-line: true;
+                            accepted => {
+                                if (rename-draft != "") {
+                                    root.rename-playlist(playlist-id, rename-draft);
+                                    rename-open = false;
+                                }
+                            }
+                        }
+                    }
+
+                    PillBtn {
+                        label: "Save";
+                        primary: true;
+                        clicked => {
+                            if (rename-draft != "") {
+                                root.rename-playlist(playlist-id, rename-draft);
+                                rename-open = false;
+                            }
+                        }
+                    }
+
+                    PillBtn {
+                        label: "Cancel";
+                        clicked => { rename-open = false; }
                     }
                 }
             }
@@ -1558,6 +1645,8 @@ export component PlaylistDetailView inherits ScrollView {
                     toggle-favorite => { root.toggle-favorite(t); }
                     add-to-playlist => { root.add-to-playlist(t); }
                     add-to-queue => { root.add-to-queue(t); }
+                    play-next-clicked => { root.play-next(t); }
+                    download-clicked => { root.download-track(t); }
                     remove-clicked => { root.remove-track-from-playlist(playlist-id, t.id); }
                     artist-clicked(name) => { root.open-artist-name(name); }
                 }
@@ -1581,6 +1670,8 @@ export component ArtistView inherits ScrollView {
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
     callback add-to-queue(TrackData);
+    callback play-next(TrackData);
+    callback download-track(TrackData);
     callback go-back();
 
     property <bool> is-narrow: root.width < 540px;
@@ -1718,6 +1809,8 @@ export component ArtistView inherits ScrollView {
                     toggle-favorite => { root.toggle-favorite(t); }
                     add-to-playlist => { root.add-to-playlist(t); }
                     add-to-queue => { root.add-to-queue(t); }
+                    play-next-clicked => { root.play-next(t); }
+                    download-clicked => { root.download-track(t); }
                 }
             }
         }
