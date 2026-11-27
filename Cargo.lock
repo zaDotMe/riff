@@ -6206,7 +6206,7 @@ dependencies = [
 
 [[package]]
 name = "riff-slint"
-version = "0.7.8"
+version = "0.7.81"
 dependencies = [
  "image",
  "reqwest",

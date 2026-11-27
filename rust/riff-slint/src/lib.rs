@@ -1574,6 +1574,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let autoplay_mode_state: Arc<Mutex<String>> = Arc::new(Mutex::new("similar".to_string()));
     let recommended_cache: Arc<Mutex<Vec<TrackItem>>> = Arc::new(Mutex::new(Vec::new()));
     let active_remote_playlist_cache: Arc<Mutex<(String, Vec<TrackItem>)>> = Arc::new(Mutex::new((String::new(), Vec::new())));
+    let auto_check_updates_state = Arc::new(AtomicBool::new(true));
+    let latest_release_cache: Arc<Mutex<Option<riff_core::updater::ReleaseInfo>>> = Arc::new(Mutex::new(None));
+    let downloaded_update_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
+    main_window.set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
 
     // 1. Initial Data Load (Library, Favorites, History, Playlists, Home Feed)
     let api_init = api.clone();
@@ -1587,6 +1591,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let all_fav_init = all_favorites_cache.clone();
     let ap_en_init = autoplay_enabled_state.clone();
     let ap_mode_init = autoplay_mode_state.clone();
+    let upd_auto_init = auto_check_updates_state.clone();
+    let upd_rel_init = latest_release_cache.clone();
+    let rt_upd_init = rt_handle.clone();
 
     rt_handle.spawn(async move {
         let (lib_res, fav_res, hist_res, pls_res, kv_res) = tokio::join!(
@@ -1640,6 +1647,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 *m = v.clone();
             }
         }
+        if let Some(v) = kv_map.get("slint_auto_check_updates") {
+            upd_auto_init.store(v != "0", Ordering::SeqCst);
+        }
 
         let (_, _, sh_slots) = tokio::join!(
             hydrate_track_covers(&mut fav_items, &http_init),
@@ -1663,6 +1673,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             *fc = fav_items.clone();
         }
 
+        let auto_check_val = upd_auto_init.load(Ordering::SeqCst);
         let queue_init = lib_items.clone();
         let w_first = w_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
@@ -1696,6 +1707,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     w.set_search_platform(SharedString::from(v.as_str()));
                 }
                 w.set_autoplay_enabled(ap_en_init.load(Ordering::SeqCst));
+                w.set_auto_check_updates(auto_check_val);
                 if let Ok(m) = ap_mode_init.lock() {
                     w.set_autoplay_mode(SharedString::from(m.as_str()));
                 }
@@ -1778,12 +1790,39 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
         // Load Home sections ("For you" & "Trending now") with cover art
         let (fy_items, tr_items) = load_home_sections(&api_init, &http_init, &fav_ids, seed_artist.as_deref()).await;
+        let w_upd_boot = w_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = w_init.upgrade() {
                 w.set_home_for_you(to_slint_model(fy_items));
                 w.set_home_trending(to_slint_model(tr_items));
             }
         });
+
+        // Non-blocking startup update check
+        if upd_auto_init.load(Ordering::SeqCst) {
+            let http_u = http_init.clone();
+            let rel_u = upd_rel_init.clone();
+            let rt_u = rt_upd_init.clone();
+            rt_upd_init.spawn(async move {
+                if let Ok(Some(info)) = riff_core::updater::check_latest_release(&http_u, env!("CARGO_PKG_VERSION")).await {
+                    let ver = info.version.clone();
+                    let notes = info.notes.clone();
+                    if let Ok(mut g) = rel_u.lock() {
+                        *g = Some(info);
+                    }
+                    let w_ui = w_upd_boot.clone();
+                    let ver_ui = ver.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = w_ui.upgrade() {
+                            w.set_update_latest_version(SharedString::from(&ver_ui));
+                            w.set_update_notes(SharedString::from(&notes));
+                            w.set_update_status(SharedString::from("available"));
+                        }
+                    });
+                    show_toast(&w_upd_boot, &rt_u, format!("Update v{ver} available — open Settings → About"));
+                }
+            });
+        }
     });
 
     // Refresh Home Callback
@@ -4114,6 +4153,241 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     w.set_recommended_tracks(to_slint_model(items));
                 }
             });
+        });
+    });
+
+    // 13e. Auto-Update Checker, Downloader & Installer Callbacks
+    fn open_external_url(url: &str) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", url])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .is_ok()
+        }
+        #[cfg(target_os = "linux")]
+        {
+            std::process::Command::new("xdg-open").arg(url).spawn().is_ok()
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        {
+            let _ = url;
+            false
+        }
+    }
+
+    let http_chk = http.clone();
+    let rel_chk = latest_release_cache.clone();
+    let w_chk = window_weak.clone();
+    let rt_chk = rt_handle.clone();
+    main_window.on_check_for_updates(move || {
+        if let Some(w) = w_chk.upgrade() {
+            w.set_update_status(SharedString::from("checking"));
+            w.set_update_error(SharedString::default());
+        }
+        let http_c = http_chk.clone();
+        let rel_c = rel_chk.clone();
+        let w_c = w_chk.clone();
+        let rt_c = rt_chk.clone();
+        rt_chk.spawn(async move {
+            match riff_core::updater::check_latest_release(&http_c, env!("CARGO_PKG_VERSION")).await {
+                Ok(Some(info)) => {
+                    let ver = info.version.clone();
+                    let notes = info.notes.clone();
+                    if let Ok(mut g) = rel_c.lock() {
+                        *g = Some(info);
+                    }
+                    let w_ui = w_c.clone();
+                    let ver_ui = ver.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = w_ui.upgrade() {
+                            w.set_update_latest_version(SharedString::from(&ver_ui));
+                            w.set_update_notes(SharedString::from(&notes));
+                            w.set_update_status(SharedString::from("available"));
+                        }
+                    });
+                    show_toast(&w_c, &rt_c, format!("Update v{ver} available!"));
+                }
+                Ok(None) => {
+                    let w_ui = w_c.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = w_ui.upgrade() {
+                            w.set_update_status(SharedString::from("up_to_date"));
+                        }
+                    });
+                    show_toast(&w_c, &rt_c, "Riff is already up to date");
+                }
+                Err(err) => {
+                    let msg = err.to_string();
+                    let w_ui = w_c.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = w_ui.upgrade() {
+                            w.set_update_status(SharedString::from("error"));
+                            w.set_update_error(SharedString::from(&msg));
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    let http_inst = http.clone();
+    let rel_inst = latest_release_cache.clone();
+    let dl_inst = downloaded_update_path.clone();
+    let w_inst = window_weak.clone();
+    let rt_inst = rt_handle.clone();
+    main_window.on_install_update(move || {
+        let Some(info) = rel_inst.lock().ok().and_then(|g| g.clone()) else {
+            return;
+        };
+
+        #[cfg(target_os = "android")]
+        {
+            let url = if info.download_url.is_empty() { info.html_url.clone() } else { info.download_url.clone() };
+            show_toast(&w_inst, &rt_inst, format!("Download APK: {url}"));
+            return;
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            let existing = dl_inst.lock().ok().and_then(|g| g.clone()).filter(|p| p.is_file());
+            if let Some(path) = existing {
+                #[cfg(target_os = "windows")]
+                {
+                    if std::process::Command::new(&path).spawn().is_ok() {
+                        std::process::exit(0);
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = open_external_url(&info.html_url);
+                }
+                return;
+            }
+
+            if let Some(w) = w_inst.upgrade() {
+                w.set_update_status(SharedString::from("downloading"));
+                w.set_update_progress(0.0);
+                w.set_update_error(SharedString::default());
+            }
+
+            let http_d = http_inst.clone();
+            let dl_c = dl_inst.clone();
+            let w_d = w_inst.clone();
+            let _rt_d = rt_inst.clone();
+            rt_inst.spawn(async move {
+                let mut last_pct: i32 = -1;
+                let w_p = w_d.clone();
+                let res = riff_core::updater::download_release_asset(&http_d, &info, move |done, total| {
+                    if total > 0 {
+                        let frac = (done as f64 / total as f64).clamp(0.0, 1.0) as f32;
+                        let pct = (frac * 100.0) as i32;
+                        if pct != last_pct && (pct % 2 == 0 || pct == 100) {
+                            last_pct = pct;
+                            let w_ui = w_p.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(w) = w_ui.upgrade() {
+                                    w.set_update_progress(frac);
+                                }
+                            });
+                        }
+                    }
+                })
+                .await;
+
+                match res {
+                    Ok(path) => {
+                        if let Ok(mut g) = dl_c.lock() {
+                            *g = Some(path.clone());
+                        }
+                        let w_ui = w_d.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w_ui.upgrade() {
+                                w.set_update_progress(1.0);
+                                w.set_update_status(SharedString::from("ready"));
+                            }
+                        });
+
+                        #[cfg(target_os = "windows")]
+                        {
+                            if std::process::Command::new(&path).spawn().is_ok() {
+                                tokio::time::sleep(Duration::from_millis(350)).await;
+                                std::process::exit(0);
+                            }
+                        }
+
+                        #[cfg(target_os = "linux")]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let is_bin = path.file_name().and_then(|s| s.to_str()) == Some("riff-slint-linux-x86_64");
+                            if is_bin {
+                                if let Ok(meta) = std::fs::metadata(&path) {
+                                    let mut perms = meta.permissions();
+                                    perms.set_mode(0o755);
+                                    let _ = std::fs::set_permissions(&path, perms);
+                                }
+                                if let Ok(cur_exe) = std::env::current_exe() {
+                                    let backup = cur_exe.with_extension("old");
+                                    let _ = std::fs::remove_file(&backup);
+                                    if std::fs::rename(&cur_exe, &backup).is_ok() {
+                                        if std::fs::copy(&path, &cur_exe).is_ok() {
+                                            if std::process::Command::new(&cur_exe).spawn().is_ok() {
+                                                std::process::exit(0);
+                                            }
+                                        } else {
+                                            let _ = std::fs::rename(&backup, &cur_exe);
+                                        }
+                                    }
+                                }
+                            }
+                            show_toast(&w_d, &_rt_d, format!("Downloaded update to {}", path.display()));
+                        }
+                    }
+                    Err(err) => {
+                        let msg = err.to_string();
+                        let w_ui = w_d.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w_ui.upgrade() {
+                                w.set_update_status(SharedString::from("error"));
+                                w.set_update_error(SharedString::from(&msg));
+                            }
+                        });
+                    }
+                }
+            });
+        }
+    });
+
+    let rel_open = latest_release_cache.clone();
+    let w_open_rel = window_weak.clone();
+    let rt_open_rel = rt_handle.clone();
+    main_window.on_open_release_page(move || {
+        let url = rel_open
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|r| r.html_url.clone()))
+            .unwrap_or_else(|| "https://github.com/zaDotMe/riff-Rust/releases/latest".to_string());
+        if !open_external_url(&url) {
+            show_toast(&w_open_rel, &rt_open_rel, format!("Release page: {url}"));
+        }
+    });
+
+    let upd_auto_cb = auto_check_updates_state.clone();
+    let api_upd_auto = api.clone();
+    let rt_upd_auto = rt_handle.clone();
+    let w_upd_auto = window_weak.clone();
+    main_window.on_toggle_auto_check_updates(move |on| {
+        upd_auto_cb.store(on, Ordering::SeqCst);
+        if let Some(w) = w_upd_auto.upgrade() {
+            w.set_auto_check_updates(on);
+        }
+        let api_s = api_upd_auto.clone();
+        let val = if on { "1" } else { "0" };
+        rt_upd_auto.spawn(async move {
+            let _ = api_s.set_setting("slint_auto_check_updates", val).await;
         });
     });
 

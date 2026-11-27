@@ -91,6 +91,13 @@ export component MainWindow inherits Window {
     in-out property <bool> autoplay_enabled: true;
     in-out property <string> autoplay_mode: "similar";
     in-out property <bool> autoplay_loading: false;
+    in-out property <string> app_version: "0.7.82";
+    in-out property <bool> auto_check_updates: true;
+    in-out property <string> update_status: "idle";
+    in-out property <string> update_latest_version: "";
+    in-out property <string> update_notes: "";
+    in-out property <float> update_progress: 0.0;
+    in-out property <string> update_error: "";
     in-out property <bool> lyrics_open: true;
     in-out property <bool> fullscreen_lyrics_open: false;
     in-out property <bool> custom_lyrics_open: false;
@@ -220,6 +227,10 @@ export component MainWindow inherits Window {
     callback toggle_autoplay(bool);
     callback change_autoplay_mode(string);
     callback refresh_recommendations();
+    callback check_for_updates();
+    callback install_update();
+    callback open_release_page();
+    callback toggle_auto_check_updates(bool);
     callback window_minimize();
     callback window_maximize();
     callback window_close();
@@ -2518,6 +2529,13 @@ export component MainWindow inherits Window {
         search-platform <=> root.search_platform;
         autoplay-enabled <=> root.autoplay_enabled;
         autoplay-mode <=> root.autoplay_mode;
+        app-version: root.app_version;
+        auto-check-updates <=> root.auto_check_updates;
+        update-status: root.update_status;
+        update-latest-version: root.update_latest_version;
+        update-notes: root.update_notes;
+        update-progress: root.update_progress;
+        update-error: root.update_error;
         lyrics-source <=> root.lyrics_source;
         lyrics-word-source <=> root.lyrics_word_source;
         lyrics-mode <=> root.lyrics_mode;
@@ -2550,6 +2568,10 @@ export component MainWindow inherits Window {
         toggle-mini-mode => { root.toggle_mini_mode(); }
         toggle-autoplay(on) => { root.toggle_autoplay(on); }
         change-autoplay-mode(m) => { root.change_autoplay_mode(m); }
+        check-for-updates => { root.check_for_updates(); }
+        install-update => { root.install_update(); }
+        open-release-page => { root.open_release_page(); }
+        toggle-auto-check-updates(on) => { root.toggle_auto_check_updates(on); }
         change-lyrics-source(s) => { root.change_lyrics_source(s); }
         change-word-source(s) => { root.change_word_source(s); }
         set-lyrics-offset(ms) => { root.set_lyrics_offset(ms); }

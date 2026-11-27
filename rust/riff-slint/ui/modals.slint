@@ -923,6 +923,13 @@ export component SettingsModal inherits Rectangle {
     in-out property <string> search-platform: "ytmusic";
     in-out property <bool> autoplay-enabled: true;
     in-out property <string> autoplay-mode: "similar";
+    in property <string> app-version: "0.7.82";
+    in-out property <bool> auto-check-updates: true;
+    in property <string> update-status: "idle";
+    in property <string> update-latest-version: "";
+    in property <string> update-notes: "";
+    in property <float> update-progress: 0.0;
+    in property <string> update-error: "";
 
     // Lyrics Settings
     in-out property <string> lyrics-source: "auto";
@@ -962,6 +969,10 @@ export component SettingsModal inherits Rectangle {
     callback toggle-mini-mode();
     callback toggle-autoplay(bool);
     callback change-autoplay-mode(string);
+    callback check-for-updates();
+    callback install-update();
+    callback open-release-page();
+    callback toggle-auto-check-updates(bool);
     callback save-setting(string, string);
     callback close();
 
@@ -2210,31 +2221,253 @@ export component SettingsModal inherits Rectangle {
                         if section == 7: VerticalLayout {
                             spacing: 14px;
 
-                            Text { text: "About"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
-
+                            // Expressive purple banner matching Riff design
                             Rectangle {
-                                border-top-left-radius: 20px;
-                                border-top-right-radius: 20px;
-                                border-bottom-left-radius: 6px;
-                                border-bottom-right-radius: 6px;
-                                background: #202126b8;
-                                VerticalLayout {
-                                    padding: 16px;
-                                    spacing: 4px;
-                                    Text { text: "Riff v0.7.6 (Native Slint Engine)"; color: Theme.text-primary; font-size: 15px; font-weight: 700; }
-                                    Text { text: status-message; color: Theme.text-muted; font-size: 12.5px; }
+                                height: 118px;
+                                border-radius: 16px;
+                                background: @linear-gradient(135deg, #7e66e8 0%, #6349d8 55%, #5138c4 100%);
+                                clip: true;
+
+                                // Subtle decorative icons
+                                Image {
+                                    source: @image-url("assets/icon.png");
+                                    width: 24px;
+                                    height: 24px;
+                                    x: parent.width * 0.30;
+                                    y: 44px;
+                                    opacity: 0.25;
+                                }
+                                Image {
+                                    source: @image-url("assets/icon.png");
+                                    width: 26px;
+                                    height: 26px;
+                                    x: parent.width * 0.68;
+                                    y: 34px;
+                                    opacity: 0.25;
+                                }
+                                Image {
+                                    source: @image-url("assets/icon.png");
+                                    width: 16px;
+                                    height: 16px;
+                                    x: parent.width * 0.64;
+                                    y: 78px;
+                                    opacity: 0.22;
+                                }
+
+                                // Centered rounded icon badge
+                                Rectangle {
+                                    width: 62px;
+                                    height: 62px;
+                                    border-radius: 16px;
+                                    background: #d7ccff;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    drop-shadow-blur: 18px;
+                                    drop-shadow-color: #00000044;
+
+                                    Image {
+                                        source: @image-url("assets/icon.png");
+                                        width: 44px;
+                                        height: 44px;
+                                        x: 9px;
+                                        y: 9px;
+                                    }
                                 }
                             }
 
-                            Rectangle {
-                                border-top-left-radius: 6px;
-                                border-top-right-radius: 6px;
-                                border-bottom-left-radius: 20px;
-                                border-bottom-right-radius: 20px;
-                                background: #202126b8;
-                                VerticalLayout {
-                                    padding: 16px;
-                                    AboutSlint {}
+                            Text {
+                                text: "Riff";
+                                color: Theme.text-primary;
+                                font-size: 22px;
+                                font-weight: 800;
+                                horizontal-alignment: center;
+                            }
+
+                            // Main Version & Check for updates card
+                            VerticalLayout {
+                                spacing: 4px;
+
+                                Rectangle {
+                                    border-top-left-radius: 18px;
+                                    border-top-right-radius: 18px;
+                                    border-bottom-left-radius: 6px;
+                                    border-bottom-right-radius: 6px;
+                                    background: #202126b8;
+
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 12px;
+
+                                        HorizontalLayout {
+                                            spacing: 14px;
+
+                                            VerticalLayout {
+                                                alignment: center;
+                                                Image {
+                                                    source: @image-url("assets/icon.png");
+                                                    width: 28px;
+                                                    height: 28px;
+                                                }
+                                            }
+
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                alignment: center;
+                                                spacing: 2px;
+                                                Text {
+                                                    text: "Riff";
+                                                    color: Theme.text-primary;
+                                                    font-size: 14.5px;
+                                                    font-weight: 700;
+                                                }
+                                                Text {
+                                                    text: update-status == "up_to_date"
+                                                        ? ("Version " + app-version + " • Up to date")
+                                                        : (update-status == "available"
+                                                            ? ("Version " + app-version + " → v" + update-latest-version + " available")
+                                                            : ("Version " + app-version));
+                                                    color: update-status == "available" ? Theme.primary : Theme.text-muted;
+                                                    font-size: 12.5px;
+                                                }
+                                            }
+
+                                            VerticalLayout {
+                                                alignment: center;
+                                                Rectangle {
+                                                    height: 36px;
+                                                    min-width: 148px;
+                                                    border-radius: 18px;
+                                                    background: upd-btn-ta.has-hover ? #ffffff : #f1f1f5;
+                                                    opacity: (update-status == "checking" || update-status == "downloading") ? 0.72 : 1.0;
+
+                                                    HorizontalLayout {
+                                                        padding-left: 18px;
+                                                        padding-right: 18px;
+                                                        Text {
+                                                            text: update-status == "checking" ? "Checking..."
+                                                                : (update-status == "downloading" ? ("Updating " + Math.round(update-progress * 100) + "%")
+                                                                : (update-status == "available" ? ("Update to v" + update-latest-version)
+                                                                : (update-status == "ready" ? "Restart / Install"
+                                                                : "Check for updates")));
+                                                            color: #111116;
+                                                            font-size: 13px;
+                                                            font-weight: 700;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+
+                                                    upd-btn-ta := TouchArea {
+                                                        enabled: update-status != "checking" && update-status != "downloading";
+                                                        mouse-cursor: self.enabled ? pointer : default;
+                                                        clicked => {
+                                                            if (update-status == "available" || update-status == "ready") {
+                                                                root.install-update();
+                                                            } else {
+                                                                root.check-for-updates();
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Download progress bar
+                                        if update-status == "downloading": Rectangle {
+                                            height: 6px;
+                                            border-radius: 3px;
+                                            background: #ffffff1a;
+                                            clip: true;
+                                            Rectangle {
+                                                x: 0px;
+                                                y: 0px;
+                                                width: parent.width * clamp(update-progress, 0.0, 1.0);
+                                                height: 100%;
+                                                border-radius: 3px;
+                                                background: Theme.primary;
+                                            }
+                                        }
+
+                                        // Error feedback
+                                        if update-status == "error" && update-error != "": Text {
+                                            text: update-error;
+                                            color: #f28b82;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+
+                                        // Release notes preview when update is available
+                                        if (update-status == "available" || update-status == "downloading" || update-status == "ready") && update-notes != "": VerticalLayout {
+                                            spacing: 8px;
+                                            Rectangle {
+                                                border-radius: 10px;
+                                                background: #141418;
+                                                VerticalLayout {
+                                                    padding: 12px;
+                                                    spacing: 4px;
+                                                    Text {
+                                                        text: "What's new in v" + update-latest-version;
+                                                        color: Theme.text-primary;
+                                                        font-size: 12.5px;
+                                                        font-weight: 700;
+                                                    }
+                                                    Text {
+                                                        text: update-notes;
+                                                        color: Theme.text-secondary;
+                                                        font-size: 12px;
+                                                        wrap: word-wrap;
+                                                    }
+                                                }
+                                            }
+                                            HorizontalLayout {
+                                                alignment: end;
+                                                PillBtn {
+                                                    label: "Open Release Page";
+                                                    btn-height: 28px;
+                                                    h-pad: 12px;
+                                                    clicked => { root.open-release-page(); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Auto-check updates toggle
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: #202126b8;
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 16px;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            Text { text: "Auto-check updates"; color: Theme.text-primary; font-size: 14px; font-weight: 600; }
+                                            Text { text: "Automatically check GitHub Releases for new versions on startup"; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            ToggleSwitch {
+                                                checked <=> auto-check-updates;
+                                                toggled(on) => { root.toggle-auto-check-updates(on); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Engine & UI info
+                                Rectangle {
+                                    border-top-left-radius: 6px;
+                                    border-top-right-radius: 6px;
+                                    border-bottom-left-radius: 18px;
+                                    border-bottom-right-radius: 18px;
+                                    background: #202126b8;
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 6px;
+                                        Text { text: status-message; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                                        AboutSlint {}
+                                    }
                                 }
                             }
                         }
@@ -2534,27 +2767,25 @@ export component FullscreenLyricsOverlay inherits Rectangle {
     HorizontalLayout {
         width: 100%;
         height: 100%;
-        padding-left: show-lyrics-col ? 64px : 40px;
-        padding-right: show-lyrics-col ? 64px : 40px;
+        padding-left: show-lyrics-col ? 64px : 44px;
+        padding-right: show-lyrics-col ? 64px : 44px;
         padding-top: 56px;
-        padding-bottom: 48px;
+        padding-bottom: show-lyrics-col ? 48px : 44px;
         spacing: show-lyrics-col ? 56px : 0px;
 
-        if !show-lyrics-col: Rectangle { horizontal-stretch: 1; }
-
-        // Left side (.tv-side)
+        // Left side (.tv-side — centered with lyrics, or bottom-left showcase when lyrics hidden)
         VerticalLayout {
-            width: show-lyrics-col ? 360px : 420px;
-            alignment: center;
-            spacing: 18px;
+            width: show-lyrics-col ? 360px : 380px;
+            alignment: show-lyrics-col ? center : end;
+            spacing: show-lyrics-col ? 18px : 14px;
 
             // Large album cover (.tv-cover)
             HorizontalLayout {
-                alignment: center;
+                alignment: show-lyrics-col ? center : start;
                 Rectangle {
-                    width: show-lyrics-col ? 320px : 360px;
+                    width: show-lyrics-col ? 320px : 230px;
                     height: self.width;
-                    border-radius: 28px;
+                    border-radius: show-lyrics-col ? 28px : 20px;
                     background: #141418;
                     drop-shadow-blur: 36px;
                     drop-shadow-offset-y: 14px;
@@ -2580,28 +2811,28 @@ export component FullscreenLyricsOverlay inherits Rectangle {
 
             // Title & Artist (.tv-karaoke-meta)
             VerticalLayout {
-                spacing: 6px;
+                spacing: 4px;
                 Text {
                     text: current-title;
                     color: #ffffff;
-                    font-size: show-lyrics-col ? 24px : 28px;
+                    font-size: show-lyrics-col ? 24px : 26px;
                     font-weight: 700;
-                    horizontal-alignment: center;
+                    horizontal-alignment: show-lyrics-col ? center : left;
                     wrap: word-wrap;
                 }
                 Text {
                     text: current-artist;
                     color: #ffffffbf;
-                    font-size: show-lyrics-col ? 16px : 18px;
+                    font-size: show-lyrics-col ? 16px : 16px;
                     font-weight: 500;
-                    horizontal-alignment: center;
+                    horizontal-alignment: show-lyrics-col ? center : left;
                     wrap: word-wrap;
                 }
             }
 
             // Audio output & Lyrics Sync/Source badges (.tvk-output)
             HorizontalLayout {
-                alignment: center;
+                alignment: show-lyrics-col ? center : start;
                 spacing: 8px;
                 Rectangle {
                     height: 28px;
@@ -2683,7 +2914,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
 
             // Playback controls (.tvk-controls)
             HorizontalLayout {
-                alignment: center;
+                alignment: show-lyrics-col ? center : start;
                 spacing: 14px;
                 height: 56px;
 
