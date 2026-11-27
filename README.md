@@ -7,10 +7,10 @@
 **Expressive, fast, native music player for YouTube Music, SoundCloud, and local audio.**
 Built purely with **Rust + Slint** for **Windows**, **Linux**, and **Google TV / Android TV**.
 
-[![Release](https://img.shields.io/github/v/release/zaDotMe/riff-Rust?style=for-the-badge&label=release&labelColor=131318&color=9f99e6)](https://github.com/zaDotMe/riff-Rust/releases)
-[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Google%20TV-2ec4b6?style=for-the-badge&labelColor=131318)](https://github.com/zaDotMe/riff-Rust/releases)
-[![UI](https://img.shields.io/badge/UI-Pure%20Slint%20Expressive-c77dff?style=for-the-badge&labelColor=131318)](https://slint.dev)
-[![License](https://img.shields.io/badge/license-MIT-534dff?style=for-the-badge&labelColor=131318)](./LICENSE)
+<a href="https://github.com/zaDotMe/riff-Rust/releases"><img src="assets/badges/release.svg" alt="Release v0.7.81" /></a>
+<a href="https://github.com/zaDotMe/riff-Rust/releases"><img src="assets/badges/platforms.svg" alt="Platforms: Windows, Linux, Google TV" /></a>
+<a href="https://slint.dev"><img src="assets/badges/ui.svg" alt="UI: Pure Slint Expressive" /></a>
+<a href="./LICENSE"><img src="assets/badges/license.svg" alt="License: MIT" /></a>
 
 <br />
 
