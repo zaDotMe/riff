@@ -1475,6 +1475,94 @@ async fn push_search_history_entry(
     });
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SavedEqProfile {
+    name: String,
+    bass: f32,
+    mid: f32,
+    treble: f32,
+}
+
+fn eq_profiles_to_model(profiles: &[SavedEqProfile]) -> ModelRc<EqProfileData> {
+    let data: Vec<EqProfileData> = profiles
+        .iter()
+        .map(|p| EqProfileData {
+            name: SharedString::from(&p.name),
+            bass: p.bass,
+            mid: p.mid,
+            treble: p.treble,
+        })
+        .collect();
+    ModelRc::new(VecModel::from(data))
+}
+
+fn register_custom_font_file(path: &std::path::Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let blob = slint::fontique_012::fontique::Blob::new(std::sync::Arc::new(bytes));
+    let mut collection = slint::fontique_012::shared_collection();
+    let fonts = collection.register_fonts(blob, None);
+    let (family_id, _) = fonts.first()?;
+    collection.family_name(*family_id).map(|s| s.to_string())
+}
+
+fn compute_listening_stats(
+    hist: &[riff_core::models::Track],
+    favs: &[riff_core::models::Track],
+) -> (i32, String, String, String, Vec<(String, String)>) {
+    let total_plays = hist.len() as i32;
+    let total_secs: f64 = hist
+        .iter()
+        .map(|t| if t.duration > 0.0 { t.duration } else { 195.0 })
+        .sum();
+    let hours_str = format!("{:.1} hrs", total_secs / 3600.0);
+
+    let mut artist_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut artist_thumb: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut track_counts: std::collections::HashMap<String, (usize, String)> = std::collections::HashMap::new();
+
+    for t in hist.iter().chain(favs.iter()) {
+        let art = t.artist.trim();
+        if !art.is_empty() && !art.eq_ignore_ascii_case("Unknown Artist") {
+            *artist_counts.entry(art.to_string()).or_insert(0) += 1;
+            if !t.thumbnail.is_empty() {
+                artist_thumb.entry(art.to_string()).or_insert_with(|| t.thumbnail.clone());
+            }
+        }
+        let title = t.title.trim();
+        if !title.is_empty() {
+            let entry = track_counts
+                .entry(format!("{title} — {art}"))
+                .or_insert((0, title.to_string()));
+            entry.0 += 1;
+        }
+    }
+
+    let mut sorted_artists: Vec<(String, usize)> = artist_counts.into_iter().collect();
+    sorted_artists.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let top_artist = sorted_artists
+        .first()
+        .map(|(n, _)| n.clone())
+        .unwrap_or_else(|| "—".to_string());
+
+    let top_track = track_counts
+        .into_iter()
+        .max_by_key(|(_, (cnt, _))| *cnt)
+        .map(|(label, _)| label)
+        .unwrap_or_else(|| "—".to_string());
+
+    let top_artist_list: Vec<(String, String)> = sorted_artists
+        .into_iter()
+        .take(10)
+        .map(|(name, _)| {
+            let thumb = artist_thumb.get(&name).cloned().unwrap_or_default();
+            (name, thumb)
+        })
+        .collect();
+
+    (total_plays, hours_str, top_artist, top_track, top_artist_list)
+}
+
 async fn load_home_sections(
     api: &riff_core::api::RiffApi,
     http: &reqwest::Client,
@@ -1577,6 +1665,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let auto_check_updates_state = Arc::new(AtomicBool::new(true));
     let latest_release_cache: Arc<Mutex<Option<riff_core::updater::ReleaseInfo>>> = Arc::new(Mutex::new(None));
     let downloaded_update_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
+    let custom_eq_profiles_cache: Arc<Mutex<Vec<SavedEqProfile>>> = Arc::new(Mutex::new(Vec::new()));
     main_window.set_app_version(SharedString::from(env!("CARGO_PKG_VERSION")));
 
     // 1. Initial Data Load (Library, Favorites, History, Playlists, Home Feed)
@@ -1593,6 +1682,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let ap_mode_init = autoplay_mode_state.clone();
     let upd_auto_init = auto_check_updates_state.clone();
     let upd_rel_init = latest_release_cache.clone();
+    let eq_prof_init = custom_eq_profiles_cache.clone();
     let rt_upd_init = rt_handle.clone();
 
     rt_handle.spawn(async move {
@@ -1668,6 +1758,27 @@ pub fn run() -> Result<(), slint::PlatformError> {
             .get("slint_perf_mode")
             .cloned()
             .unwrap_or_else(|| if cfg!(target_os = "android") { "medium".to_string() } else { "high".to_string() });
+        let always_on_top_init = kv_map.get("slint_always_on_top").map(|v| v == "1").unwrap_or(false);
+        let saved_eq_profiles: Vec<SavedEqProfile> = kv_map
+            .get("slint_custom_eq_profiles")
+            .and_then(|s| serde_json::from_str::<Vec<SavedEqProfile>>(s).ok())
+            .unwrap_or_default();
+        if let Ok(mut g) = eq_prof_init.lock() {
+            *g = saved_eq_profiles.clone();
+        }
+        let mut lyrics_font_init = kv_map.get("slint_lyrics_font_family").cloned().unwrap_or_default();
+        if let Some(font_path_str) = kv_map.get("slint_lyrics_font_path") {
+            let p = PathBuf::from(font_path_str);
+            if p.is_file() {
+                if let Some(fam) = register_custom_font_file(&p) {
+                    if lyrics_font_init.is_empty() {
+                        lyrics_font_init = fam;
+                    }
+                }
+            }
+        }
+        let (stats_plays, stats_hrs, stats_art, stats_trk, top_art_seeds) =
+            compute_listening_stats(&hist_tracks, &fav_tracks);
 
         let (_, _, sh_slots) = tokio::join!(
             hydrate_track_covers(&mut fav_items, &http_init),
@@ -1781,6 +1892,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 w.set_crossfade_enabled(cf_en_init);
                 w.set_crossfade_secs(cf_secs_init);
                 w.set_perf_mode(SharedString::from(perf_mode_init.as_str()));
+                w.set_pinned_on_top(always_on_top_init);
+                w.set_custom_eq_profiles(eq_profiles_to_model(&saved_eq_profiles));
+                w.set_stats_total_plays(stats_plays);
+                w.set_stats_hours_str(SharedString::from(&stats_hrs));
+                w.set_stats_top_artist(SharedString::from(&stats_art));
+                w.set_stats_top_track(SharedString::from(&stats_trk));
+                w.set_lyrics_font_family(SharedString::from(&lyrics_font_init));
+                theme.set_lyrics_font_family(SharedString::from(&lyrics_font_init));
                 match perf_mode_init.as_str() {
                     "standard" => {
                         theme.set_ambient_blur_enabled(false);
@@ -1828,13 +1947,29 @@ pub fn run() -> Result<(), slint::PlatformError> {
             }
         });
 
-        // Load Home sections ("For you" & "Trending now") with cover art
-        let (fy_items, tr_items) = load_home_sections(&api_init, &http_init, &fav_ids, seed_artist.as_deref()).await;
+        // Load Home sections ("For you", "Trending now", & "Top Artists") with cover art
+        let top_art_json: Vec<serde_json::Value> = top_art_seeds
+            .into_iter()
+            .map(|(name, thumb)| {
+                serde_json::json!({
+                    "id": name,
+                    "name": name,
+                    "subtitle": "Artist",
+                    "platform": "ytmusic",
+                    "thumbnail": thumb,
+                })
+            })
+            .collect();
+        let ((fy_items, tr_items), top_art_rows) = tokio::join!(
+            load_home_sections(&api_init, &http_init, &fav_ids, seed_artist.as_deref()),
+            json_artists_to_rows(top_art_json, &http_init),
+        );
         let w_upd_boot = w_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = w_init.upgrade() {
                 w.set_home_for_you(to_slint_model(fy_items));
                 w.set_home_trending(to_slint_model(tr_items));
+                w.set_home_top_artists(artists_to_model(top_art_rows));
             }
         });
 
@@ -4837,6 +4972,233 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 }
             }
         });
+    });
+
+    // 13h. Download All Playlist, Custom EQ Profiles, Lyrics Font Family, & Always-on-Top
+    let api_dla = api.clone();
+    let http_dla = http.clone();
+    let all_lib_dla = all_library_cache.clone();
+    let w_dla = window_weak.clone();
+    let rt_dla = rt_handle.clone();
+    main_window.on_download_all_playlist(move || {
+        let Some(w) = w_dla.upgrade() else {
+            return;
+        };
+        let tracks: Vec<TrackItem> = w
+            .get_active_playlist_tracks()
+            .iter()
+            .filter(|t| !t.id.is_empty() && t.platform.as_str() != "local")
+            .map(|t| track_data_to_item(&t))
+            .collect();
+        if tracks.is_empty() {
+            show_toast(&w_dla, &rt_dla, "No remote tracks to download in this playlist");
+            return;
+        }
+        w.set_playlist_downloading_all(true);
+        w.set_playlist_download_progress(0.0);
+
+        let total = tracks.len() as f32;
+        let api_d = api_dla.clone();
+        let http_d = http_dla.clone();
+        let lc = all_lib_dla.clone();
+        let w_d = w_dla.clone();
+        let rt_d = rt_dla.clone();
+        rt_dla.spawn(async move {
+            let mut saved_count = 0usize;
+            for (i, td) in tracks.into_iter().enumerate() {
+                let q = riff_core::models::StreamQuery {
+                    id: Some(td.id.clone()),
+                    title: Some(td.title.clone()),
+                    artist: Some(td.artist.clone()),
+                    platform: Some(td.platform.clone()),
+                    duration: Some(td.duration_sec),
+                    url: None,
+                    thumbnail: None,
+                    timeout: None,
+                    quality: None,
+                    q: None,
+                };
+                if let Ok(val) = api_d.resolve_stream(&q, 0).await {
+                    let is_hls = val.get("isHls").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let raw_url = val
+                        .get("rawStreamUrl")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| val.get("streamUrl").and_then(|v| v.as_str()));
+                    if let Some(url) = raw_url {
+                        if let Ok((bytes, hint)) = download_stream_bytes(&http_d, url, is_hls).await {
+                            let ext = hint.as_deref().unwrap_or("m4a");
+                            if api_d
+                                .save_offline_track(
+                                    &td.title,
+                                    &td.artist,
+                                    &td.thumbnail,
+                                    td.duration_sec,
+                                    &bytes,
+                                    ext,
+                                )
+                                .await
+                                .is_ok()
+                            {
+                                saved_count += 1;
+                            }
+                        }
+                    }
+                }
+                let prog = (i + 1) as f32 / total;
+                let w_p = w_d.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_p.upgrade() {
+                        w.set_playlist_download_progress(prog);
+                    }
+                });
+            }
+
+            let updated = api_d.list_library().await.unwrap_or_default();
+            let favs = api_d.get_favorites().await.unwrap_or_default();
+            let fav_set: HashSet<String> = favs.iter().map(|t| t.id.clone()).collect();
+            let items: Vec<TrackItem> = updated
+                .iter()
+                .map(|t| {
+                    let mut item = TrackItem::from_core(t, "local", fav_set.contains(&t.id));
+                    if !t.path.is_empty() {
+                        item.id = t.path.clone();
+                    }
+                    item
+                })
+                .collect();
+            if let Ok(mut g) = lc.lock() {
+                *g = items.clone();
+            }
+            let w_fin = w_d.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_fin.upgrade() {
+                    w.set_playlist_downloading_all(false);
+                    w.set_playlist_download_progress(1.0);
+                    w.set_library_tracks(to_slint_model(items));
+                }
+            });
+            show_toast(&w_d, &rt_d, format!("Downloaded {saved_count} tracks for offline playback"));
+        });
+    });
+
+    let api_eqp_save = api.clone();
+    let eq_prof_save = custom_eq_profiles_cache.clone();
+    let w_eqp_save = window_weak.clone();
+    let rt_eqp_save = rt_handle.clone();
+    main_window.on_save_eq_profile(move |name| {
+        let clean = name.trim().to_string();
+        if clean.is_empty() {
+            return;
+        }
+        let Some(w) = w_eqp_save.upgrade() else {
+            return;
+        };
+        let prof = SavedEqProfile {
+            name: clean.clone(),
+            bass: w.get_eq_bass(),
+            mid: w.get_eq_mid(),
+            treble: w.get_eq_treble(),
+        };
+        let snapshot = if let Ok(mut g) = eq_prof_save.lock() {
+            g.retain(|p| !p.name.eq_ignore_ascii_case(&clean));
+            g.push(prof);
+            g.clone()
+        } else {
+            return;
+        };
+        w.set_custom_eq_profiles(eq_profiles_to_model(&snapshot));
+        w.set_eq_preset_name(SharedString::from(&clean));
+        let api_s = api_eqp_save.clone();
+        rt_eqp_save.spawn(async move {
+            if let Ok(json_str) = serde_json::to_string(&snapshot) {
+                let _ = api_s.set_setting("slint_custom_eq_profiles", &json_str).await;
+            }
+        });
+        show_toast(&w_eqp_save, &rt_eqp_save, format!("Saved EQ profile: {clean}"));
+    });
+
+    let api_eqp_del = api.clone();
+    let eq_prof_del = custom_eq_profiles_cache.clone();
+    let w_eqp_del = window_weak.clone();
+    let rt_eqp_del = rt_handle.clone();
+    main_window.on_delete_eq_profile(move |name| {
+        let target = name.to_string();
+        let snapshot = if let Ok(mut g) = eq_prof_del.lock() {
+            g.retain(|p| p.name != target);
+            g.clone()
+        } else {
+            return;
+        };
+        if let Some(w) = w_eqp_del.upgrade() {
+            w.set_custom_eq_profiles(eq_profiles_to_model(&snapshot));
+        }
+        let api_s = api_eqp_del.clone();
+        rt_eqp_del.spawn(async move {
+            if let Ok(json_str) = serde_json::to_string(&snapshot) {
+                let _ = api_s.set_setting("slint_custom_eq_profiles", &json_str).await;
+            }
+        });
+    });
+
+    let api_lff = api.clone();
+    let w_lff = window_weak.clone();
+    let rt_lff = rt_handle.clone();
+    main_window.on_set_lyrics_font_family(move |fam| {
+        let f = fam.to_string();
+        if let Some(w) = w_lff.upgrade() {
+            w.set_lyrics_font_family(SharedString::from(&f));
+            Theme::get(&w).set_lyrics_font_family(SharedString::from(&f));
+        }
+        let api_s = api_lff.clone();
+        rt_lff.spawn(async move {
+            let _ = api_s.set_setting("slint_lyrics_font_family", &f).await;
+        });
+    });
+
+    let api_lf_br = api.clone();
+    let w_lf_br = window_weak.clone();
+    let rt_lf_br = rt_handle.clone();
+    main_window.on_browse_lyrics_font(move || {
+        #[cfg(not(target_os = "android"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Font files", &["ttf", "otf", "ttc"])
+                .pick_file()
+            {
+                if let Some(family) = register_custom_font_file(&path) {
+                    if let Some(w) = w_lf_br.upgrade() {
+                        w.set_lyrics_font_family(SharedString::from(&family));
+                        Theme::get(&w).set_lyrics_font_family(SharedString::from(&family));
+                    }
+                    let api_s = api_lf_br.clone();
+                    let path_str = path.to_string_lossy().to_string();
+                    let fam_c = family.clone();
+                    rt_lf_br.spawn(async move {
+                        let _ = api_s.set_setting("slint_lyrics_font_path", &path_str).await;
+                        let _ = api_s.set_setting("slint_lyrics_font_family", &fam_c).await;
+                    });
+                    show_toast(&w_lf_br, &rt_lf_br, format!("Lyrics font set to: {family}"));
+                } else {
+                    show_toast(&w_lf_br, &rt_lf_br, "Failed to load selected font file");
+                }
+            }
+        }
+    });
+
+    let api_aot = api.clone();
+    let w_aot = window_weak.clone();
+    let rt_aot = rt_handle.clone();
+    main_window.on_toggle_always_on_top(move || {
+        if let Some(w) = w_aot.upgrade() {
+            let next = !w.get_pinned_on_top();
+            w.set_pinned_on_top(next);
+            let api_s = api_aot.clone();
+            let val = if next { "1" } else { "0" };
+            rt_aot.spawn(async move {
+                let _ = api_s.set_setting("slint_always_on_top", val).await;
+            });
+            show_toast(&w_aot, &rt_aot, if next { "Window pinned on top" } else { "Window unpinned" });
+        }
     });
 
     // 14. Sleep Timer Background Ticker (1s)

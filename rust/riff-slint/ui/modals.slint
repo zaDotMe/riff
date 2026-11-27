@@ -1,5 +1,5 @@
 import { Slider, ScrollView, AboutSlint, TextEdit, LineEdit } from "std-widgets.slint";
-import { Theme, LyricLineData, SyncLineData, PlaylistData } from "theme.slint";
+import { Theme, LyricLineData, SyncLineData, PlaylistData, EqProfileData } from "theme.slint";
 import { IconBtn, PillBtn, ToggleSwitch, ScrubberBar, WinBtn } from "components.slint";
 
 export component Titlebar inherits Rectangle {
@@ -7,8 +7,10 @@ export component Titlebar inherits Rectangle {
     in property <bool> lyrics-open: true;
     in property <bool> is-maximized: false;
     in property <bool> mini-mode: false;
-    out property <bool> any-hover: drag-ta.has-hover || btn-lyrics.hovered || btn-mini.hovered || btn-min.hovered || btn-max.hovered || btn-close.hovered;
+    in property <bool> always-on-top: false;
+    out property <bool> any-hover: drag-ta.has-hover || btn-pin.hovered || btn-lyrics.hovered || btn-mini.hovered || btn-min.hovered || btn-max.hovered || btn-close.hovered;
 
+    callback toggle-always-on-top();
     callback toggle-lyrics();
     callback mini-player();
     callback go-home();
@@ -79,6 +81,17 @@ export component Titlebar inherits Rectangle {
         height: 40px;
         spacing: 4px;
         alignment: end;
+
+        // Always-on-top pin
+        btn-pin := WinBtn {
+            width: 34px;
+            icon: @image-url("icons/pin.svg");
+            active: root.always-on-top;
+            active-icon-color: Theme.primary;
+            revealed: root.revealed;
+            reveal-delay: 0ms;
+            clicked => { root.toggle-always-on-top(); }
+        }
 
         // Lyrics toggle
         btn-lyrics := WinBtn {
@@ -830,6 +843,7 @@ export component RightPanel inherits Rectangle {
                             if line.is_gap || lyrics-mode != "Word" || line.rows.length == 0: Text {
                                 horizontal-stretch: 1;
                                 text: line.is_gap ? "Instrumental" : line.text;
+                                font-family: Theme.lyrics-font-family != "" ? Theme.lyrics-font-family : "Inter";
                                 color: line.is_active ? Theme.text-primary : (line.is_past ? #e2e2e988 : Theme.text-muted);
                                 font-size: line.is_active ? 18.5px : 15px;
                                 font-weight: line.is_active ? 700 : 500;
@@ -853,6 +867,7 @@ export component RightPanel inherits Rectangle {
 
                                         rp-w-base := Text {
                                             text: w.text;
+                                            font-family: Theme.lyrics-font-family != "" ? Theme.lyrics-font-family : "Inter";
                                             color: line.is_active
                                                 ? (lyrics-word-style == "words"
                                                     ? (w.is_past ? #ffffff : (w.is_active ? Theme.primary : #ffffff55))
@@ -950,6 +965,12 @@ export component SettingsModal inherits Rectangle {
     in property <int> fav-count: 0;
     in property <int> hist-count: 0;
     in property <int> playlist-count: 0;
+    in property <int> stats-total-plays: 0;
+    in property <string> stats-hours-str: "0.0 hrs";
+    in property <string> stats-top-artist: "—";
+    in property <string> stats-top-track: "—";
+    in-out property <string> lyrics-font-family: "";
+    in property <[string]> system-fonts: [];
 
     callback switch-ui-mode(string);
     callback scan-folder();
@@ -976,6 +997,8 @@ export component SettingsModal inherits Rectangle {
     callback install-update();
     callback open-release-page();
     callback toggle-auto-check-updates(bool);
+    callback set-lyrics-font-family(string);
+    callback browse-lyrics-font();
     callback save-setting(string, string);
     callback close();
 
@@ -1928,6 +1951,54 @@ export component SettingsModal inherits Rectangle {
                                         }
                                     }
 
+                                    // Lyrics font family (system fonts + custom .ttf/.otf)
+                                    VerticalLayout {
+                                        spacing: 8px;
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            Text {
+                                                text: "Lyrics font: " + (lyrics-font-family != "" ? lyrics-font-family : "Default (Inter)");
+                                                color: Theme.text-primary;
+                                                font-size: 13.5px;
+                                                font-weight: 600;
+                                                horizontal-stretch: 1;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                            PillBtn {
+                                                label: "Browse .ttf / .otf";
+                                                btn-height: 28px;
+                                                h-pad: 10px;
+                                                primary: true;
+                                                clicked => { root.browse-lyrics-font(); }
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
+                                            PillBtn {
+                                                label: "Default";
+                                                btn-height: 26px;
+                                                h-pad: 10px;
+                                                primary: lyrics-font-family == "";
+                                                clicked => {
+                                                    lyrics-font-family = "";
+                                                    root.set-lyrics-font-family("");
+                                                }
+                                            }
+                                            for sf in system-fonts: PillBtn {
+                                                label: sf;
+                                                btn-height: 26px;
+                                                h-pad: 10px;
+                                                primary: lyrics-font-family == sf;
+                                                clicked => {
+                                                    lyrics-font-family = sf;
+                                                    root.set-lyrics-font-family(sf);
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     // Active lyric vertical position (Top / Center / Bottom)
                                     VerticalLayout {
                                         spacing: 6px;
@@ -2613,10 +2684,10 @@ export component SettingsModal inherits Rectangle {
                             }
                         }
 
-                        // 10: Account
+                        // 10: Account & Listening Stats ("Riff Wrapped" Mini)
                         if section == 10: VerticalLayout {
                             spacing: 14px;
-                            Text { text: "Account"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
+                            Text { text: "Account & Listening Stats"; color: Theme.text-secondary; font-size: 14px; font-weight: 600; }
                             Rectangle {
                                 border-radius: 20px;
                                 background: #202126b8;
@@ -2629,6 +2700,65 @@ export component SettingsModal inherits Rectangle {
                                         spacing: 2px;
                                         Text { text: "User"; color: Theme.text-primary; font-size: 15px; font-weight: 700; }
                                         Text { text: "Local Riff profile • " + fav-count + " liked • " + playlist-count + " playlists"; color: Theme.text-muted; font-size: 12.5px; }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                border-radius: 20px;
+                                background: @linear-gradient(135deg, #252238 0%, #1a1a22 100%);
+                                border-width: 1px;
+                                border-color: #ffffff14;
+                                VerticalLayout {
+                                    padding: 18px;
+                                    spacing: 12px;
+
+                                    Text {
+                                        text: "Riff Wrapped • Local Stats";
+                                        color: Theme.primary;
+                                        font-size: 14px;
+                                        font-weight: 800;
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                            height: 68px;
+                                            border-radius: 12px;
+                                            background: #ffffff0a;
+                                            VerticalLayout {
+                                                padding: 12px;
+                                                spacing: 2px;
+                                                alignment: center;
+                                                Text { text: stats-total-plays + ""; color: Theme.text-primary; font-size: 20px; font-weight: 800; }
+                                                Text { text: "Tracks played"; color: Theme.text-muted; font-size: 11.5px; }
+                                            }
+                                        }
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                            height: 68px;
+                                            border-radius: 12px;
+                                            background: #ffffff0a;
+                                            VerticalLayout {
+                                                padding: 12px;
+                                                spacing: 2px;
+                                                alignment: center;
+                                                Text { text: stats-hours-str; color: Theme.text-primary; font-size: 20px; font-weight: 800; }
+                                                Text { text: "Listening time"; color: Theme.text-muted; font-size: 11.5px; }
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        border-radius: 12px;
+                                        background: #ffffff08;
+                                        VerticalLayout {
+                                            padding: 12px;
+                                            spacing: 6px;
+                                            Text { text: "Top Artist: " + stats-top-artist; color: Theme.text-primary; font-size: 13px; font-weight: 600; overflow: elide; }
+                                            Text { text: "Most Played Track: " + stats-top-track; color: Theme.text-secondary; font-size: 12.5px; overflow: elide; }
+                                        }
                                     }
                                 }
                             }
@@ -3116,6 +3246,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
                             if line.is_gap || lyrics-mode != "Word" || line.rows.length == 0: Text {
                                 horizontal-stretch: 1;
                                 text: line.is_gap ? "•••" : line.text;
+                                font-family: Theme.lyrics-font-family != "" ? Theme.lyrics-font-family : "Inter";
                                 color: line.is_active ? #ffffff : (line.is_past ? #ffffff66 : #ffffff55);
                                 font-size: (line.is_active ? 34px : 28px) * (tvk-size-pct / 100.0);
                                 font-weight: tvk-weight;
@@ -3140,6 +3271,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
 
                                         tvk-w-base := Text {
                                             text: w.text;
+                                            font-family: Theme.lyrics-font-family != "" ? Theme.lyrics-font-family : "Inter";
                                             color: line.is_active
                                                 ? (lyrics-word-style == "words"
                                                     ? (w.is_past ? #ffffff : (w.is_active ? Theme.primary : #ffffff55))
@@ -3684,6 +3816,8 @@ export component AudioEditorModal inherits Rectangle {
     in-out property <float> eq-mid: 0.0;
     in-out property <float> eq-treble: 0.0;
     in-out property <string> eq-preset-name: "Default";
+    in property <[EqProfileData]> custom-eq-profiles: [];
+    in-out property <string> new-eq-profile-name: "";
     in property <string> sleep-status: "00:00";
     in property <bool> sleep-active: false;
 
@@ -3693,6 +3827,8 @@ export component AudioEditorModal inherits Rectangle {
     callback set-crossfade(bool, float);
     callback set-eq(float, float, float);
     callback apply-preset(string);
+    callback save-eq-profile(string);
+    callback delete-eq-profile(string);
     callback set-sleep-minutes(int); // -1: track end, 0: off, >0: minutes
     callback add-sleep-5m();
     callback reset-audio();
@@ -3957,6 +4093,100 @@ export component AudioEditorModal inherits Rectangle {
                                 Slider { height: 32px; minimum: -12.0; maximum: 12.0; value <=> eq-mid; changed(v) => { root.set-eq(eq-bass, v, eq-treble); } }
                                 Text { text: "Treble (10kHz): " + Math.round(eq-treble) + " dB"; color: Theme.text-secondary; font-size: 13px; }
                                 Slider { height: 32px; minimum: -12.0; maximum: 12.0; value <=> eq-treble; changed(v) => { root.set-eq(eq-bass, eq-mid, v); } }
+                            }
+                        }
+
+                        // Custom EQ Profiles
+                        Rectangle {
+                            border-radius: 16px;
+                            background: #24252c;
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 10px;
+                                Text { text: "Custom EQ Profiles"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 36px;
+                                        border-radius: 10px;
+                                        background: #16161b;
+                                        border-width: 1px;
+                                        border-color: eq-prof-in.has-focus ? Theme.primary : #ffffff18;
+                                        eq-prof-in := TextInput {
+                                            x: 10px;
+                                            y: 8px;
+                                            width: parent.width - 20px;
+                                            height: 20px;
+                                            text <=> new-eq-profile-name;
+                                            color: Theme.text-primary;
+                                            font-size: 13px;
+                                            single-line: true;
+                                            accepted => {
+                                                if (new-eq-profile-name != "") {
+                                                    root.save-eq-profile(new-eq-profile-name);
+                                                    new-eq-profile-name = "";
+                                                }
+                                            }
+                                        }
+                                    }
+                                    PillBtn {
+                                        label: "Save profile";
+                                        primary: true;
+                                        disabled: new-eq-profile-name == "";
+                                        clicked => {
+                                            root.save-eq-profile(new-eq-profile-name);
+                                            new-eq-profile-name = "";
+                                        }
+                                    }
+                                }
+
+                                if custom-eq-profiles.length == 0: Text {
+                                    text: "No custom profiles saved yet. Adjust sliders above and save.";
+                                    color: Theme.text-muted;
+                                    font-size: 12px;
+                                }
+
+                                for prof in custom-eq-profiles: HorizontalLayout {
+                                    spacing: 8px;
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 34px;
+                                        border-radius: 10px;
+                                        background: eq-preset-name == prof.name ? Theme.primary-dim : #1a1b20;
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            Text {
+                                                text: prof.name + "  (" + Math.round(prof.bass) + " / " + Math.round(prof.mid) + " / " + Math.round(prof.treble) + " dB)";
+                                                color: eq-preset-name == prof.name ? Theme.primary : Theme.text-primary;
+                                                font-size: 12.5px;
+                                                font-weight: 600;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                        }
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                eq-bass = prof.bass;
+                                                eq-mid = prof.mid;
+                                                eq-treble = prof.treble;
+                                                eq-preset-name = prof.name;
+                                                root.set-eq(prof.bass, prof.mid, prof.treble);
+                                            }
+                                        }
+                                    }
+                                    IconBtn {
+                                        width: 34px;
+                                        height: 34px;
+                                        icon: @image-url("icons/trash.svg");
+                                        icon-size: 15px;
+                                        icon-color: #f28b82;
+                                        clicked => { root.delete-eq-profile(prof.name); }
+                                    }
+                                }
                             }
                         }
                     }

@@ -1,6 +1,6 @@
 [package]
 name = "riff-slint"
-version = "0.7.85"
+version = "0.7.86"
 edition = "2021"
 authors = ["rootscripts"]
 license = "MIT"
@@ -72,7 +72,7 @@ slint-build = "1.19"
 winresource = "0.1"
 
 [dependencies]
-slint = { version = "1.19", features = ["backend-android-activity-06"] }
+slint = { version = "1.19", features = ["backend-android-activity-06", "unstable-fontique-012"] }
 riff-core = { path = "../riff-core" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }

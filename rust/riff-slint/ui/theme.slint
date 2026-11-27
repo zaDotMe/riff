@@ -91,6 +91,13 @@ export struct ArtistData {
     has_avatar: bool,
 }
 
+export struct EqProfileData {
+    name: string,
+    bass: float,
+    mid: float,
+    treble: float,
+}
+
 export global Theme {
     in-out property <color> window-bg: #2b2b2e;
     in-out property <color> panel-bg: #0d0d0d;
@@ -119,4 +126,5 @@ export global Theme {
     in-out property <color> custom-accent: #9f99e6;
     in-out property <color> custom-on-accent: #1e1a4d;
     in-out property <bool> reduced-motion: false;
+    in-out property <string> lyrics-font-family: "";
 }

@@ -4839,7 +4839,7 @@ dependencies = [
 
 [[package]]
 name = "riff-slint"
-version = "0.7.84"
+version = "0.7.85"
 dependencies = [
  "image",
  "open",

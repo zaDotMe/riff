@@ -41,11 +41,13 @@ export component HomeView inherits ScrollView {
     in property <[TrackData]> for-you-tracks: [];
     in property <[TrackData]> trending-tracks: [];
     in property <[TrackData]> jump-back-tracks: [];
+    in property <[ArtistData]> top-artists: [];
     in property <int> fav-count: 0;
     in property <int> local-count: 0;
     in property <int> hist-count: 0;
     callback open-tab(int);
     callback play-track(TrackData);
+    callback open-artist(ArtistData);
     callback refresh-home();
 
     VerticalLayout {
@@ -345,6 +347,86 @@ export component HomeView inherits ScrollView {
                     for t in jump-back-tracks: HomeCard {
                         track: t;
                         clicked => { root.play-track(t); }
+                    }
+                }
+            }
+        }
+
+        // Section: Top Artists (from listening history & favorites)
+        if top-artists.length > 0: VerticalLayout {
+            spacing: 12px;
+
+            HorizontalLayout {
+                height: 36px;
+                spacing: 8px;
+
+                VerticalLayout {
+                    alignment: center;
+                    Image { source: @image-url("icons/avatar_default.svg"); width: 20px; height: 20px; }
+                }
+                Text {
+                    text: "Top Artists";
+                    color: Theme.text-primary;
+                    font-size: 22px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+
+            ScrollView {
+                height: 190px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    alignment: start;
+                    for art in top-artists: Rectangle {
+                        width: 146px;
+                        height: 180px;
+                        border-radius: 12px;
+                        background: art-ta.has-hover ? #232329 : transparent;
+                        animate background { duration: Theme.reduced-motion ? 0ms : 150ms; easing: ease-out; }
+
+                        art-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.open-artist(art); }
+                        }
+
+                        VerticalLayout {
+                            padding: 10px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 118px;
+                                    height: 118px;
+                                    border-radius: 59px;
+                                    background: #23203a;
+                                    clip: true;
+
+                                    if art.has_avatar: Image {
+                                        source: art.avatar;
+                                        width: 100%;
+                                        height: 100%;
+                                        image-fit: cover;
+                                    }
+                                    if !art.has_avatar: Image {
+                                        source: @image-url("icons/avatar_default.svg");
+                                        width: 100%;
+                                        height: 100%;
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: art.name;
+                                color: Theme.text-primary;
+                                font-size: 13.5px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                overflow: elide;
+                            }
+                        }
                     }
                 }
             }
@@ -1406,6 +1488,8 @@ export component PlaylistDetailView inherits ScrollView {
     in property <string> playlist-name: "Playlist";
     in property <bool> is-remote: false;
     in property <bool> is-loading: false;
+    in property <bool> is-downloading-all: false;
+    in property <float> download-all-progress: 0.0;
     in property <[TrackData]> tracks: [];
     in property <string> current-id: "";
     in property <bool> is-playing: false;
@@ -1415,6 +1499,7 @@ export component PlaylistDetailView inherits ScrollView {
     callback delete-playlist(string);
     callback rename-playlist(string, string);
     callback save-remote-playlist();
+    callback download-all-playlist();
     callback remove-track-from-playlist(string, string);
     callback toggle-favorite(TrackData);
     callback add-to-playlist(TrackData);
@@ -1537,6 +1622,14 @@ export component PlaylistDetailView inherits ScrollView {
                         has-icon: true;
                         primary: true;
                         clicked => { root.save-remote-playlist(); }
+                    }
+
+                    if tracks.length > 0: PillBtn {
+                        label: is-downloading-all ? ("Downloading " + Math.round(download-all-progress * 100) + "%") : "Download All";
+                        icon: @image-url("icons/download.svg");
+                        has-icon: true;
+                        disabled: is-downloading-all;
+                        clicked => { root.download-all-playlist(); }
                     }
 
                     if !is-remote: IconBtn {

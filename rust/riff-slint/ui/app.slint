@@ -1,15 +1,16 @@
 import { ScrollView } from "std-widgets.slint";
-import { Theme, TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData } from "theme.slint";
+import { Theme, TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData, EqProfileData } from "theme.slint";
 import { IconBtn, PillBtn, ScrubberBar, VolumeBar } from "components.slint";
 import { HomeView, SearchView, LocalFilesView, FavoritesView, HistoryView, QueueView, PlaylistDetailView, ArtistView } from "views.slint";
 import { Titlebar, PresetsDrawer, RightPanel, SettingsModal, FullscreenLyricsOverlay, CustomLyricsModal, SyncLyricsModal, AudioEditorModal, CreatePlaylistModal, AddToPlaylistModal, ToolsSetupModal, ImportPlaylistModal } from "modals.slint";
 
-export { TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData, Theme }
+export { TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData, EqProfileData, Theme }
 
 export component MainWindow inherits Window {
     title: "Riff";
     icon: @image-url("assets/icon.png");
     no-frame: true;
+    always-on-top: root.pinned_on_top;
     preferred-width: 1100px;
     preferred-height: 720px;
     min-width: mini_mode ? 360px : 800px;
@@ -26,6 +27,7 @@ export component MainWindow inherits Window {
     in-out property <[TrackData]> favorite_tracks: [];
     in-out property <[TrackData]> home_for_you: [];
     in-out property <[TrackData]> home_trending: [];
+    in-out property <[ArtistData]> home_top_artists: [];
     in-out property <[TrackData]> queue_tracks: [];
     in-out property <[TrackData]> recommended_tracks: [];
     in-out property <[PlaylistData]> playlists: [];
@@ -33,6 +35,8 @@ export component MainWindow inherits Window {
     in-out property <string> active_playlist_name: "Playlist";
     in-out property <bool> active_playlist_is_remote: false;
     in-out property <bool> active_playlist_loading: false;
+    in-out property <bool> playlist_downloading_all: false;
+    in-out property <float> playlist_download_progress: 0.0;
     in-out property <[TrackData]> active_playlist_tracks: [];
     in-out property <string> artist_view_name: "Artist";
     in-out property <string> artist_view_subtitle: "Artist";
@@ -98,7 +102,15 @@ export component MainWindow inherits Window {
     in-out property <bool> import_playlist_open: false;
     in-out property <bool> import_playlist_loading: false;
     in-out property <string> import_playlist_error: "";
-    in-out property <string> app_version: "0.7.85";
+    in-out property <bool> pinned_on_top: false;
+    in-out property <[EqProfileData]> custom_eq_profiles: [];
+    in-out property <int> stats_total_plays: 0;
+    in-out property <string> stats_hours_str: "0.0 hrs";
+    in-out property <string> stats_top_artist: "—";
+    in-out property <string> stats_top_track: "—";
+    in-out property <string> lyrics_font_family: "";
+    in-out property <[string]> system_fonts: ["Segoe UI", "Georgia", "Consolas", "Trebuchet MS", "Arial"];
+    in-out property <string> app_version: "0.7.86";
     in-out property <bool> auto_check_updates: true;
     in-out property <string> update_status: "idle";
     in-out property <string> update_latest_version: "";
@@ -249,7 +261,13 @@ export component MainWindow inherits Window {
     callback download_track(TrackData);
     callback move_queue_item(int, int);
     callback rename_playlist(string, string);
+    callback download_all_playlist();
     callback import_playlist_url(string);
+    callback save_eq_profile(string);
+    callback delete_eq_profile(string);
+    callback set_lyrics_font_family(string);
+    callback browse_lyrics_font();
+    callback toggle_always_on_top();
     callback check_for_updates();
     callback install_update();
     callback open_release_page();
@@ -1493,11 +1511,13 @@ export component MainWindow inherits Window {
                         for-you-tracks: root.home_for_you;
                         trending-tracks: root.home_trending;
                         jump-back-tracks: root.history_tracks;
+                        top-artists: root.home_top_artists;
                         fav-count: root.favorite_tracks.length;
                         local-count: root.library_tracks.length;
                         hist-count: root.history_tracks.length;
                         open-tab(t) => { root.navigate_to(t); }
                         play-track(t) => { root.play_track(t); }
+                        open-artist(a) => { root.open_artist(a); }
                         refresh-home => { root.refresh_home(); }
                     }
 
@@ -1654,6 +1674,8 @@ export component MainWindow inherits Window {
                         playlist-name: root.active_playlist_name;
                         is-remote: root.active_playlist_is_remote;
                         is-loading: root.active_playlist_loading;
+                        is-downloading-all: root.playlist_downloading_all;
+                        download-all-progress: root.playlist_download_progress;
                         tracks: root.active_playlist_tracks;
                         current-id: root.current_id;
                         is-playing: root.is_playing;
@@ -1663,6 +1685,7 @@ export component MainWindow inherits Window {
                         delete-playlist(id) => { root.delete_playlist(id); }
                         rename-playlist(id, name) => { root.rename_playlist(id, name); }
                         save-remote-playlist => { root.save_remote_playlist(); }
+                        download-all-playlist => { root.download_all_playlist(); }
                         remove-track-from-playlist(pid, tid) => { root.remove_track_from_playlist(pid, tid); }
                         toggle-favorite(t) => { root.toggle_favorite_track(t); }
                         add-to-playlist(t) => { root.request_add_to_playlist(t); }
@@ -2521,6 +2544,7 @@ export component MainWindow inherits Window {
         eq-mid <=> root.eq_mid;
         eq-treble <=> root.eq_treble;
         eq-preset-name <=> root.eq_preset_name;
+        custom-eq-profiles: root.custom_eq_profiles;
         sleep-status: root.sleep_status;
         sleep-active: root.sleep_active;
         set-speed(s) => { root.set_audio_speed(s); }
@@ -2529,6 +2553,8 @@ export component MainWindow inherits Window {
         set-crossfade(on, s) => { root.set_crossfade(on, s); }
         set-eq(b, m, t) => { root.set_equalizer(b, m, t); }
         apply-preset(p) => { root.apply_eq_preset(p); }
+        save-eq-profile(n) => { root.save_eq_profile(n); }
+        delete-eq-profile(n) => { root.delete_eq_profile(n); }
         set-sleep-minutes(m) => { root.set_sleep_minutes(m); }
         add-sleep-5m => { root.add_sleep_5m(); }
         reset-audio => { root.reset_audio_settings(); }
@@ -2640,6 +2666,12 @@ export component MainWindow inherits Window {
         fav-count: root.favorite_tracks.length;
         hist-count: root.history_tracks.length;
         playlist-count: root.playlists.length;
+        stats-total-plays: root.stats_total_plays;
+        stats-hours-str: root.stats_hours_str;
+        stats-top-artist: root.stats_top_artist;
+        stats-top-track: root.stats_top_track;
+        lyrics-font-family <=> root.lyrics_font_family;
+        system-fonts: root.system_fonts;
         switch-ui-mode(m) => { root.switch_ui_mode(m); }
         scan-folder => { root.scan_local_folder(); }
         add-files => { root.add_local_files(); }
@@ -2665,6 +2697,8 @@ export component MainWindow inherits Window {
         install-update => { root.install_update(); }
         open-release-page => { root.open_release_page(); }
         toggle-auto-check-updates(on) => { root.toggle_auto_check_updates(on); }
+        set-lyrics-font-family(f) => { root.set_lyrics_font_family(f); }
+        browse-lyrics-font => { root.browse_lyrics_font(); }
         change-lyrics-source(s) => { root.change_lyrics_source(s); }
         change-word-source(s) => { root.change_word_source(s); }
         set-lyrics-offset(ms) => { root.set_lyrics_offset(ms); }
@@ -2733,6 +2767,8 @@ export component MainWindow inherits Window {
         lyrics-open: root.lyrics_open;
         is-maximized: root.is_maximized;
         mini-mode: root.mini_mode;
+        always-on-top: root.pinned_on_top;
+        toggle-always-on-top => { root.toggle_always_on_top(); }
         toggle-lyrics => { fullscreen_lyrics_open = !fullscreen_lyrics_open; }
         mini-player => { root.toggle_mini_mode(); }
         go-home => { active_tab = 0; }
