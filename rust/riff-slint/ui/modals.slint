@@ -2767,25 +2767,50 @@ export component FullscreenLyricsOverlay inherits Rectangle {
     HorizontalLayout {
         width: 100%;
         height: 100%;
-        padding-left: show-lyrics-col ? 64px : 44px;
-        padding-right: show-lyrics-col ? 64px : 44px;
+        padding-left: show-lyrics-col ? 64px : 40px;
+        padding-right: show-lyrics-col ? 64px : 40px;
         padding-top: 56px;
-        padding-bottom: show-lyrics-col ? 48px : 44px;
+        padding-bottom: 48px;
         spacing: show-lyrics-col ? 56px : 0px;
 
-        // Left side (.tv-side — centered with lyrics, or bottom-left showcase when lyrics hidden)
-        VerticalLayout {
-            width: show-lyrics-col ? 360px : 380px;
-            alignment: show-lyrics-col ? center : end;
-            spacing: show-lyrics-col ? 18px : 14px;
+        if !show-lyrics-col: Rectangle { horizontal-stretch: 1; }
 
-            // Large album cover (.tv-cover)
+        // Left side (.tv-side — centered with flanking reactive visualizer bars when lyrics hidden)
+        VerticalLayout {
+            width: show-lyrics-col ? 360px : 620px;
+            alignment: center;
+            spacing: 18px;
+
+            // Album cover + flanking bass/spectrum bars when !show-lyrics-col
             HorizontalLayout {
-                alignment: show-lyrics-col ? center : start;
+                alignment: center;
+                spacing: show-lyrics-col ? 0px : 24px;
+
+                if !show-lyrics-col && tvk-vis-nolyrics: HorizontalLayout {
+                    width: 112px;
+                    height: 320px;
+                    spacing: 6px;
+                    alignment: end;
+
+                    for idx in [7, 6, 5, 4, 3, 2, 1, 0]: VerticalLayout {
+                        width: 8px;
+                        alignment: center;
+                        property <float> lvl: spectrum-bands.length > idx ? spectrum-bands[idx] : 0.0;
+                        Rectangle {
+                            width: 8px;
+                            height: max(12px, min(260px, 14px + lvl * 246px));
+                            border-radius: 4px;
+                            background: @linear-gradient(180deg, accent-color 0%, #ffffffcc 50%, accent-color 100%);
+                            opacity: 0.35 + lvl * 0.65;
+                            animate height { duration: Theme.reduced-motion ? 0ms : 85ms; easing: ease-out; }
+                        }
+                    }
+                }
+
                 Rectangle {
-                    width: show-lyrics-col ? 320px : 230px;
-                    height: self.width;
-                    border-radius: show-lyrics-col ? 28px : 20px;
+                    width: 320px;
+                    height: 320px;
+                    border-radius: 28px;
                     background: #141418;
                     drop-shadow-blur: 36px;
                     drop-shadow-offset-y: 14px;
@@ -2807,32 +2832,53 @@ export component FullscreenLyricsOverlay inherits Rectangle {
                         y: (parent.height - self.height) / 2;
                     }
                 }
+
+                if !show-lyrics-col && tvk-vis-nolyrics: HorizontalLayout {
+                    width: 112px;
+                    height: 320px;
+                    spacing: 6px;
+                    alignment: start;
+
+                    for idx in [0, 1, 2, 3, 4, 5, 6, 7]: VerticalLayout {
+                        width: 8px;
+                        alignment: center;
+                        property <float> lvl: spectrum-bands.length > idx ? spectrum-bands[idx] : 0.0;
+                        Rectangle {
+                            width: 8px;
+                            height: max(12px, min(260px, 14px + lvl * 246px));
+                            border-radius: 4px;
+                            background: @linear-gradient(180deg, accent-color 0%, #ffffffcc 50%, accent-color 100%);
+                            opacity: 0.35 + lvl * 0.65;
+                            animate height { duration: Theme.reduced-motion ? 0ms : 85ms; easing: ease-out; }
+                        }
+                    }
+                }
             }
 
             // Title & Artist (.tv-karaoke-meta)
             VerticalLayout {
-                spacing: 4px;
+                spacing: 6px;
                 Text {
                     text: current-title;
                     color: #ffffff;
-                    font-size: show-lyrics-col ? 24px : 26px;
+                    font-size: show-lyrics-col ? 24px : 28px;
                     font-weight: 700;
-                    horizontal-alignment: show-lyrics-col ? center : left;
+                    horizontal-alignment: center;
                     wrap: word-wrap;
                 }
                 Text {
                     text: current-artist;
                     color: #ffffffbf;
-                    font-size: show-lyrics-col ? 16px : 16px;
+                    font-size: show-lyrics-col ? 16px : 18px;
                     font-weight: 500;
-                    horizontal-alignment: show-lyrics-col ? center : left;
+                    horizontal-alignment: center;
                     wrap: word-wrap;
                 }
             }
 
             // Audio output & Lyrics Sync/Source badges (.tvk-output)
             HorizontalLayout {
-                alignment: show-lyrics-col ? center : start;
+                alignment: center;
                 spacing: 8px;
                 Rectangle {
                     height: 28px;
@@ -2914,7 +2960,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
 
             // Playback controls (.tvk-controls)
             HorizontalLayout {
-                alignment: show-lyrics-col ? center : start;
+                alignment: center;
                 spacing: 14px;
                 height: 56px;
 
