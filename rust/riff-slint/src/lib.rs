@@ -1650,6 +1650,11 @@ pub fn run() -> Result<(), slint::PlatformError> {
         if let Some(v) = kv_map.get("slint_auto_check_updates") {
             upd_auto_init.store(v != "0", Ordering::SeqCst);
         }
+        let tools_dismissed = kv_map
+            .get("slint_tools_setup_dismissed")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let tools_status = riff_core::tools::check_tools_status(&api_init.config.data_dir);
 
         let (_, _, sh_slots) = tokio::join!(
             hydrate_track_covers(&mut fav_items, &http_init),
@@ -1785,6 +1790,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 w.set_queue_tracks(to_slint_model(queue_init));
                 w.set_playlists(playlists_to_slint(&user_playlists));
                 w.set_search_history(to_slint_search_history(sh_slots));
+                w.set_tools_ytdlp_installed(tools_status.ytdlp_installed);
+                w.set_tools_ffmpeg_installed(tools_status.ffmpeg_installed);
+                #[cfg(not(target_os = "android"))]
+                if !tools_dismissed && (!tools_status.ytdlp_installed || !tools_status.ffmpeg_installed) {
+                    w.set_tools_setup_open(true);
+                }
             }
         });
 
@@ -4388,6 +4399,158 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let val = if on { "1" } else { "0" };
         rt_upd_auto.spawn(async move {
             let _ = api_s.set_setting("slint_auto_check_updates", val).await;
+        });
+    });
+
+    // 13f. Optional Tools Setup Modal (yt-dlp & ffmpeg)
+    let api_tools_chk = api.clone();
+    let w_tools_chk = window_weak.clone();
+    main_window.on_recheck_tools(move || {
+        let st = riff_core::tools::check_tools_status(&api_tools_chk.config.data_dir);
+        if let Some(w) = w_tools_chk.upgrade() {
+            w.set_tools_ytdlp_installed(st.ytdlp_installed);
+            w.set_tools_ffmpeg_installed(st.ffmpeg_installed);
+        }
+    });
+
+    let api_tools_dis = api.clone();
+    let w_tools_dis = window_weak.clone();
+    let rt_tools_dis = rt_handle.clone();
+    main_window.on_dismiss_tools_setup(move |forever| {
+        if let Some(w) = w_tools_dis.upgrade() {
+            w.set_tools_setup_open(false);
+        }
+        if forever {
+            let api_s = api_tools_dis.clone();
+            rt_tools_dis.spawn(async move {
+                let _ = api_s.set_setting("slint_tools_setup_dismissed", "1").await;
+            });
+        }
+    });
+
+    let api_tools_inst = api.clone();
+    let http_tools_inst = http.clone();
+    let w_tools_inst = window_weak.clone();
+    let rt_tools_inst = rt_handle.clone();
+    main_window.on_install_tool(move |target| {
+        let tgt = target.to_string();
+        if let Some(w) = w_tools_inst.upgrade() {
+            w.set_tools_installing(true);
+            w.set_tools_installing_target(SharedString::from(&tgt));
+            w.set_tools_install_progress(0.0);
+            w.set_tools_error_text(SharedString::default());
+            w.set_tools_status_text(SharedString::from("Preparing download..."));
+        }
+
+        let api_t = api_tools_inst.clone();
+        let http_t = http_tools_inst.clone();
+        let w_t = w_tools_inst.clone();
+        let rt_t = rt_tools_inst.clone();
+        rt_tools_inst.spawn(async move {
+            let data_dir = api_t.config.data_dir.clone();
+            let cur_status = riff_core::tools::check_tools_status(&data_dir);
+
+            let want_yt = (tgt == "ytdlp" || tgt == "all") && !cur_status.ytdlp_installed;
+            let want_ff = (tgt == "ffmpeg" || tgt == "all") && !cur_status.ffmpeg_installed;
+
+            let mut err_msg = String::new();
+
+            if want_yt {
+                let w_s = w_t.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_s.upgrade() {
+                        w.set_tools_status_text(SharedString::from("Downloading yt-dlp..."));
+                        w.set_tools_install_progress(0.0);
+                    }
+                });
+                let w_p = w_t.clone();
+                let mut last_pct: i32 = -1;
+                match riff_core::tools::install_ytdlp(&http_t, &data_dir, move |frac| {
+                    let pct = (frac * 100.0) as i32;
+                    if pct != last_pct && (pct % 2 == 0 || pct == 100) {
+                        last_pct = pct;
+                        let w_ui = w_p.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w_ui.upgrade() {
+                                w.set_tools_install_progress(frac);
+                            }
+                        });
+                    }
+                })
+                .await
+                {
+                    Ok(_) => {
+                        let w_ok = w_t.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w_ok.upgrade() {
+                                w.set_tools_ytdlp_installed(true);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        err_msg = format!("yt-dlp install failed: {e}");
+                    }
+                }
+            }
+
+            if want_ff && err_msg.is_empty() {
+                let w_s = w_t.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w_s.upgrade() {
+                        w.set_tools_status_text(SharedString::from("Downloading & extracting FFmpeg..."));
+                        w.set_tools_install_progress(0.0);
+                    }
+                });
+                let w_p = w_t.clone();
+                let mut last_pct: i32 = -1;
+                match riff_core::tools::install_ffmpeg(&http_t, &data_dir, move |frac| {
+                    let pct = (frac * 100.0) as i32;
+                    if pct != last_pct && (pct % 2 == 0 || pct == 100) {
+                        last_pct = pct;
+                        let w_ui = w_p.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w_ui.upgrade() {
+                                w.set_tools_install_progress(frac);
+                            }
+                        });
+                    }
+                })
+                .await
+                {
+                    Ok(_) => {
+                        let w_ok = w_t.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w_ok.upgrade() {
+                                w.set_tools_ffmpeg_installed(true);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        err_msg = format!("FFmpeg install failed: {e}");
+                    }
+                }
+            }
+
+            let final_st = riff_core::tools::check_tools_status(&data_dir);
+            let w_fin = w_t.clone();
+            let err_c = err_msg.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w_fin.upgrade() {
+                    w.set_tools_installing(false);
+                    w.set_tools_installing_target(SharedString::default());
+                    w.set_tools_ytdlp_installed(final_st.ytdlp_installed);
+                    w.set_tools_ffmpeg_installed(final_st.ffmpeg_installed);
+                    if err_c.is_empty() {
+                        w.set_tools_status_text(SharedString::from("Ready"));
+                    } else {
+                        w.set_tools_status_text(SharedString::default());
+                        w.set_tools_error_text(SharedString::from(&err_c));
+                    }
+                }
+            });
+            if err_msg.is_empty() {
+                show_toast(&w_t, &rt_t, "Optional streaming tools installed!");
+            }
         });
     });
 

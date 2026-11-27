@@ -923,7 +923,7 @@ export component SettingsModal inherits Rectangle {
     in-out property <string> search-platform: "ytmusic";
     in-out property <bool> autoplay-enabled: true;
     in-out property <string> autoplay-mode: "similar";
-    in property <string> app-version: "0.7.82";
+    in property <string> app-version: "0.7.84";
     in-out property <bool> auto-check-updates: true;
     in property <string> update-status: "idle";
     in property <string> update-latest-version: "";
@@ -966,6 +966,7 @@ export component SettingsModal inherits Rectangle {
     callback refresh-home();
     callback open-audio-editor();
     callback open-fullscreen-lyrics();
+    callback open-tools-setup();
     callback toggle-mini-mode();
     callback toggle-autoplay(bool);
     callback change-autoplay-mode(string);
@@ -2203,6 +2204,10 @@ export component SettingsModal inherits Rectangle {
                                             spacing: 3px;
                                             Text { text: "Audio Engine"; color: Theme.text-primary; font-size: 14.5px; font-weight: 600; }
                                             Text { text: status-message; color: Theme.text-muted; font-size: 12.5px; wrap: word-wrap; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            PillBtn { label: "Optional Tools"; clicked => { root.close(); root.open-tools-setup(); } }
                                         }
                                         VerticalLayout {
                                             alignment: center;
@@ -4045,6 +4050,291 @@ export component AddToPlaylistModal inherits Rectangle {
                 alignment: end;
                 spacing: 10px;
                 PillBtn { label: "New playlist"; primary: true; clicked => { root.create-new(); } }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// OPTIONAL TOOLS SETUP MODAL (yt-dlp & ffmpeg — identical Riff style)
+// ============================================================================
+export component ToolsSetupModal inherits Rectangle {
+    in property <bool> open: false;
+    in property <bool> ytdlp-installed: false;
+    in property <bool> ffmpeg-installed: false;
+    in property <bool> is-installing: false;
+    in property <string> installing-target: ""; // "ytdlp" | "ffmpeg" | "all" | ""
+    in property <float> install-progress: 0.0;
+    in property <string> status-text: "";
+    in property <string> error-text: "";
+
+    callback install-tool(string);
+    callback recheck-tools();
+    callback dismiss(bool); // true = don't show on startup again
+
+    opacity: open ? 1.0 : 0.0;
+    visible: self.opacity > 0.01;
+    background: #00000085;
+    animate opacity { duration: Theme.reduced-motion ? 0ms : 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
+    TouchArea {
+        clicked => {
+            if (!is-installing) {
+                root.dismiss(false);
+            }
+        }
+    }
+
+    Rectangle {
+        width: min(500px, parent.width - 36px);
+        height: min(470px, parent.height - 36px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2 + (open ? 0px : 14px);
+        border-radius: 20px;
+        background: #16161a;
+        border-width: 1px;
+        border-color: #ffffff14;
+        drop-shadow-blur: 40px;
+        drop-shadow-color: #00000099;
+        animate y { duration: Theme.reduced-motion ? 0ms : 240ms; easing: cubic-bezier(0.22, 1, 0.36, 1); }
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 22px;
+            spacing: 14px;
+
+            // Header with Riff icon badge
+            HorizontalLayout {
+                spacing: 12px;
+
+                Rectangle {
+                    width: 42px;
+                    height: 42px;
+                    border-radius: 12px;
+                    background: Theme.primary-dim;
+                    Image {
+                        source: @image-url("assets/icon.png");
+                        width: 26px;
+                        height: 26px;
+                        x: 8px;
+                        y: 8px;
+                    }
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "Optional Streaming Tools";
+                        color: Theme.text-primary;
+                        font-size: 17px;
+                        font-weight: 800;
+                    }
+                    Text {
+                        text: "Riff works out of the box. Install these only for extra fallback support.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+
+                IconBtn {
+                    icon: @image-url("icons/refresh.svg");
+                    icon-size: 16px;
+                    disabled: is-installing;
+                    clicked => { root.recheck-tools(); }
+                }
+            }
+
+            // Grouped tool cards (yt-dlp + ffmpeg)
+            VerticalLayout {
+                spacing: 4px;
+
+                // yt-dlp card
+                Rectangle {
+                    border-top-left-radius: 16px;
+                    border-top-right-radius: 16px;
+                    border-bottom-left-radius: 6px;
+                    border-bottom-right-radius: 6px;
+                    background: #202126b8;
+
+                    HorizontalLayout {
+                        padding: 14px;
+                        spacing: 12px;
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: "yt-dlp";
+                                    color: Theme.text-primary;
+                                    font-size: 14.5px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    height: 20px;
+                                    border-radius: 10px;
+                                    background: ytdlp-installed ? #2ec4b626 : #ffffff12;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        Text {
+                                            text: ytdlp-installed ? "Installed" : "Optional";
+                                            color: ytdlp-installed ? #2ec4b6 : Theme.text-secondary;
+                                            font-size: 10.5px;
+                                            font-weight: 700;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                text: "Fallback YouTube / SoundCloud stream resolver (~15 MB)";
+                                color: Theme.text-muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            PillBtn {
+                                label: ytdlp-installed ? "Installed" : (is-installing && (installing-target == "ytdlp" || installing-target == "all") ? "Installing..." : "Install");
+                                btn-height: 30px;
+                                h-pad: 14px;
+                                primary: !ytdlp-installed;
+                                disabled: ytdlp-installed || is-installing;
+                                clicked => { root.install-tool("ytdlp"); }
+                            }
+                        }
+                    }
+                }
+
+                // ffmpeg card
+                Rectangle {
+                    border-top-left-radius: 6px;
+                    border-top-right-radius: 6px;
+                    border-bottom-left-radius: 16px;
+                    border-bottom-right-radius: 16px;
+                    background: #202126b8;
+
+                    HorizontalLayout {
+                        padding: 14px;
+                        spacing: 12px;
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: "FFmpeg";
+                                    color: Theme.text-primary;
+                                    font-size: 14.5px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    height: 20px;
+                                    border-radius: 10px;
+                                    background: ffmpeg-installed ? #2ec4b626 : #ffffff12;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        Text {
+                                            text: ffmpeg-installed ? "Installed" : "Optional";
+                                            color: ffmpeg-installed ? #2ec4b6 : Theme.text-secondary;
+                                            font-size: 10.5px;
+                                            font-weight: 700;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                text: "Optional audio transcoding & muxing helper";
+                                color: Theme.text-muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            PillBtn {
+                                label: ffmpeg-installed ? "Installed" : (is-installing && (installing-target == "ffmpeg" || installing-target == "all") ? "Installing..." : "Install");
+                                btn-height: 30px;
+                                h-pad: 14px;
+                                primary: !ffmpeg-installed;
+                                disabled: ffmpeg-installed || is-installing;
+                                clicked => { root.install-tool("ffmpeg"); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Progress bar & status
+            if is-installing || status-text != "" || error-text != "": VerticalLayout {
+                spacing: 6px;
+                if is-installing: Rectangle {
+                    height: 6px;
+                    border-radius: 3px;
+                    background: #ffffff1a;
+                    clip: true;
+                    Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width * clamp(install-progress, 0.0, 1.0);
+                        height: 100%;
+                        border-radius: 3px;
+                        background: Theme.primary;
+                    }
+                }
+                if status-text != "": Text {
+                    text: status-text;
+                    color: Theme.text-secondary;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                if error-text != "": Text {
+                    text: error-text;
+                    color: #f28b82;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            // Footer actions (Skip / Don't show again / Install All / Continue)
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+
+                if !ytdlp-installed || !ffmpeg-installed: PillBtn {
+                    label: "Don't ask again";
+                    disabled: is-installing;
+                    clicked => { root.dismiss(true); }
+                }
+
+                if !ytdlp-installed || !ffmpeg-installed: PillBtn {
+                    label: is-installing ? "Installing..." : "Install All";
+                    disabled: is-installing;
+                    clicked => { root.install-tool("all"); }
+                }
+
+                PillBtn {
+                    label: (ytdlp-installed && ffmpeg-installed) ? "Done" : "Skip for now";
+                    primary: true;
+                    disabled: is-installing;
+                    clicked => { root.dismiss(false); }
+                }
             }
         }
     }

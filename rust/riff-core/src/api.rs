@@ -323,8 +323,13 @@ impl RiffApi {
         }
 
         // 2b. Attempt yt-dlp resolution for the exact target URL
+        let ytdlp_dyn = self
+            .config
+            .ytdlp
+            .clone()
+            .or_else(|| crate::tools::resolve_binary_path(&self.config.data_dir, "yt-dlp"));
         if let Ok(raw_stream) = crate::stream::resolve_with_ytdlp(
-            self.config.ytdlp.as_deref(),
+            ytdlp_dyn.as_deref(),
             &target_url,
             timeout_secs,
         )

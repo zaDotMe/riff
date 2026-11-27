@@ -2,7 +2,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme, TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData } from "theme.slint";
 import { IconBtn, PillBtn, ScrubberBar, VolumeBar } from "components.slint";
 import { HomeView, SearchView, LocalFilesView, FavoritesView, HistoryView, QueueView, PlaylistDetailView, ArtistView } from "views.slint";
-import { Titlebar, PresetsDrawer, RightPanel, SettingsModal, FullscreenLyricsOverlay, CustomLyricsModal, SyncLyricsModal, AudioEditorModal, CreatePlaylistModal, AddToPlaylistModal } from "modals.slint";
+import { Titlebar, PresetsDrawer, RightPanel, SettingsModal, FullscreenLyricsOverlay, CustomLyricsModal, SyncLyricsModal, AudioEditorModal, CreatePlaylistModal, AddToPlaylistModal, ToolsSetupModal } from "modals.slint";
 
 export { TrackData, LyricLineData, LyricWordData, LyricRowData, SyncLineData, PlaylistData, SearchHistoryItem, RemotePlaylistData, ArtistData, Theme }
 
@@ -91,7 +91,7 @@ export component MainWindow inherits Window {
     in-out property <bool> autoplay_enabled: true;
     in-out property <string> autoplay_mode: "similar";
     in-out property <bool> autoplay_loading: false;
-    in-out property <string> app_version: "0.7.82";
+    in-out property <string> app_version: "0.7.84";
     in-out property <bool> auto_check_updates: true;
     in-out property <string> update_status: "idle";
     in-out property <string> update_latest_version: "";
@@ -108,6 +108,14 @@ export component MainWindow inherits Window {
     in-out property <bool> audio_editor_open: false;
     in-out property <bool> create_playlist_open: false;
     in-out property <bool> add_to_playlist_open: false;
+    in-out property <bool> tools_setup_open: false;
+    in-out property <bool> tools_ytdlp_installed: false;
+    in-out property <bool> tools_ffmpeg_installed: false;
+    in-out property <bool> tools_installing: false;
+    in-out property <string> tools_installing_target: "";
+    in-out property <float> tools_install_progress: 0.0;
+    in-out property <string> tools_status_text: "";
+    in-out property <string> tools_error_text: "";
     in-out property <string> pending_playlist_track_title: "";
     in-out property <bool> presets_open: false;
     in-out property <bool> settings_open: false;
@@ -231,6 +239,9 @@ export component MainWindow inherits Window {
     callback install_update();
     callback open_release_page();
     callback toggle_auto_check_updates(bool);
+    callback install_tool(string);
+    callback recheck_tools();
+    callback dismiss_tools_setup(bool);
     callback window_minimize();
     callback window_maximize();
     callback window_close();
@@ -274,6 +285,7 @@ export component MainWindow inherits Window {
                 if (create_playlist_open) { create_playlist_open = false; return accept; }
                 if (add_to_playlist_open) { add_to_playlist_open = false; return accept; }
                 if (settings_open) { settings_open = false; return accept; }
+                if (tools_setup_open && !tools_installing) { tools_setup_open = false; return accept; }
                 if (fullscreen_lyrics_open) { fullscreen_lyrics_open = false; return accept; }
                 if (can_go_back) { root.nav_back(); return accept; }
             }
@@ -2565,6 +2577,10 @@ export component MainWindow inherits Window {
         refresh-home => { root.refresh_home(); }
         open-audio-editor => { audio_editor_open = true; }
         open-fullscreen-lyrics => { fullscreen_lyrics_open = true; }
+        open-tools-setup => {
+            root.recheck_tools();
+            tools_setup_open = true;
+        }
         toggle-mini-mode => { root.toggle_mini_mode(); }
         toggle-autoplay(on) => { root.toggle_autoplay(on); }
         change-autoplay-mode(m) => { root.change_autoplay_mode(m); }
@@ -2577,6 +2593,23 @@ export component MainWindow inherits Window {
         set-lyrics-offset(ms) => { root.set_lyrics_offset(ms); }
         save-setting(k, v) => { root.save_setting(k, v); }
         close => { settings_open = false; }
+    }
+
+    // 4g. OPTIONAL TOOLS SETUP MODAL (yt-dlp & ffmpeg)
+    ToolsSetupModal {
+        width: 100%;
+        height: 100%;
+        open: tools_setup_open;
+        ytdlp-installed: root.tools_ytdlp_installed;
+        ffmpeg-installed: root.tools_ffmpeg_installed;
+        is-installing: root.tools_installing;
+        installing-target: root.tools_installing_target;
+        install-progress: root.tools_install_progress;
+        status-text: root.tools_status_text;
+        error-text: root.tools_error_text;
+        install-tool(t) => { root.install_tool(t); }
+        recheck-tools => { root.recheck_tools(); }
+        dismiss(forever) => { root.dismiss_tools_setup(forever); }
     }
 
     // 5. AUTO-REVEAL TOP TITLEBAR (appears when pointer touches top edge)

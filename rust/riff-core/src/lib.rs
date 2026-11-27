@@ -9,6 +9,7 @@ pub mod models;
 pub mod player;
 pub mod soundcloud;
 pub mod stream;
+pub mod tools;
 pub mod updater;
 pub mod youtube;
 

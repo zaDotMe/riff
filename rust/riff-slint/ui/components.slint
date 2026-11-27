@@ -106,6 +106,7 @@ export component PillBtn inherits Rectangle {
     in property <image> icon;
     in property <bool> has-icon: false;
     in property <bool> primary: false;
+    in property <bool> disabled: false;
     in property <length> btn-height: 34px;
     in property <length> h-pad: 12px;
     in property <length> radius: 10px;
@@ -116,7 +117,7 @@ export component PillBtn inherits Rectangle {
     background: primary
         ? (ta.has-hover ? Theme.primary.brighter(0.12) : Theme.primary)
         : (ta.has-hover ? #2e2e36 : #232328);
-    opacity: ta.pressed ? 0.84 : 1.0;
+    opacity: disabled ? 0.55 : (ta.pressed ? 0.84 : 1.0);
     animate background { duration: Theme.reduced-motion ? 0ms : 160ms; easing: cubic-bezier(0.2, 0, 0, 1); }
     animate border-radius { duration: Theme.reduced-motion ? 0ms : 200ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
     animate opacity { duration: Theme.reduced-motion ? 0ms : 100ms; easing: ease-out; }
@@ -147,7 +148,8 @@ export component PillBtn inherits Rectangle {
     }
 
     ta := TouchArea {
-        mouse-cursor: pointer;
+        enabled: !disabled;
+        mouse-cursor: disabled ? default : pointer;
         clicked => { root.clicked(); }
     }
 }
