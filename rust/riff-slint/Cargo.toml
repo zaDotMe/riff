@@ -1,6 +1,6 @@
 [package]
 name = "riff-slint"
-version = "0.7.8"
+version = "0.7.9"
 edition = "2021"
 authors = ["rootscripts"]
 license = "MIT"

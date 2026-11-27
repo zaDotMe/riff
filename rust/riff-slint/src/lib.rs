@@ -1730,6 +1730,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 if let Some(v) = kv_map.get("slint_lyrics_ease") {
                     w.set_lyrics_ease(SharedString::from(v.as_str()));
                 }
+                if let Some(v) = kv_map.get("slint_lyrics_focus_pos") {
+                    w.set_lyrics_focus_pos(SharedString::from(v.as_str()));
+                }
                 if let Some(v) = kv_map.get("slint_lyrics_offset_ms").and_then(|s| s.parse::<i32>().ok()) {
                     let clamped = v.clamp(-5000, 5000);
                     off_init.store(clamped, Ordering::SeqCst);

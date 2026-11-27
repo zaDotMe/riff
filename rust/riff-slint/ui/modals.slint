@@ -328,6 +328,7 @@ export component RightPanel inherits Rectangle {
     in property <bool> lyrics-autoscroll: true;
     in-out property <string> lyrics-word-style: "gradient";
     in property <float> lyrics-speed: 1.0;
+    in property <string> lyrics-focus-pos: "center";
     in property <bool> lyrics-fullscreen-only: false;
     in-out property <float> lyrics-offset-ms: 0.0;
     callback seek-to(float);
@@ -792,13 +793,19 @@ export component RightPanel inherits Rectangle {
 
             rp-scroll := ScrollView {
                 vertical-stretch: 1;
-                content-y: (lyrics-autoscroll && active-lyric-index > 2) ? -min(max(0px, (active-lyric-index - 2) * 46px), max(0px, self.content-height - self.visible-height)) : 0px;
+                property <length> base-target: max(0px, active-lyric-index * 52px);
+                property <length> focus-offset: lyrics-focus-pos == "top"
+                    ? self.visible-height * 0.28
+                    : (lyrics-focus-pos == "bottom" ? -self.visible-height * 0.28 : 0px);
+                content-y: (lyrics-autoscroll && active-lyric-index >= 0)
+                    ? -min(max(0px, base-target + focus-offset), max(0px, self.content-height - self.visible-height))
+                    : 0px;
                 animate content-y { duration: Theme.reduced-motion ? 0ms : 320ms / max(0.5, lyrics-speed); easing: cubic-bezier(0.2, 0, 0, 1); }
 
                 VerticalLayout {
                     spacing: 8px;
-                    padding-top: 8px;
-                    padding-bottom: 48px;
+                    padding-top: max(12px, rp-scroll.visible-height * 0.42);
+                    padding-bottom: max(64px, rp-scroll.visible-height * 0.48);
 
                     for line in lyrics-lines: Rectangle {
                         border-radius: 8px;
@@ -928,6 +935,7 @@ export component SettingsModal inherits Rectangle {
     in-out property <float> lyrics-speed: 1.0;
     in-out property <float> lyrics-tightness: 2.0;
     in-out property <string> lyrics-ease: "inout";
+    in-out property <string> lyrics-focus-pos: "center";
     in-out property <float> lyrics-offset-ms: 0.0;
 
     in property <int> local-count: 0;
@@ -1864,6 +1872,30 @@ export component SettingsModal inherits Rectangle {
                                         }
                                     }
 
+                                    // Active lyric vertical position (Top / Center / Bottom)
+                                    VerticalLayout {
+                                        spacing: 6px;
+                                        Text { text: "Active lyric position"; color: Theme.text-primary; font-size: 13.5px; font-weight: 600; }
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            alignment: start;
+                                            for fp in [
+                                                { id: "top", label: "Top" },
+                                                { id: "center", label: "Center" },
+                                                { id: "bottom", label: "Bottom" },
+                                            ]: PillBtn {
+                                                label: fp.label;
+                                                btn-height: 28px;
+                                                h-pad: 12px;
+                                                primary: lyrics-focus-pos == fp.id;
+                                                clicked => {
+                                                    lyrics-focus-pos = fp.id;
+                                                    root.save-setting("slint_lyrics_focus_pos", fp.id);
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     // Lyrics animation easing (matches origin lyrics-ease-dropdown)
                                     VerticalLayout {
                                         spacing: 6px;
@@ -2398,6 +2430,7 @@ export component FullscreenLyricsOverlay inherits Rectangle {
     in property <bool> lyrics-is-synced: false;
     in property <bool> lyrics-autoscroll: true;
     in property <float> lyrics-speed: 1.0;
+    in property <string> lyrics-focus-pos: "center";
     in-out property <float> lyrics-offset-ms: 0.0;
 
     // Customize panel state (#tvk-panel)
@@ -2700,9 +2733,9 @@ export component FullscreenLyricsOverlay inherits Rectangle {
                 IconBtn {
                     width: 40px;
                     height: 40px;
-                    icon: @image-url("icons/repeat.svg");
+                    icon: repeat-mode == 2 ? @image-url("icons/repeat_one.svg") : @image-url("icons/repeat.svg");
                     icon-size: 18px;
-                    icon-color: repeat-mode > 0 ? Theme.primary : #ffffff8c;
+                    icon-color: repeat-mode > 0 ? Theme.primary : #8e9099;
                     clicked => { root.cycle-repeat(); }
                 }
             }
@@ -2717,12 +2750,19 @@ export component FullscreenLyricsOverlay inherits Rectangle {
             tvk-scroll := ScrollView {
                 width: 100%;
                 height: 100%;
-                content-y: (lyrics-autoscroll && active-lyric-index > 2) ? -min(max(0px, (active-lyric-index - 2) * (54px + tvk-gap * 1px)), max(0px, self.content-height - self.visible-height)) : 0px;
+                property <length> step-h: (54px + tvk-gap * 1px);
+                property <length> base-target: max(0px, active-lyric-index * step-h);
+                property <length> focus-offset: lyrics-focus-pos == "top"
+                    ? self.visible-height * 0.28
+                    : (lyrics-focus-pos == "bottom" ? -self.visible-height * 0.28 : 0px);
+                content-y: (lyrics-autoscroll && active-lyric-index >= 0)
+                    ? -min(max(0px, base-target + focus-offset), max(0px, self.content-height - self.visible-height))
+                    : 0px;
                 animate content-y { duration: Theme.reduced-motion ? 0ms : 420ms / max(0.5, lyrics-speed); easing: cubic-bezier(0.2, 0, 0, 1); }
 
                 VerticalLayout {
-                    padding-top: 120px;
-                    padding-bottom: 220px;
+                    padding-top: max(120px, tvk-scroll.visible-height * 0.42);
+                    padding-bottom: max(220px, tvk-scroll.visible-height * 0.48);
                     padding-left: 16px;
                     padding-right: 16px;
                     spacing: tvk-gap * 1px;

@@ -135,6 +135,7 @@ export component MainWindow inherits Window {
     in-out property <float> lyrics_speed: 1.0;
     in-out property <float> lyrics_tightness: 2.0;
     in-out property <string> lyrics_ease: "inout";
+    in-out property <string> lyrics_focus_pos: "center"; // "top" | "center" | "bottom"
     in-out property <float> lyrics_offset_ms: 0.0;
 
     // Equalizer & Audio FX State
@@ -1716,6 +1717,7 @@ export component MainWindow inherits Window {
                         lyrics-autoscroll: root.lyrics_autoscroll;
                         lyrics-word-style <=> root.lyrics_word_style;
                         lyrics-speed: root.lyrics_speed;
+                        lyrics-focus-pos: root.lyrics_focus_pos;
                         lyrics-fullscreen-only: root.lyrics_fullscreen_only;
                         lyrics-offset-ms <=> root.lyrics_offset_ms;
                         seek-to(pos) => { root.seek_to(pos); }
@@ -1904,9 +1906,9 @@ export component MainWindow inherits Window {
                             IconBtn {
                                 width: 36px;
                                 height: 36px;
-                                icon: @image-url("icons/repeat.svg");
+                                icon: repeat_mode == 2 ? @image-url("icons/repeat_one.svg") : @image-url("icons/repeat.svg");
                                 icon-size: 18px;
-                                icon-color: repeat_mode > 0 ? Theme.primary : #e2e2e98c;
+                                icon-color: repeat_mode > 0 ? Theme.primary : #8e9099;
                                 clicked => { root.cycle_repeat(); }
                             }
                         }
@@ -2395,6 +2397,7 @@ export component MainWindow inherits Window {
         lyrics-is-synced: root.lyrics_is_synced;
         lyrics-autoscroll: root.lyrics_autoscroll;
         lyrics-speed: root.lyrics_speed;
+        lyrics-focus-pos: root.lyrics_focus_pos;
         lyrics-offset-ms <=> root.lyrics_offset_ms;
         toggle-play-pause => { root.toggle_play_pause(); }
         play-prev => { root.play_prev(); }
@@ -2525,6 +2528,7 @@ export component MainWindow inherits Window {
         lyrics-speed <=> root.lyrics_speed;
         lyrics-tightness <=> root.lyrics_tightness;
         lyrics-ease <=> root.lyrics_ease;
+        lyrics-focus-pos <=> root.lyrics_focus_pos;
         lyrics-offset-ms <=> root.lyrics_offset_ms;
         local-count: root.library_tracks.length;
         fav-count: root.favorite_tracks.length;

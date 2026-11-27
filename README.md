@@ -2,160 +2,135 @@
 
 <img src="assets/icon-512x512.png" width="112" alt="Riff icon" />
 
-# Riff — Native Rust Edition
+# Riff — Native Rust & Slint
 
-**A fast, native desktop music player for YouTube Music, SoundCloud, and local audio.**
-Built with **Rust + Slint**, with a Tauri dual launcher for the legacy Web UI.
+**Expressive, fast, native music player for YouTube Music, SoundCloud, and local audio.**
+Built purely with **Rust + Slint** for **Windows**, **Linux**, and **Google TV / Android TV**.
 
-[![Release](https://img.shields.io/github/v/release/zaDotMe/riff-Rust?style=flat-square&label=release&labelColor=0d0d10&color=6750A4)](https://github.com/zaDotMe/riff-Rust/releases)
-[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Android%20(in%20progress)-2ec4b6?style=flat-square&labelColor=0d0d10)](https://github.com/zaDotMe/riff-Rust/releases)
-[![License](https://img.shields.io/badge/license-MIT-534dff?style=flat-square&labelColor=0d0d10)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/zaDotMe/riff-Rust?style=for-the-badge&label=release&labelColor=131318&color=9f99e6)](https://github.com/zaDotMe/riff-Rust/releases)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Google%20TV-2ec4b6?style=for-the-badge&labelColor=131318)](https://github.com/zaDotMe/riff-Rust/releases)
+[![UI](https://img.shields.io/badge/UI-Pure%20Slint%20Expressive-c77dff?style=for-the-badge&labelColor=131318)](https://slint.dev)
+[![License](https://img.shields.io/badge/license-MIT-534dff?style=for-the-badge&labelColor=131318)](./LICENSE)
 
-[Features](#features) · [Downloads](#downloads) · [Architecture](#architecture) · [Building](#building) · [Legacy Web UI](#legacy-web-ui) · [Credits](#credits)
+<br />
+
+[Expressive UI](#-expressive-ui) · [Features](#-features) · [Shortcuts & TV Remote](#-shortcuts--google-tv-remote) · [Downloads](#-downloads) · [Architecture](#-architecture) · [Building](#-building)
 
 </div>
 
 ---
 
-## Overview
+## ✨ Expressive UI
 
-This repository is the **native Rust rewrite** of [Riff](https://github.com/rootscripts/riff).
-The original Electron/Web implementation is kept under `src/` for reference and for the
-dual-launcher mode, but the primary application is now:
+Riff combines a **native Rust audio engine** with an **expressive Material-inspired Slint interface** — designed to feel fluid on both desktop and 10-foot Google TV screens:
 
-- **`riff-core`** — native audio engine, streaming resolver, SQLite library, lyrics providers.
-- **`riff-slint`** — the native Slint desktop UI (1:1 with the Web UI, including motion).
-- **`riff-tauri`** — dual launcher that can start either the native Slint UI or the WebView2 UI.
+- **Dynamic Cover Accent & Ambient Blur** — panel surfaces, active states, and backdrops adapt smoothly to the current album art palette.
+- **TV / Fullscreen Karaoke Stage** — ambient animated blobs, floating artwork, audio output badge, and 30 FPS word-by-word karaoke with configurable easing, speed, and **adjustable active-line position (`Top` / `Center` / `Bottom`)**.
+- **Shimmer Loading Skeletons** — responsive animated skeletons while fetching search results, playlists, artists, or recommendations.
+- **Collapsible Sidebar & Compact Mini-Player** — expand for full library & playlists, collapse to a clean icon rail, or switch to a 420×520 mini-player.
+- **16-Band Live FFT Visualizer** — real-time spectrum bars integrated cleanly into the playbar.
+
+---
+
+## 🎵 Features
+
+| Area | Capabilities |
+| --- | --- |
+| **Streaming & Local** | YouTube Music (`WEB_REMIX` / `VISIONOS` / `ANDROID_MUSIC` / `IOS` + `yt-dlp` & Smart Mirror fallbacks), YouTube, SoundCloud, and local `FLAC` / `WAV` / `MP3` / `OGG` / `M4A` / `AAC` |
+| **Discovery & Search** | Unified search across **All / Songs / Playlists / Artists**, shimmer loading skeleton, retry on error, **Artist Profile** (Deezer avatar/fans + top tracks), and **Save to Library** for remote playlists |
+| **Autoplay & Queue** | YouTube Music radio mix (`RDAMVM`) + Smart recommendations with **Similar Vibe**, **Artist Mix**, and **Discovery** modes, history deduplication, per-track **Add to Queue**, and **YouTube Music-style Repeat** (`Off` → `Repeat All` → `Repeat One`) |
+| **Search & Play History** | Persistent search history for queries, **played tracks**, and **opened artists** with instant quick-play, plus personalized **For You** & **Jump Back In** shelves on Home |
+| **Native Audio Engine** | Symphonia decoding + CPAL output, 3-band EQ + presets, speed/pitch, reverb, distortion, sleep timer |
+| **Multi-Source Lyrics** | Auto, LRCLIB, Musixmatch, Kugou, NetEase (YRC), Genius, and custom LRC with **Tap-to-Sync**, ±5000 ms offset, and centered/adjustable auto-scroll |
+| **Library Management** | Favorites sync across every view, custom playlists (create, add, remove track, delete), local folder scanning & track removal |
 
 No account, no subscription, no telemetry.
 
 ---
 
-## Features
+## ⌨️ Shortcuts & Google TV Remote
 
-- **Streaming & local playback** — YouTube Music, YouTube, SoundCloud, plus local FLAC/WAV/MP3/OGG/M4A/AAC.
-- **Native audio engine** — Symphonia decoding, CPAL output, 3-band EQ, speed/pitch, reverb, distortion, sleep timer, 16-band FFT visualizer.
-- **Multi-source lyrics** — Auto, LRCLIB, Musixmatch, Kugou, NetEase, Genius, and custom LRC.
-- **Word-by-word karaoke** — NetEase YRC, enhanced LRC, and weighted estimation, rendered at 30 FPS with Gradient and Words styles.
-- **Sync tools** — per-track sync offset (±5000 ms), tap-to-sync editor, source picker, sync/source badges.
-- **1:1 desktop UI** — glass blur, dynamic cover accent, ambient banner, animated EQ bars, smooth tab/modal transitions.
-- **Full settings** — interface, themes, banners, audio, integrations, storage, advanced, plugins, account.
-- **Library** — favorites, history, playlists, queue, local folder scanning, playlist import.
-- **Dual launcher** — native Slint UI or the original WebView2 UI.
+| Key / Remote | Action |
+| --- | --- |
+| `Space` / `Pause` | Play / Pause (or mark next line when **Tap to Sync** is open) |
+| `Stop` | Pause playback |
+| `/` or `Ctrl + F` | Focus search bar & open search history |
+| `←` / `→` | Seek −5s / +5s |
+| `↑` / `↓` | Volume +5% / −5% |
+| `M` | Mute / Unmute |
+| `Esc` / `Back` | Close active modal/overlay or navigate back |
+| `F11` | Toggle Fullscreen Karaoke Lyrics |
 
 ---
 
-## Downloads
+## 📦 Downloads
 
 Release artifacts are published on the [Releases page](https://github.com/zaDotMe/riff-Rust/releases).
 
 | Platform | Artifact |
 | --- | --- |
-| Windows (installer) | `Riff-Setup-windows-x64.exe` (installs `riff-slint.exe`) |
-| Windows (native UI) | `Riff-Slint-windows-x64.exe` |
-| Windows (portable) | `Riff-windows-x64-portable.zip` |
-| Linux (portable) | `Riff-linux-x86_64.tar.gz` |
-| Linux (standalone) | `riff-slint-linux-x86_64` |
-| Linux (installer) | `Riff-linux-amd64.deb` |
-| Google TV / Android TV (arm64-v8a) | `Riff-google-tv-arm64-v8a.apk` |
-| Android | APK also installable on supported Android devices |
-
-> Linux & Google TV artifacts are produced by the GitHub Actions release workflow.
+| **Windows** (Installer) | `Riff-Setup-windows-x64.exe` |
+| **Windows** (Standalone) | `Riff-Slint-windows-x64.exe` |
+| **Windows** (Portable) | `Riff-windows-x64-portable.zip` |
+| **Linux** (Portable) | `Riff-linux-x86_64.tar.gz` |
+| **Linux** (Standalone) | `riff-slint-linux-x86_64` |
+| **Linux** (Debian/Ubuntu) | `Riff-linux-amd64.deb` |
+| **Google TV / Android TV** (`arm64-v8a`) | `Riff-google-tv-arm64-v8a.apk` |
 
 ---
 
-## Architecture
+## 🧱 Architecture
 
-```
-riff/
+```text
+riff-rust/
 ├─ rust/
-│  ├─ riff-core/          # Native engine: audio, streaming, SQLite, lyrics
-│  └─ riff-slint/         # Slint desktop UI + karaoke renderer
-├─ src-tauri/             # Tauri dual launcher + Android scaffolding
-├─ packaging/linux/       # .desktop entry and install script
+│  ├─ riff-core/          # Native engine: Symphonia/CPAL audio, YouTube/SoundCloud/local resolver, SQLite, lyrics
+│  └─ riff-slint/         # Pure Slint UI (desktop + Google TV android_main), karaoke renderer, state & shortcuts
+├─ packaging/
+│  ├─ windows/            # NSIS installer script
+│  └─ linux/              # .desktop entry and install script
 ├─ scripts/               # Release packaging helpers
-├─ src/                   # Legacy Electron/Web UI (reference + dual mode)
+├─ docs/                  # Release notes
 └─ assets/                # Shared icons and artwork
 ```
 
-### Playback pipeline
-
-1. Resolve the exact track (YouTube ID first, then SoundCloud with strict title/artist/duration matching).
-2. Decode with Symphonia and feed CPAL.
-3. Report the **audible** position (`decoded position − sink latency`) every 100 ms so lyrics stay in sync.
-4. Render lyrics from the best matching provider, with word-level timing when available.
-
 ---
 
-## Building
+## 🛠️ Building
 
 ### Prerequisites
 
-- Rust stable (1.80+)
-- Windows: MSVC toolchain + WebView2 (for the Tauri launcher)
-- Linux: `libasound2-dev`, `libxkbcommon-dev`, `libwayland-dev`, `libfontconfig1-dev`, `libssl-dev`, `pkg-config`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`
-- Node.js 20+ only if you build the Tauri/Web launcher
+- **Rust stable** (1.80+)
+- **Windows**: MSVC or `clang-cl` + Windows SDK
+- **Linux**: `libasound2-dev`, `libxkbcommon-dev`, `libwayland-dev`, `libfontconfig1-dev`, `libssl-dev`, `pkg-config`
+- **Google TV / Android TV**: Android NDK + `cargo-apk` (`cargo apk build --lib`)
 
-### Keyboard
-
-- **Space** — pause / resume the current track.
-- **Space** in **Tap to Sync** — mark the current synchronized lyric line.
-- **Esc** — close the active dialog or fullscreen view.
-- **F11** — toggle fullscreen lyrics.
-
-### Native Slint app
+### Build & Run
 
 ```bash
 cargo build --release -p riff-slint
 ./target/release/riff-slint
 ```
 
-### Dual launcher (Tauri)
-
-```bash
-npm install
-cargo build --release -p riff-tauri
-# or: npx tauri build
-```
-
 ### Tests
 
 ```bash
-cargo test --release -p riff-core -p riff-slint
+cargo test -p riff-core -p riff-slint --lib
 ```
 
-### Package Windows artifacts
+### Package Windows Artifacts
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
 ```
 
-Artifacts are written to `dist/release/`.
-
 ---
 
-## Legacy Web UI
-
-The original Electron/Web implementation remains available and is still used by the
-Tauri launcher's WebView2 mode. It lives in `src/` and is intentionally excluded from
-GitHub's language statistics (see `.gitattributes`) so the repository is reported as a
-**Rust + Slint** project.
-
-Run it with:
-
-```bash
-npm install
-npm start
-```
-
----
-
-## Credits
+## 🙏 Credits
 
 Riff was originally created by [rootscripts](https://github.com/rootscripts/riff).
-This fork adds the native Rust + Slint rewrite, multi-source lyrics, native audio engine,
-and the cross-platform release pipeline.
+This repository is the **Pure Rust + Slint** rewrite with a native audio engine, expressive desktop & Google TV UI, multi-source word-by-word lyrics, autoplay recommendations, and cross-platform CI/CD releases.
 
-## License
+## 📄 License
 
 MIT — see [LICENSE](./LICENSE).
