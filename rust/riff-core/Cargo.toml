@@ -38,3 +38,6 @@ uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
 cpal = "0.15"
 symphonia = { version = "0.5", features = ["all"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+lzma-rs = "0.3"

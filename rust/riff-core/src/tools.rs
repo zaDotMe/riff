@@ -159,38 +159,54 @@ where
 
     download_with_progress(http, url, &archive_path, on_progress).await?;
 
-    let mut cmd = tokio::process::Command::new("tar");
-    cmd.arg("-xf")
-        .arg(&archive_path)
-        .arg("-C")
-        .arg(&tmp_dir);
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(0x0800_0000);
-    }
-
-    let status = cmd
-        .status()
-        .await
-        .context("Failed to extract ffmpeg archive")?;
-
-    if !status.success() {
-        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
-        return Err(anyhow!("Failed to extract ffmpeg archive"));
-    }
-
-    let mut found_bin: Option<PathBuf> = None;
-    for entry in walkdir::WalkDir::new(&tmp_dir).into_iter().flatten() {
-        if entry.file_type().is_file()
-            && entry.file_name().to_str() == Some(target_bin)
-        {
-            found_bin = Some(entry.path().to_path_buf());
-            break;
+    let arch_clone = archive_path.clone();
+    let tmp_clone = tmp_dir.clone();
+    let target_name = target_bin.to_string();
+    let extracted = tokio::task::spawn_blocking(move || -> Result<Option<PathBuf>> {
+        if target_name.ends_with(".exe") {
+            let file = std::fs::File::open(&arch_clone)?;
+            let mut archive = zip::ZipArchive::new(file)?;
+            for i in 0..archive.len() {
+                let mut entry = archive.by_index(i)?;
+                let is_target = entry
+                    .enclosed_name()
+                    .and_then(|p| p.file_name().map(|s| s == std::ffi::OsStr::new(&target_name)))
+                    .unwrap_or(false);
+                if is_target {
+                    let out_path = tmp_clone.join(&target_name);
+                    let mut out_file = std::fs::File::create(&out_path)?;
+                    std::io::copy(&mut entry, &mut out_file)?;
+                    return Ok(Some(out_path));
+                }
+            }
+        } else {
+            let file = std::fs::File::open(&arch_clone)?;
+            let mut reader = std::io::BufReader::new(file);
+            let mut decompressed = Vec::new();
+            lzma_rs::xz_decompress(&mut reader, &mut decompressed)
+                .map_err(|e| anyhow!("xz decompress failed: {e}"))?;
+            let mut archive = tar::Archive::new(std::io::Cursor::new(decompressed));
+            for entry in archive.entries()? {
+                let mut entry = entry?;
+                let is_target = entry
+                    .path()
+                    .ok()
+                    .and_then(|p| p.file_name().map(|s| s == std::ffi::OsStr::new(&target_name)))
+                    .unwrap_or(false);
+                if is_target {
+                    let out_path = tmp_clone.join(&target_name);
+                    entry.unpack(&out_path)?;
+                    return Ok(Some(out_path));
+                }
+            }
         }
-    }
+        Ok(None)
+    })
+    .await
+    .map_err(|e| anyhow!("extract task failed: {e}"))??;
 
     let dest = dir.join(target_bin);
-    if let Some(src) = found_bin {
+    if let Some(src) = extracted {
         tokio::fs::copy(&src, &dest).await?;
         #[cfg(unix)]
         {
