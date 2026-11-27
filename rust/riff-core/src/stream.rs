@@ -1,10 +1,14 @@
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use axum::body::Body;
 use axum::http::{header, StatusCode};
 use axum::response::Response;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+use tokio::process::Command;
+use tokio::time::timeout;
 use tokio_util::io::ReaderStream;
 
 pub async fn serve_file(path: PathBuf, range: Option<String>) -> Result<Response> {
@@ -60,13 +64,60 @@ pub async fn serve_file(path: PathBuf, range: Option<String>) -> Result<Response
 }
 
 pub async fn resolve_with_ytdlp(
-    _binary: Option<&Path>,
-    _track_url: &str,
-    _timeout_secs: u64,
+    binary: Option<&Path>,
+    track_url: &str,
+    timeout_secs: u64,
 ) -> Result<String> {
-    // External CLI process spawning is intentionally disabled so stream resolution
-    // remains 100% pure-Rust HTTP (InnerTube + SoundCloud Smart Mirror).
-    Err(anyhow!("yt-dlp CLI subprocess disabled; using pure-Rust resolvers"))
+    let binary = binary
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" }));
+
+    let mut command = Command::new(&binary);
+    command
+        .args([
+            "-g",
+            "-f",
+            "bestaudio[ext=m4a]/bestaudio/best",
+            "--no-playlist",
+            "--no-warnings",
+            track_url,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    #[cfg(windows)]
+    {
+        command.creation_flags(0x0800_0000);
+    }
+
+    let output = timeout(Duration::from_secs(timeout_secs), command.output())
+        .await
+        .map_err(|_| anyhow!("yt-dlp timed out after {timeout_secs}s"))?
+        .with_context(|| format!("run {}", binary.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let message = stderr.trim();
+        return Err(anyhow!(
+            "yt-dlp exited with {}: {}",
+            output.status,
+            if message.is_empty() {
+                "no stderr"
+            } else {
+                message
+            }
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stream_url = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("http://") || line.starts_with("https://"))
+        .ok_or_else(|| anyhow!("yt-dlp returned no stream URL"))?;
+
+    Ok(stream_url.to_string())
 }
 
 pub async fn proxy_audio(
